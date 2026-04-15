@@ -102,7 +102,9 @@ the VFD pattern most closely and extends it with structured parameter passing.
 \item Users MUST be able to configure any filter using human-readable named
    parameters.
 \item Filter plugins MUST be addressable by a canonical name, without requiring
-   compiled-in integer constants.
+   compiled-in integer constants. (See the open design decision in
+   \SectionRef{sec:set-filter-by-name} regarding whether name-based
+   identification justifies its added complexity over an ID-based approach.)
 \item The on-disk format MUST NOT change.
 \item All existing APIs, plugins, and call sites MUST continue to work without
    modification.

@@ -8,6 +8,10 @@
 % \texttt one size smaller than body text, with line-break support
 \renewcommand{\texttt}[1]{\begingroup\small\ttfamily\hyphenchar\font=45 \spaceskip=.5em plus .3em minus .2em #1\endgroup}
 
+% Allow line breaks after underscores (the main cause of overlong \texttt words)
+\let\oldtextunderscore\_
+\renewcommand{\_}{\oldtextunderscore\allowbreak}
+
 
 % For long tables spanning multiple pages
 \usepackage{longtable}

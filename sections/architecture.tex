@@ -64,7 +64,8 @@ bare keys (boolean flags) and double-quote-delimited values.
   equals signs are literal and do not act as delimiters. Whitespace inside a
   quoted value is preserved exactly as written (whitespace stripping applies
   only outside of quotes). A literal double quote within a quoted value is
-  represented as two consecutive double quotes (\texttt{""}). An unbalanced quote
+  represented as two consecutive double quotes (\texttt{""}), following the
+  quoted-field escaping convention of RFC~4180. An unbalanced quote
   (opening \texttt{"} with no closing \texttt{"}) MUST cause the parser to return
   \texttt{H5E\_BADVALUE} rather than silently consuming the rest of the string.
 \item \textbf{Order of operations for parsing:} split the parameter string on commas
@@ -72,10 +73,56 @@ bare keys (boolean flags) and double-quote-delimited values.
   equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
   value $\rightarrow$ apply quote processing to the value if it begins with a
   double quote.
+\end{itemize}
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Parsing Complexity:}
+  Allowing commas and equals signs inside quoted values requires a stateful
+  parser that tracks quoted regions before splitting on delimiters; simple
+  \texttt{strtok()}-based parsing is not sufficient.
+  Before finalising this design, the group should decide:
+  \begin{enumerate}
+    \item Do any realistic parameter values actually contain commas or equals
+          signs?  If not, those characters could be \emph{prohibited} inside
+          quoted values, reducing parsing to: split on \texttt{,} with
+          \texttt{strtok()} $\rightarrow$ split each token on the first
+          \texttt{=} $\rightarrow$ strip quotes from the value.
+    \item Would a different delimiter (e.g.\ \texttt{;} or \texttt{|}) make
+          quoting unnecessary entirely, given that commas would then be legal
+          unquoted characters in a value such as a file path?
+    \item If commas inside values are required, the current stateful-parser
+          approach should be retained and an RFC~4180-compliant reference
+          implementation provided to reduce implementor burden.
+  \end{enumerate}
+}}
+
+\begin{itemize}
 \item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
   string, the parser MUST reject the string with \texttt{H5E\_BADVALUE}. The parser
   can detect duplicates cheaply during a single pass by checking each key
   against those already seen.
+\end{itemize}
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Duplicate Key Detection:}
+  Requiring the parser to reject duplicate keys adds bookkeeping overhead
+  that grows with the number of recognised keys.  While cheap today, this
+  may become a concern if the set of allowed \texttt{cd\_values} expands
+  significantly in the future.  The group should decide:
+  \begin{enumerate}
+    \item Should duplicate-key detection be \emph{removed} from the parser
+          and left as a quality-of-implementation concern, accepting that
+          the last (or first) occurrence silently wins?
+    \item Should detection be retained but deferred to the callback layer,
+          so the core parser remains a simple single-pass tokeniser with no
+          per-key state?
+    \item If detection is kept in the parser, should the key set be bounded
+          (e.g.\ a fixed-size bitmask over known keys) to guarantee $O(1)$
+          overhead regardless of input length?
+  \end{enumerate}
+}}
+
+\begin{itemize}
 \item \textbf{Empty keys:} A token whose key is empty after whitespace stripping MUST
   cause the parser to return \texttt{H5E\_BADVALUE}. This constraint is implicit in
   the grammar (\SectionRef{sec:param-grammar}), where \textit{key} requires
@@ -91,27 +138,59 @@ bare keys (boolean flags) and double-quote-delimited values.
   Implementations MUST preserve this distinction when dispatching to the
   callback. Example: in \texttt{"level=, fast\_mode"}, \texttt{level} has an explicit
   empty-string value and \texttt{fast\_mode} is a bare key.
+\end{itemize}
+
+Quoting is only meaningful for non-empty values; a quoted empty string
+(\texttt{key=""}) MUST be rejected with \texttt{H5E\_BADVALUE}.  An empty
+value is expressed as \texttt{key=} (unquoted) or as a bare key.
+
+\begin{itemize}
 \item Bare keys (without an equals sign) are permitted and treated as boolean
   flags with an implicit empty value. For example, \texttt{"fast\_mode, level=6"}
   contains two parameters: the flag \texttt{fast\_mode} (empty value) and
   \texttt{level} with value \texttt{"6"}.
+\end{itemize}
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Bare Keys and the Semicolon Pipeline Extension:}
+  If the semicolon separator is adopted for a future pipeline-string extension
+  (e.g.\ \texttt{"zstd level=3; shuffle"}), the filter name would need to be
+  the first token in each semicolon-separated segment.  This means a bare key
+  at position zero has a different role (filter name) from a bare key at any
+  other position (boolean flag), forcing the parser to be
+  position-aware---a significant complication.  The group should decide:
+  \begin{enumerate}
+    \item Should the pipeline extension be \emph{dropped} or deferred
+          indefinitely to avoid this complexity?
+    \item Should the filter name in a pipeline string be \emph{explicitly
+          tagged} (e.g.\ \texttt{filter=zstd, level=3; filter=shuffle})
+          so that bare keys always mean boolean flags regardless of position?
+    \item Should bare keys be \emph{disallowed} entirely, requiring boolean
+          flags to use an explicit value (e.g.\ \texttt{fast\_mode=1}),
+          which would eliminate the position-ambiguity problem?
+  \end{enumerate}
+}}
+
+\begin{itemize}
 \item The semicolon restriction (outside of quoted values) is reserved for a
   possible future pipeline-string API extension.
 \item A \texttt{NULL} or empty string means ``no parameters'' (valid for filters like
   shuffle and fletcher32).
-\item The maximum parameter string length is 4096 bytes. The library defines
-  the public constant \texttt{H5Z\_CONFIG\_STRING\_MAX} (= 4096). Strings exceeding
-  this limit MUST be rejected with \texttt{H5E\_BADVALUE} by the library before
-  the string is passed to any filter callback. Filters that legitimately
-  require longer configuration (e.g., embedded dictionary paths) must use an
-  alternative mechanism such as a file-path indirection key whose value is a
-  short path string.
+\item The library defines the public constant \texttt{H5Z\_CONFIG\_STRING\_MAX}
+  (= 4096) as a recommended maximum parameter string length.
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Note:} Implementations are not required to enforce this limit.
+  Filters that require longer configuration (e.g., embedded dictionary paths)
+  may exceed it; the constant is provided as a guideline for typical usage
+  and for implementations that wish to bound their buffer allocation.
+}}
 \item The maximum number of key-value parameters in a single parameter string
-  is 64. The library defines the public constant \texttt{H5Z\_CONFIG\_MAX\_PARAMS}
-  (= 64). Strings containing more than 64 comma-separated tokens MUST be
-  rejected with \texttt{H5E\_BADVALUE}. This bound limits memory allocation in the
-  duplicate-key detection logic and provides a defense against maliciously
-  crafted strings.
+  MUST NOT exceed the maximum number of \texttt{cd\_values} elements permitted
+  by the library.  Strings containing more tokens than this bound MUST be
+  rejected with \texttt{H5E\_BADVALUE}, as a parameter count beyond what
+  \texttt{cd\_values} can represent provides no additional expressive power
+  and is a potential vector for maliciously crafted strings.
 \item \textbf{Locale independence:} The library's parameter string parser MUST
   be locale-independent. All character classification (whitespace detection,
   case folding) MUST use the C locale (ASCII-only \texttt{tolower()}, not
@@ -216,38 +295,119 @@ The existing version-to-struct mapping in HDF5 is:
 \end{tabular}
 \end{center}
 
-The dispatch logic in \texttt{H5Zregister()} currently uses a two-way branch: if
-\texttt{version == H5Z\_CLASS\_T\_VERS} (1), treat as \texttt{H5Z\_class2\_t}; otherwise, treat
-as legacy \texttt{H5Z\_class1\_t} (since the first field of a v1 struct is the filter
-ID, which is always $\geq 256$).
+The dispatch logic in \texttt{H5Zregister()} currently works by checking
+\texttt{version != H5Z\_CLASS\_T\_VERS} first; any value other than
+\texttt{H5Z\_CLASS\_T\_VERS} is treated as a legacy \texttt{H5Z\_class1\_t} struct.
+No assumption is made about what that value will be.
 
-This MUST be extended to a three-way branch:
+This MUST be extended to also recognise \texttt{H5Z\_CLASS3\_T\_VERS} within the
+\texttt{version != H5Z\_CLASS\_T\_VERS} branch, before falling back to the legacy path:
 
 \begin{verbatim}
-    if (version == 1) -> H5Z_class2_t
-    else if (version == 2) -> H5Z_class3_t
-    else if (version >= 256) -> legacy H5Z_class1_t
-    else -> error (unknown version)
+    if (version != H5Z_CLASS_T_VERS) {
+        if (version == H5Z_CLASS3_T_VERS) -> H5Z_class3_t
+        else                              -> legacy H5Z_class1_t
+    } else -> H5Z_class2_t
 \end{verbatim}
 
 Note: When \texttt{H5\_NO\_DEPRECATED\_SYMBOLS} is defined, the legacy
 \texttt{H5Z\_class1\_t} path is compiled out entirely and any
-\texttt{version != H5Z\_CLASS\_T\_VERS} produces a hard error. The three-way branch
-must account for this conditional compilation: under
-\texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, the dispatch accepts version~1 (v2 struct) and
-version~2 (v3 struct), and rejects all other values.
+\texttt{version != H5Z\_CLASS\_T\_VERS} that is not \texttt{H5Z\_CLASS3\_T\_VERS}
+produces a hard error. The dispatch must account for this conditional
+compilation: under \texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, only version~1 (v2 struct)
+and \texttt{H5Z\_CLASS3\_T\_VERS} (v3 struct) are accepted.
 
-The existing constant \texttt{H5Z\_CLASS\_T\_VERS} (currently 1) MUST NOT be changed.
-If it were updated to~2, existing v2 plugin source code that initializes
-\texttt{.version = H5Z\_CLASS\_T\_VERS} would silently produce a struct the library
-interprets as v3, despite missing the \texttt{set\_config}/\texttt{get\_config}
-fields---causing undefined behavior (reading uninitialized memory for callback
-pointers). Instead, a new constant MUST be introduced:
+\textbf{Strict-aliasing consideration.}
+The existing dispatch in \texttt{H5Zregister()} already casts the incoming
+\texttt{const void~*} to \texttt{H5Z\_class2\_t~*} to read the \texttt{version} field.
+If the caller actually passed an \texttt{H5Z\_class3\_t}, this aliases one struct
+type through a pointer to a different type---undefined behavior under the
+C strict-aliasing rules, since the common-initial-sequence guarantee applies
+only to accesses through a union, not to raw pointer casts.  This is not a new
+problem introduced by v3; the same issue exists today for the v1/v2 dispatch.
+However, introducing a third struct variant makes it harder to ignore.
+
+The same issue arises in \texttt{H5PL\_\_open}, which currently casts the pointer
+returned by the plugin to \texttt{H5Z\_class2\_t~*} unconditionally.  For a plugin
+that returns an \texttt{H5Z\_class3\_t}, this cast is technically undefined behavior,
+and the library would subsequently access fields beyond the end of what it
+believes to be an \texttt{H5Z\_class2\_t}.  This RFC does not currently discuss
+\texttt{H5PL\_\_open}; that omission must be addressed before the design is finalised.
+
+Two code paths are affected and may warrant different remedies:
+
+\begin{enumerate}
+\item \textbf{Dynamic plugin loading} (\texttt{H5PL\_\_open} /
+  \texttt{H5PLget\_plugin\_info}).  The library already calls
+  \texttt{H5PLget\_plugin\_type()} via \texttt{dlsym} before touching the class
+  struct.  Adding a parallel version-query entry point (e.g.,
+  \texttt{H5PLget\_plugin\_version()}) would let the library obtain the
+  interface version through a normal function call---no struct access, no
+  aliasing---and cast the returned pointer to the correct type immediately.
+  If no such symbol is exported, the library assumes a v1/v2 struct.
+
+\item \textbf{Direct registration} (\texttt{H5Zregister(const void~*)}).  The
+  version field must still be read from the struct.  The implementation MUST
+  avoid casting to any specific \texttt{H5Z\_class} variant before the version
+  is known.  Acceptable approaches include reading through a \texttt{char~*}
+  cast (always permitted by the standard), \texttt{memcpy} into a local
+  variable, or a compiler-specific aliasing attribute.
+\end{enumerate}
+
+The library will require internal changes to address this for both paths.
+These changes are orthogonal to the v3 design but are surfaced by it.
+
+If \texttt{H5Z\_CLASS\_T\_VERS} were bumped to~2, filter source code that
+initializes \texttt{.version = H5Z\_CLASS\_T\_VERS} without guarding against version
+changes would silently produce a struct the library interprets as v3, despite
+missing the \texttt{set\_config}/\texttt{get\_config} fields.  However, using
+\texttt{H5Z\_CLASS\_T\_VERS} as a live version token in a struct initializer is itself
+incorrect practice: a filter SHOULD either hardcode the version number it was
+written against, or assert at build time that \texttt{H5Z\_CLASS\_T\_VERS} has the
+expected value and emit a configuration error if not.  Filter authors will need
+to audit and update their code when adopting v3 regardless of which scheme is
+chosen; this is an expected cost of the transition.
+
+The current RFC therefore proposes a new constant to make the two struct
+versions unambiguous without relying on filter authors having followed best
+practice:
 
 \begin{minted}{c}
 #define H5Z_CLASS_T_VERS   1   /* Unchanged -- used by H5Z_class2_t */
 #define H5Z_CLASS3_T_VERS  2   /* NEW -- used by H5Z_class3_t       */
 \end{minted}
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Struct Layout and Version Scheme:}
+  Three approaches are under consideration for resolving the struct layout,
+  strict-aliasing, and \texttt{H5PL\_\_open} casting issues together:
+  \begin{enumerate}
+    \item \textbf{Struct embedding.} Embed \texttt{H5Z\_class2\_t} as the first
+          member of \texttt{H5Z\_class3\_t} and bump \texttt{H5Z\_CLASS\_T\_VERS} to~2,
+          adding only the two new callback fields after the embedded base.
+          A pointer to \texttt{H5Z\_class3\_t} can then be safely cast to
+          \texttt{H5Z\_class2\_t~*}, resolving the strict-aliasing issue in both
+          \texttt{H5Zregister()} and \texttt{H5PL\_\_open}.  However, accessing fields
+          beyond the embedded base from \texttt{H5PL\_\_open} still requires knowing
+          the struct version before casting to \texttt{H5Z\_class3\_t~*}.
+    \item \textbf{Version-query callback.} Add an optional
+          \texttt{H5PLget\_plugin\_version()} symbol to the plugin interface.
+          \texttt{H5PL\_\_open} queries this via \texttt{dlsym}; if the symbol is absent,
+          the plugin is assumed to export a v1/v2 struct and the existing cast
+          to \texttt{H5Z\_class2\_t~*} is used.  If present, the returned version
+          determines which struct type to cast to, with no aliasing violation.
+          This approach avoids changes to the struct layout but adds complexity
+          to the plugin loading path.
+    \item \textbf{Status quo plus workaround.} Retain the current flat struct
+          layout and the new \texttt{H5Z\_CLASS3\_T\_VERS} constant, and address the
+          aliasing in \texttt{H5Zregister()} and \texttt{H5PL\_\_open} via
+          \texttt{char~*} reads or \texttt{memcpy}, accepting that this is
+          technically implementation-defined but works on all targeted platforms.
+  \end{enumerate}
+  Filter authors will need to update their code for any of these schemes.
+  The group should decide which approach to adopt, noting that
+  \texttt{H5PL\_\_open} must be explicitly covered by whatever is chosen.
+}}
 
 The version-to-struct mapping table MUST be documented in \texttt{H5Zdevelop.h}.
 
@@ -297,12 +457,12 @@ typedef herr_t (*H5Z_set_config_func_t)(
     size_t        cd_values_size
 );
 
-typedef ssize_t (*H5Z_get_config_func_t)(
+typedef herr_t (*H5Z_get_config_func_t)(
     unsigned          flags,
     size_t            cd_nelmts,
     const unsigned    cd_values[],
     char             *buf,
-    size_t            buf_size
+    size_t           *buf_size
 );
 
 typedef struct H5Z_class3_t {
@@ -341,6 +501,19 @@ typedef struct H5Z_class3_t {
   The \texttt{description} field may be \texttt{NULL}; no validation rules apply
   beyond requiring printable text. It is not used for registry lookup or
   any programmatic dispatch---it is purely informational.
+
+  The dual role of the \texttt{name} field across v2 and v3 (debug comment
+  in v2, canonical identifier in v3) further underscores why plugin names
+  cannot be treated as authoritative identification sources without knowing
+  the struct version.  Any code that consumes the \texttt{name} or
+  \texttt{description} field must branch on the plugin version, and
+  \texttt{H5Pget\_filter2} itself requires v2/v3 conditional logic.  This
+  pattern will recur in several places in the library and potentially in
+  third-party code that inspects filter metadata.  A migration guide for
+  plugin authors upgrading from v2 to v3 MUST be produced alongside this
+  RFC, covering at minimum: the new \texttt{name}/\texttt{description} field
+  semantics, the version constant change, and the locations in the library
+  where v2/v3 branching is required.
 \end{itemize}
 
 \subsection{Callback Specifications}
@@ -352,17 +525,12 @@ typedef struct H5Z_class3_t {
 \item \texttt{params}---The key-value parameter string (e.g.,
   \texttt{"mode=rate, rate=3.5"}). \texttt{NULL} if no parameters were provided.
 \item \texttt{flags}---On input, contains the flags value from the API call. The
-  callback MAY modify this value. If the callback modifies flags, the modified
-  value is what \texttt{H5Pset\_filter\_by\_name} writes into the DCPL. This gives the
-  filter the final say on properties like \texttt{H5Z\_FLAG\_MANDATORY} vs.\
-  \texttt{H5Z\_FLAG\_OPTIONAL}. If the callback modifies \texttt{flags}, it MUST push a
-  warning onto the error stack via \texttt{H5Epush} with severity \texttt{H5E\_WARN} and
-  class \texttt{H5E\_ARGS} before returning. This is not a hard error---callers that
-  do not inspect the error stack are unaffected, and the modified flags value
-  is still written to the DCPL. Callers that wish to detect flag overrides MAY
-  check the error stack after \texttt{H5Pset\_filter\_by\_name} returns. Callbacks that
-  accept the caller's flags without modification MUST NOT push this warning.
-  This contract MUST be documented in \texttt{H5Zdevelop.h}.
+  callback MAY modify this value; the modified value is what
+  \texttt{H5Pset\_filter\_by\_name} writes into the DCPL. This gives the filter the
+  final say on properties like \texttt{H5Z\_FLAG\_MANDATORY} vs.\
+  \texttt{H5Z\_FLAG\_OPTIONAL}. Callers that need to detect a flag override can
+  compare the value they passed with the flags returned by
+  \texttt{H5Pget\_filter2} after the call.
 \item \texttt{cd\_nelmts}---On input, points to a value of~0. On output, set to the
   number of elements written to \texttt{cd\_values} (or the number of elements
   required, if \texttt{cd\_values} is \texttt{NULL}).
@@ -383,25 +551,39 @@ typedef struct H5Z_class3_t {
   Additionally, the library MUST validate on the second pass that
   \texttt{cd\_nelmts} does not exceed the allocated capacity; if it does, the
   library returns an error rather than writing out of bounds.
-\item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array (0 when
-  \texttt{cd\_values} is \texttt{NULL}).
+
+  The library MUST also verify that \texttt{cd\_nelmts} does not exceed
+  \texttt{UINT16\_MAX}, the current file-format limit on the number of
+  \texttt{cd\_values} elements per filter entry.  A callback returning a count
+  larger than this MUST be rejected with \texttt{H5E\_BADVALUE}.  The parameter
+  type is \texttt{size\_t} rather than a narrower type so that the limit can be
+  raised in a future format revision without changing the callback signature.
+\item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array in
+  bytes (0 when \texttt{cd\_values} is \texttt{NULL}).
 \item Returns non-negative on success, negative on failure.
 \end{itemize}
 
 The callback SHOULD use \texttt{H5Epush} to report meaningful error messages for
 invalid parameters.
 
-\verysubsection{Unknown-key rejection}
-A \texttt{set\_config} callback for a v3 filter MUST reject parameter strings
-containing keys that the filter does not recognize, returning a negative value
-and pushing \texttt{H5E\_BADVALUE} with a message identifying the unrecognized
-key. This is the primary defense against misspelled parameter names (e.g.,
+\verysubsection{Unknown-key handling}
+A \texttt{set\_config} callback SHOULD reject unrecognized keys by returning a
+negative value and pushing \texttt{H5E\_BADVALUE} with a message identifying the
+key.  This is the primary defense against misspelled parameter names (e.g.,
 \texttt{"clevl=6"} instead of \texttt{"clevel=6"}), which would otherwise be
-silently ignored and produce unexpected default behavior. Because the string
-API does not have the compile-time safety of named constants, strict
-unknown-key rejection at \texttt{set\_config} time is essential for usability.
-All built-in filter \texttt{set\_config} callbacks enforce this requirement.
-This requirement MUST be documented in \texttt{H5Zdevelop.h} as part of the
+silently ignored.  Because the string API does not have the compile-time safety
+of named constants, rejecting unknown keys is strongly recommended for
+usability.
+
+However, a filter MAY choose to silently ignore unrecognized keys to support
+forward compatibility: a caller that targets a newer version of a plugin can
+write a parameter string containing new keys and have it accepted by an older
+version of the same plugin without error, falling back to defaults for the
+unknown parameters.  Filter authors who choose this approach MUST document it
+clearly so that callers are not misled into believing all keys were acted upon.
+
+All built-in filter \texttt{set\_config} callbacks reject unknown keys.  This
+guidance MUST be documented in \texttt{H5Zdevelop.h} as part of the
 \texttt{H5Z\_set\_config\_func\_t} contract.
 
 \verysubsection{Locale requirement for \texttt{set\_config}}
@@ -421,18 +603,24 @@ round-trip correctness. This requirement MUST be documented in
 \verysubsection{\texttt{H5Z\_get\_config\_func\_t}}
 
 \begin{itemize}
-\item Reconstructs a human-readable parameter string from \texttt{cd\_values}.
-\item Follows the standard HDF5 buffer-size query pattern: if \texttt{buf} is
-  \texttt{NULL} or \texttt{buf\_size} is~0, returns the required size.
-\item Returns the length of the string (excluding NUL) on success, negative on
-  failure.
-\item The reconstructed string is not required to be identical to the original
-  input string. Semantic equivalence is sufficient (e.g., \texttt{"rate=3.5"} may
-  be reconstructed as \texttt{"rate=3.500000"}). However, the output MUST conform
-  to the same grammar as \texttt{set\_config} input (\SectionRef{sec:param-rules}),
-  including support for bare keys and quoted values where appropriate, so that
-  the output of \texttt{get\_config} is valid input to \texttt{set\_config} for
-  round-tripping.
+\item Provides a best-effort human-readable representation of the filter
+  configuration encoded in \texttt{cd\_values}.  Due to the lossy nature of the
+  \texttt{cd\_values} encoding (e.g., floating-point values quantised to integers,
+  information collapsed during the \texttt{set\_config} conversion), the output
+  cannot in general be guaranteed to round-trip back to an identical
+  configuration.  See the note on string reconstruction in
+  \SectionRef{sec:introspection}.
+\item Follows the standard HDF5 buffer-size query pattern: \texttt{buf\_size} is
+  an in/out parameter. On entry, \texttt{*buf\_size} is the capacity of \texttt{buf};
+  on return, \texttt{*buf\_size} is set to the number of bytes required (excluding
+  the NUL terminator). If \texttt{buf} is \texttt{NULL} or the capacity is~0, the
+  callback MUST still set \texttt{*buf\_size} to the required size and return
+  success, enabling a two-pass size query.
+\item Returns \texttt{herr\_t}: zero on success, negative on failure.
+\item The output MUST conform to the grammar defined in
+  \SectionRef{sec:param-rules} so that it is at least valid input to
+  \texttt{set\_config}, even if the resulting configuration may differ from the
+  original due to precision loss or encoding limitations.
 \item \textbf{Locale requirement:} \texttt{get\_config} implementations that format
   numeric values (e.g., floating-point parameters) MUST use the \texttt{"C"} locale
   for number formatting. Process-wide locale settings (e.g., a locale that
@@ -488,6 +676,33 @@ herr_t H5Pset_filter_by_name(
 );
 \end{minted}
 
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- API Shape and Filter Identification:}
+  The choice to identify a filter by name rather than by integer ID warrants
+  scrutiny.  The application already knows which filter it wants and what
+  parameters it expects, so name-based lookup does not meaningfully decouple
+  the caller from the filter.  The name-registry problems discussed in
+  \SectionRef{sec:name-discovery} mean that name-based identification
+  introduces failure modes that ID-based identification avoids.
+  Two alternatives are worth considering:
+  \begin{enumerate}
+    \item \textbf{\texttt{H5Pset\_filter2}}: an updated version of the existing
+          function that accepts a \texttt{const char~*params} string alongside
+          the existing \texttt{H5Z\_filter\_t id} and \texttt{cd\_values} arguments.
+          The filter is still identified by numeric ID (no registry lookup),
+          and the string is passed directly to the filter's \texttt{set\_config}
+          callback.  This is the closest analogue to the existing VFD callback
+          pattern and avoids all name-resolution complexity.
+    \item \textbf{\texttt{H5Pset\_filter\_by\_value}}: same as above but modelled
+          explicitly on the VFD \texttt{\_by\_value} naming convention, making
+          the parallel intent clear.
+  \end{enumerate}
+  The name-based API may still be useful for scripting or configuration-file
+  driven workflows where the filter ID is not known at compile time, but the
+  group should decide whether that use case justifies the added complexity and
+  whether it belongs in this RFC or a separate one.
+}}
+
 \verysubsection{Description}
 Looks up the filter identified by \texttt{name}, configures it using
 the key-value parameter string \texttt{params}, and appends it to the existing filter
@@ -511,10 +726,8 @@ flags through the filter's \texttt{set\_config} callback, which MAY modify them.
 allows filters to enforce constraints (e.g., SZIP unconditionally forces
 \texttt{H5Z\_FLAG\_OPTIONAL}). This is a deliberate asymmetry: filters configured via
 string may override the caller's flag choice based on internal requirements.
-When a callback does modify \texttt{flags}, it MUST push a non-fatal warning
-(\texttt{H5Epush} with severity \texttt{H5E\_WARN}, class \texttt{H5E\_ARGS}) so that callers who
-want to detect the override can inspect the error stack without receiving a
-hard error. Callers that do not check the stack are unaffected. See
+Callers that need to detect a flag override can compare the flags they passed
+with the flags returned by \texttt{H5Pget\_filter2} after the call. See
 \SectionRef{sec:callback-specs}.
 
 If the filter name is not found in the in-memory name registry, the library
@@ -553,18 +766,13 @@ Non-negative on success; negative on failure.
   \texttt{H5Pset\_filter} with raw \texttt{cd\_values} instead.
 \item \texttt{H5E\_BADVALUE}---The parameter string is malformed or rejected by the
   filter's \texttt{set\_config} callback.
-\item \texttt{H5E\_CANTINIT}---The number of \texttt{cd\_values} elements returned by the
-  filter's \texttt{set\_config} callback exceeds \texttt{H5Z\_COMMON\_CD\_VALUES} (8) and
-  the target DCPL is associated with a compact dataset or shared object
-  header, where the standard encoding allocates space for at most
-  \texttt{H5Z\_COMMON\_CD\_VALUES} elements per filter entry. The library MUST
-  return this error with an informative message rather than silently
-  truncating the \texttt{cd\_values} array. Callers that encounter this error
-  MUST either switch to a non-compact layout or use a filter whose
-  \texttt{cd\_values} count does not exceed the limit. Note that
-  \texttt{H5Pset\_filter} has the same implicit restriction; this API makes the
-  limit explicit because user-friendly string configuration raises the
-  expectation that all valid filter configurations are accepted.
+\item \texttt{H5E\_CANTINIT}---The \texttt{set\_config} callback returned more
+  \texttt{cd\_values} elements than the library can accommodate.
+  Note: \texttt{H5Z\_COMMON\_CD\_VALUES} is~4, not a hard cap; the current code
+  permits this to be exceeded regardless of dataset layout.  The precise
+  upper bound and the conditions under which it applies need to be
+  verified against the current implementation before this error condition
+  can be specified normatively.
 \end{itemize}
 
 \verysubsection{Usage example}
@@ -634,9 +842,43 @@ parameter string. After \texttt{H5Pset\_filter\_by\_name} resolves the string in
 \texttt{cd\_values}, only the \texttt{cd\_values} are stored in the property list (identical
 to \texttt{H5Pset\_filter}). These functions rely on the filter's \texttt{get\_config}
 callback to reconstruct a human-readable string from the stored \texttt{cd\_values}.
-Consequently, the reconstructed string may differ in formatting from the
-original input (e.g., \texttt{"rate=3.5"} may become \texttt{"rate=3.500000"}). Consumers
-MUST NOT rely on exact string equality between input and output.
+
+This reconstruction is inherently limited. The \texttt{cd\_values} encoding was
+designed to carry opaque integer data, not to serve as a lossless serialisation
+of a key-value string. For some filters (e.g., ZFP), floating-point
+configuration values are quantised during conversion to unsigned integers; the
+original floating-point value cannot be exactly recovered from the stored
+integer, and the reconstructed string will reflect the rounded value rather
+than what the user originally typed. Consumers MUST NOT rely on exact string
+equality between input and output, and SHOULD treat the reconstructed string
+as informational only.
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- On-disk storage of configuration:}
+  True round-tripping requires changing what is stored on-disk. Three
+  approaches are worth considering:
+  \begin{enumerate}
+    \item \textbf{Store the raw parameter string.} Simple to implement, but
+          potentially wasteful of space for long strings, and displays the
+          user's original input rather than the post-processing values
+          (e.g., a rounded rate) that the filter actually used.
+    \item \textbf{Store tokenized key-value pairs.} The library tokenizes the
+          string once and stores the key-value pairs directly in the pipeline
+          message. More compact than the raw string, and consistent with the
+          proposal that tokenization should be the library's responsibility
+          rather than each filter's. The stored pairs would reflect the
+          original input values, not the post-processing values.
+    \item \textbf{Store post-processing key-value pairs.} After the filter's
+          \texttt{set\_config} callback runs, the filter reports back the
+          effective key-value pairs (e.g., the rounded rate that was actually
+          applied). These are stored in the pipeline message. Tools like
+          \texttt{h5dump} would display what the filter actually used, not what
+          the user typed---arguably more useful, but requires a new callback
+          contract for filters to report their effective configuration.
+  \end{enumerate}
+  All three options require a format change. The group should decide whether
+  any of them is in scope for this RFC or should be deferred to a follow-on.
+}}
 
 \verysubsection{Note on \texttt{H5Pget\_filter2}}
 The existing \texttt{H5Pget\_filter2} function returns a
@@ -653,6 +895,27 @@ v3 plugin might have \texttt{name = "zfp"} and
 struct; \texttt{H5Pget\_filter2} returns the description, while
 \texttt{H5Pget\_filter\_name\_by\_idx} returns \texttt{"zfp"}. The two functions serve
 different purposes and may return different strings for the same pipeline entry.
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- \texttt{H5Pget\_filter2} semantics and new introspection API:}
+  Changing \texttt{H5Pget\_filter2} to return \texttt{description} (falling back to
+  \texttt{name}) alters the semantics of an existing function in a way that may
+  surprise callers, and the benefit is unclear given that the
+  \texttt{name}/\texttt{description} split is itself a consequence of the v3 design
+  choices.  Similarly, \texttt{H5Pget\_filter\_name\_by\_idx} is only meaningful if
+  there is a concrete use case for retrieving the canonical registered name
+  independently of the human-readable description.  The group should decide:
+  \begin{enumerate}
+    \item Should \texttt{H5Pget\_filter2} behaviour be left unchanged for v3
+          plugins (always returning \texttt{name}), avoiding any semantic drift?
+    \item Is there a demonstrated use case for \texttt{H5Pget\_filter\_name\_by\_idx}
+          that justifies adding it, or should it be deferred until a concrete
+          need is identified?
+    \item If the name-based API (\SectionRef{sec:set-filter-by-name}) is
+          reconsidered in favour of an ID-based approach, both of these
+          introspection functions may become unnecessary.
+  \end{enumerate}
+}}
 
 \verysubsection{Parameters (\texttt{H5Pget\_filter\_name\_by\_idx})}
 
@@ -697,8 +960,7 @@ htri_t H5Zconfig_get_param(
     const char *params,
     const char *key,
     char       *value_buf,
-    size_t      buf_size,
-    size_t     *val_len
+    size_t     *buf_size
 );
 \end{minted}
 
@@ -714,13 +976,21 @@ Returns positive (\texttt{> 0}) if the key is present in \texttt{params}, \textt
 is not present, or negative on error (malformed string). The \texttt{htri\_t} return
 type (HDF5's standard tri-state boolean) cleanly separates three cases: found,
 not found, and error---without triggering the error stack for a missing
-optional parameter. If the key is present and \texttt{value\_buf} is non-\texttt{NULL},
-the processed value is written to \texttt{value\_buf} (quotes stripped,
-\texttt{""} unescaped---the filter sees the final usable string, not the raw grammar
-tokens). If \texttt{val\_len} is non-\texttt{NULL}, it is set to the length of the
-processed value string (excluding NUL). A bare key like \texttt{"fast\_mode"} (no
-equals sign) returns positive with \texttt{val\_len = 0} and an empty
-\texttt{value\_buf}, distinguishable from an absent key (returns \texttt{0}).
+optional parameter.
+
+\texttt{buf\_size} is an in/out parameter following the standard HDF5 size-query
+pattern. On entry, \texttt{*buf\_size} is the capacity of \texttt{value\_buf}. On
+return, \texttt{*buf\_size} is set to the number of bytes required for the processed
+value (excluding NUL), allowing callers to allocate correctly on a first pass.
+If \texttt{value\_buf} is \texttt{NULL} or \texttt{*buf\_size} is~0 on entry, the function
+performs a size query only and does not write to \texttt{value\_buf}.  When the key
+is found and \texttt{value\_buf} is non-\texttt{NULL}, the processed value is written as a
+NUL-terminated string (quotes stripped, \texttt{""} unescaped).  The caller can use
+\texttt{strlen} on the result; no separate length output is provided.
+
+A bare key like \texttt{"fast\_mode"} (no equals sign) returns positive with
+\texttt{*buf\_size = 0} and an empty string in \texttt{value\_buf}, distinguishable
+from an absent key (returns \texttt{0}).
 
 This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
 \texttt{H5Zpublic.h} to limit the public API surface.
@@ -743,13 +1013,12 @@ my_filter_set_config(const char *params, unsigned *flags,
 {
     /* ---- 1. Parse parameters (identical on both passes) ---- */
     char   val_buf[64];
-    size_t val_len;
+    size_t buf_size = sizeof(val_buf);
     int    level  = 6;         /* default */
 
     if (params) {
         htri_t found = H5Zconfig_get_param(params, "level",
-                                           val_buf, sizeof(val_buf),
-                                           &val_len);
+                                           val_buf, &buf_size);
         if (found < 0) return FAIL;
         if (found > 0) {
             char *end;
@@ -765,12 +1034,12 @@ my_filter_set_config(const char *params, unsigned *flags,
 
     /* ---- 3. Populate cd_values only on the second pass ---- */
     if (cd_values != NULL) {
-        if (cd_values_size < *cd_nelmts)
+        if (cd_values_size < *cd_nelmts * sizeof(*cd_values))
             return FAIL;               /* should not happen */
         cd_values[0] = (unsigned)level;
     }
 
-    /* ---- 4. Optionally override flags (push warning) ---- */
+    /* ---- 4. Optionally override flags ---- */
     /* (void)flags;  -- accept caller's flags unchanged */
 
     return SUCCEED;
@@ -784,10 +1053,19 @@ my_filter_set_config(const char *params, unsigned *flags,
 \item Parameter parsing MUST be performed on both passes (not cached) to
   ensure the count is consistent.
 \item If \texttt{cd\_values} is non-\texttt{NULL}, verify
-  \texttt{cd\_values\_size >= *cd\_nelmts} before writing.
+  \texttt{cd\_values\_size >= *cd\_nelmts * sizeof(*cd\_values)} before writing.
 \item For floating-point conversions, use C-locale \texttt{strtod} (see locale
   requirements in \SectionRef{sec:param-rules} and \SectionRef{sec:callback-specs}).
 \end{itemize}
+
+\textbf{Note on double parsing:} Because \texttt{cd\_nelmts} may vary depending on
+the parameter values (not just their presence), the two-pass protocol requires
+the callback to parse the parameter string twice.  Filters that wish to avoid
+this overhead may allocate a worst-case \texttt{cd\_values} buffer on the stack
+(bounded by \texttt{UINT16\_MAX} but in practice much smaller) and skip the
+size-query pass by always reporting the maximum count, filling unused slots
+with a sentinel value.  The library does not mandate which approach is used;
+both are conforming.
 
 
 \subsection{Design Alternative: Pipeline-in-a-String API}
@@ -915,6 +1193,30 @@ that display the output of \texttt{H5Pget\_filter2}
 \subsection{Explicit Registration and Lookup}
 \label{sec:explicit-registration}
 
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Application Access to the Name Registry:}
+  Exposing \texttt{H5Zregister\_name} to applications gives them the ability to
+  remap arbitrary names to arbitrary filter IDs (e.g., mapping \texttt{"zfp"} to
+  the ID for zlib), creating opportunities for misconfiguration that would be
+  difficult to diagnose.  It also complicates support, since the registry
+  state becomes part of the application's environment rather than a
+  library-controlled invariant.  Unless a concrete use case is presented that
+  cannot be served by implicit self-registration (via \texttt{H5Zregister} with an
+  \texttt{H5Z\_class3\_t}) or on-demand plugin loading, the group should consider:
+  \begin{enumerate}
+    \item \textbf{Removing \texttt{H5Zregister\_name} entirely} from the public API,
+          leaving name registration as an internal operation performed only
+          by \texttt{H5Zregister} when it processes an \texttt{H5Z\_class3\_t}.
+    \item \textbf{Restricting it to \texttt{H5Zdevelop.h}} so it is available to
+          plugin authors for testing but not to general application code.
+    \item \textbf{Retaining it} only if a specific use case (e.g., registering
+          aliases for v2 plugins that cannot self-register) justifies the risk.
+  \end{enumerate}
+  \texttt{H5Zlookup\_by\_name} and \texttt{H5Zfilter\_avail\_by\_name} are read-only and
+  do not carry the same risk; the concern applies specifically to the
+  write path (\texttt{H5Zregister\_name}).
+}}
+
 \begin{minted}{c}
 herr_t H5Zregister_name(H5Z_filter_t id, const char *canonical_name);
 \end{minted}
@@ -989,6 +1291,23 @@ A second use case arises in test harnesses that need to register a name alias
 for a mock filter before the mock is registered, so that the code under test
 can use \texttt{H5Pset\_filter\_by\_name} with the expected name.
 
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Validity of these use cases:}
+  Both use cases above have been questioned.  For the facility use case, the
+  name-to-ID mapping could be maintained entirely on the facility's side:
+  the initialization library already reads \texttt{hdf5.conf} and holds the
+  mapping in memory, so it can resolve a name to an ID itself and pass the
+  ID directly to HDF5 at the point of use.  Storing the mapping inside HDF5
+  does not change when plugins are loaded---lazy loading is orthogonal to
+  where the name-to-ID table lives.  The validation-at-startup benefit can be
+  achieved by the facility library validating its own in-memory table without
+  involving HDF5 at all.  For the test-harness use case, this amounts to
+  testing the pre-registration API itself rather than providing a genuine
+  independent motivation.  The group should decide whether these use cases
+  justify the added API surface and registry complexity, or whether
+  \texttt{H5Zpreregister\_name} (and \texttt{H5Zregister\_name}) should be removed.
+}}
+
 \begin{minted}{c}
 herr_t H5Zpreregister_name(H5Z_filter_t id, const char *canonical_name);
 \end{minted}
@@ -1035,7 +1354,7 @@ for the same (id, name) pair are likewise silently discarded.
 \textbf{Summary of call sequences:}
 
 \begin{center}
-\begin{tabular}{lll}
+\begin{tabularx}{\textwidth}{llX}
 \toprule
 \textbf{Scenario} & \textbf{API} & \textbf{Constraint} \\
 \midrule
@@ -1043,7 +1362,7 @@ Alias after registration & \texttt{H5Zregister\_name} & Filter must be registere
 Alias before registration & \texttt{H5Zpreregister\_name} & Filter may be registered later \\
 v3 plugin self-names & Auto-registration & Happens inside \texttt{H5Zregister} \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{center}
 
 
@@ -1201,16 +1520,7 @@ On Windows, plugins are DLLs rather than \texttt{.so} files, and
 \texttt{HDF5\_PLUGIN\_PATH} uses the semicolon (\texttt{;}) as the directory separator
 rather than the colon used on POSIX systems. The name-based scan iterates all
 files in each plugin directory and attempts to load each candidate, which is
-the same behavior as the existing integer-ID scan. On Windows, this
-directory-wide enumeration is subject to time-of-check/time-of-use (TOCTOU)
-races (a DLL may be added, removed, or replaced between the directory listing
-and the \texttt{LoadLibrary} call). This is a pre-existing issue that affects
-integer-ID plugin loading on Windows and is not introduced by this design.
-However, implementations SHOULD document that name-based plugin discovery on
-Windows carries the same TOCTOU caveats as the existing plugin loading
-mechanism, and applications with security requirements SHOULD pre-register
-all required plugins via \texttt{H5Zregister} rather than relying on on-demand
-directory scanning.
+the same behavior as the existing integer-ID scan.
 
 
 \subsection{Relationship to the HDF Group Filter Registry}

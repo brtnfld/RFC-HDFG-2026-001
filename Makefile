@@ -4,7 +4,7 @@
 
 LATEXMK=latexmk -bibtex
 
-MAIN=HDF5_RFC
+MAIN=RFC-HDFG-2026-001 
 # Require latexdiff >= 1.1.0 to run properly
 REVDIFF=6254
 

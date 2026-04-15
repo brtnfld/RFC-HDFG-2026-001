@@ -23,12 +23,16 @@
   to maintain continuity for downstream consumers.
 }}\medskip
 
-Although upgrading a filter plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
-introduces no source-level incompatibility (existing call sites continue to
-compile and link without modification) and no binary ABI incompatibility (the
-two structs are distinct types, not a modified version of the same struct), it
-does entail a \emph{semantic} shift in the role of the \texttt{name} field that plugin
-authors and application maintainers must understand.
+Upgrading a filter plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
+introduces no source-level incompatibility at existing \emph{call sites}
+(code that calls \texttt{H5Zregister} continues to compile and link without
+modification). However, the plugin binary itself \emph{is} binary incompatible:
+the plugin shared library must be recompiled against the new struct definition,
+and any existing binary that exports an \texttt{H5Z\_class2\_t} cannot simply be
+reused as an \texttt{H5Z\_class3\_t} plugin without recompilation. Plugin
+distributors must ship updated binaries. In addition, the upgrade entails a
+\emph{semantic} shift in the role of the \texttt{name} field that plugin authors
+and application maintainers must understand.
 
 \verysubsection{Before (v2): freeform debug comment}
 In \texttt{H5Z\_class2\_t}, the \texttt{name} field is documented as a ``Comment for
@@ -58,9 +62,13 @@ If \texttt{description} is \texttt{NULL}, it falls back to the \texttt{name} fie
 canonical identifier). This means that plugin authors who populate
 \texttt{description} during the v2-to-v3 upgrade preserve full backward
 compatibility for applications that display the \texttt{H5Pget\_filter2} output.
-Only plugins that leave \texttt{description} as \texttt{NULL} will cause a
-user-visible change (the shorter canonical name appearing where a longer
-description was previously shown).
+Plugins that leave \texttt{description} as \texttt{NULL} will cause a
+user-visible change in the \texttt{H5Pget\_filter2} output (the shorter canonical
+name appearing where a longer description was previously shown). Depending on
+what callers expect from \texttt{H5Pget\_filter2}, this may constitute an API
+behavioral change even if the function signature is unchanged. Applications
+that compare or display the \texttt{H5Pget\_filter2} string should be audited as
+part of any v2-to-v3 plugin migration.
 
 \verysubsection{Migration guidance}
 
@@ -221,7 +229,7 @@ directly with hand-crafted strings.
 \begin{center}
 \small
 \renewcommand{\arraystretch}{1.25}
-\begin{tabularx}{\textwidth}{lXl}
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash\hsize=0.7\hsize}X>{\raggedright\arraybackslash\hsize=1.3\hsize}X}
 \toprule
 \textbf{Test ID} & \textbf{Input} & \textbf{Expected result} \\
 \midrule
@@ -304,10 +312,11 @@ These tests verify the two-pass \texttt{set\_config} contract
   second pass triggers a library error (not a buffer overrun).
 \item \texttt{cb-03}: A mock callback that returns a smaller \texttt{cd\_nelmts} on the
   second pass triggers a library error (not silent truncation).
-\item \texttt{cb-04}: A callback that modifies \texttt{flags} MUST push an
-  \texttt{H5E\_WARN}/\texttt{H5E\_ARGS} warning; verify via \texttt{H5Eget\_msg}.
-\item \texttt{cb-05}: A callback that does NOT modify \texttt{flags} MUST NOT push the
-  warning; verify the error stack remains empty after the call.
+\item \texttt{cb-04}: A callback that modifies \texttt{flags} does so silently;
+  verify the updated flags value by comparing the input flags with those
+  returned by \texttt{H5Pget\_filter2} after the call.
+\item \texttt{cb-05}: A callback that does NOT modify \texttt{flags} leaves the
+  error stack empty after the call.
 \item \texttt{cb-06}: \texttt{get\_config} called with \texttt{buf=NULL} returns the required
   length without writing any bytes.
 \item \texttt{cb-07}: \texttt{get\_config} output is a valid \texttt{set\_config} input (round-trip
@@ -526,20 +535,31 @@ two-pass size-query protocol). For typical scientific workloads where dataset
 creation is infrequent relative to I/O, this overhead is negligible.
 
 In ``small data'' workloads that create thousands of lightweight datasets in a
-tight loop, the per-dataset overhead of string parsing could become
-measurable. However, the dominant cost in such patterns is already the
-property list manipulation and object header creation, not parameter
-configuration. The string API adds at most one \texttt{strlen} + one
-\texttt{O(n)} parse + two callback invocations per filter per dataset, where
-$n$ is the string length. For a typical string like \texttt{"level=6"} (7~bytes),
-this is on the order of tens of nanoseconds---well below the microsecond-scale
-cost of \texttt{H5Dcreate} itself.
+tight loop, the per-dataset overhead of string parsing could become measurable,
+though the dominant cost is already property list manipulation and object header
+creation.
 
 Applications that are sensitive to dataset-creation latency and configure the
 same filter pipeline repeatedly SHOULD construct the DCPL once using
-\texttt{H5Pset\_filter\_by\_name} and reuse it across multiple
-\texttt{H5Dcreate} calls, avoiding repeated parsing. This is already the
-recommended practice for \texttt{H5Pset\_filter} and does not change with the
-new API.
+\texttt{H5Pset\_filter\_by\_name} and reuse it across multiple \texttt{H5Dcreate}
+calls, avoiding repeated parsing. This is already the recommended practice for
+\texttt{H5Pset\_filter} and does not change with the new API.
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- Pre-tokenization on the DCPL:}
+  An alternative to the current design---where each \texttt{set\_config} callback
+  re-parses the raw parameter string via \texttt{H5Zconfig\_get\_param}---is to
+  perform tokenization once at the point \texttt{H5Pset\_filter\_by\_name} is called
+  and store the resulting key-value token array on the DCPL.  The
+  \texttt{set\_config} callback would then receive pre-parsed tokens rather than
+  the raw string, eliminating redundant parsing.  This also becomes necessary
+  if the pipeline-string extension (\SectionRef{sec:pipeline-string}) is
+  adopted: a single string encoding parameters for multiple filters requires
+  the library to tokenize and dispatch tokens to the correct filter anyway,
+  so the callback interface would need to change to accept tokens regardless.
+  The group should decide whether to revise the callback interface now to
+  accept pre-parsed tokens, or retain the current raw-string interface and
+  revisit if the pipeline-string extension is adopted.
+}}
 
 \end{document}
