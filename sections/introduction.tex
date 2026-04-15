@@ -1,0 +1,115 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+\section{Introduction}
+\label{sec:intro}
+
+\subsection{Purpose}
+
+This document describes the high-level design for a new string-based interface
+for configuring HDF5 I/O filters. The feature adds a usability layer on top of
+the existing filter machinery, allowing users to specify filter names and
+parameters as human-readable strings rather than constructing raw \texttt{cd\_values}
+arrays of \texttt{unsigned int}.
+
+\subsection{Scope}
+
+This design covers:
+
+\begin{itemize}
+\item New public API functions in the \texttt{H5P} and \texttt{H5Z} modules for string-based
+  filter configuration.
+\item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
+  string-configuration callbacks.
+\item A canonical name registry for filter lookup by name.
+\item Extensions to the plugin loading infrastructure (\texttt{H5PL}) for name-based
+  plugin discovery.
+\item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
+\item The Fortran and Java bindings that ship with HDF5 (3 \texttt{H5P} subroutines and
+  4 \texttt{H5Z} subroutines for Fortran; corresponding Java wrappers).
+\end{itemize}
+
+This design does not cover:
+
+\begin{itemize}
+\item Changes to the on-disk format or object header layout.
+\item Changes to the filter execution pipeline itself.
+\item External high-level language binding implementations (h5py, etc.), though
+  the design is motivated in part by their needs.
+\item Data-attribute-dependent compression strategies (e.g., choosing different
+  filters based on dimensionality or datatype), which could be layered on top
+  of this feature in the future.
+\end{itemize}
+
+
+\section{Motivation}
+\label{sec:motivation}
+
+\subsection{Problem Statement}
+
+The current generic interface for configuring HDF5 filters is \texttt{H5Pset\_filter},
+which accepts an array of \texttt{unsigned int} values (\texttt{cd\_values}). This interface
+presents three categories of problems.
+
+\verysubsection{Type punning}
+Filters that accept floating-point parameters (rates,
+tolerances, precision thresholds) require users to manually bit-cast \texttt{double}
+or \texttt{float} values into one or more \texttt{unsigned int} slots. This is error-prone,
+endian-sensitive, and difficult or impossible to express naturally in
+high-level languages such as Python, Java, and MATLAB without dedicated
+wrapper code. For example, configuring H5Z-ZFP in rate mode currently
+requires:
+
+\begin{minted}{c}
+unsigned int cd_vals[4];
+double rate = 3.5;
+cd_vals[0] = H5Z_ZFP_MODE_RATE;
+memcpy(&cd_vals[2], &rate, sizeof(double));
+H5Pset_filter(plist, H5Z_FILTER_ZFP, flags, 4, cd_vals);
+\end{minted}
+
+\verysubsection{CLI usability}
+Command-line tools such as \texttt{h5repack} require users to pass
+opaque integer sequences (e.g., \texttt{-f UD=32013,0,4,1,0,0,1074921472}). External
+helper scripts exist solely to translate human-readable settings into these
+sequences.
+
+\verysubsection{Opaque introspection}
+When examining a file's dataset creation properties,
+the \texttt{cd\_values} array is meaningless without external documentation. There is
+no standard way to recover the original intent of the configuration (e.g.,
+``ZFP rate mode, rate=3.5'').
+
+\subsection{Precedent Within HDF5}
+
+HDF5 1.14 introduced string-based configuration for Virtual File Drivers:
+
+\begin{minted}{c}
+H5Pset_driver_by_name(fapl, "sec2", NULL)
+\end{minted}
+
+This API allows drivers to be selected and configured by name at runtime
+without requiring compiled-in constants. The VOL subsystem provides analogous
+by-name functionality through \texttt{H5VLregister\_connector\_by\_name()} and
+\texttt{H5VLget\_connector\_id\_by\_name()}, though it does not have a direct
+\texttt{H5Pset\_vol\_by\_name} equivalent. The proposed filter configuration API follows
+the VFD pattern most closely and extends it with structured parameter passing.
+
+\subsection{Goals}
+
+\begin{enumerate}
+\item Users MUST be able to configure any filter using human-readable named
+   parameters.
+\item Filter plugins MUST be addressable by a canonical name, without requiring
+   compiled-in integer constants.
+\item The on-disk format MUST NOT change.
+\item All existing APIs, plugins, and call sites MUST continue to work without
+   modification.
+\item The design MUST support both built-in and dynamically loaded plugin
+   filters.
+\item The API MUST be consistent with the structure and conventions of existing
+   HDF5 public APIs.
+\end{enumerate}
+
+\end{document}

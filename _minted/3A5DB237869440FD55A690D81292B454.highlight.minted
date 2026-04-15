@@ -1,0 +1,31 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{k}{typedef}\PYG{+w}{ }\PYG{n}{herr\PYGZus{}t}\PYG{+w}{ }\PYG{p}{(}\PYG{o}{*}\PYG{n}{H5Z\PYGZus{}set\PYGZus{}config\PYGZus{}func\PYGZus{}t}\PYG{p}{)}\PYG{p}{(}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{   }\PYG{o}{*}\PYG{n}{params}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{     }\PYG{o}{*}\PYG{n}{flags}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{       }\PYG{o}{*}\PYG{n}{cd\PYGZus{}nelmts}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{      }\PYG{n}{cd\PYGZus{}values}\PYG{p}{[}\PYG{p}{]}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{        }\PYG{n}{cd\PYGZus{}values\PYGZus{}size}
+\PYG{p}{)}\PYG{p}{;}
+
+\PYG{k}{typedef}\PYG{+w}{ }\PYG{k+kt}{ssize\PYGZus{}t}\PYG{+w}{ }\PYG{p}{(}\PYG{o}{*}\PYG{n}{H5Z\PYGZus{}get\PYGZus{}config\PYGZus{}func\PYGZus{}t}\PYG{p}{)}\PYG{p}{(}
+\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{          }\PYG{n}{flags}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{            }\PYG{n}{cd\PYGZus{}nelmts}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{unsigned}\PYG{+w}{    }\PYG{n}{cd\PYGZus{}values}\PYG{p}{[}\PYG{p}{]}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{char}\PYG{+w}{             }\PYG{o}{*}\PYG{n}{buf}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{            }\PYG{n}{buf\PYGZus{}size}
+\PYG{p}{)}\PYG{p}{;}
+
+\PYG{k}{typedef}\PYG{+w}{ }\PYG{k}{struct}\PYG{+w}{ }\PYG{n+nc}{H5Z\PYGZus{}class3\PYGZus{}t}\PYG{+w}{ }\PYG{p}{\PYGZob{}}
+\PYG{+w}{    }\PYG{k+kt}{int}\PYG{+w}{                        }\PYG{n}{version}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}filter\PYGZus{}t}\PYG{+w}{               }\PYG{n}{id}\PYG{p}{;}
+\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{                   }\PYG{n}{encoder\PYGZus{}present}\PYG{p}{;}
+\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{                   }\PYG{n}{decoder\PYGZus{}present}\PYG{p}{;}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{                }\PYG{o}{*}\PYG{n}{name}\PYG{p}{;}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{                }\PYG{o}{*}\PYG{n}{description}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}can\PYGZus{}apply\PYGZus{}func\PYGZus{}t}\PYG{+w}{      }\PYG{n}{can\PYGZus{}apply}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}set\PYGZus{}local\PYGZus{}func\PYGZus{}t}\PYG{+w}{      }\PYG{n}{set\PYGZus{}local}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}func\PYGZus{}t}\PYG{+w}{                }\PYG{n}{filter}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}set\PYGZus{}config\PYGZus{}func\PYGZus{}t}\PYG{+w}{     }\PYG{n}{set\PYGZus{}config}\PYG{p}{;}
+\PYG{+w}{    }\PYG{n}{H5Z\PYGZus{}get\PYGZus{}config\PYGZus{}func\PYGZus{}t}\PYG{+w}{     }\PYG{n}{get\PYGZus{}config}\PYG{p}{;}
+\PYG{p}{\PYGZcb{}}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}class3\PYGZus{}t}\PYG{p}{;}
+\end{MintedVerbatim}

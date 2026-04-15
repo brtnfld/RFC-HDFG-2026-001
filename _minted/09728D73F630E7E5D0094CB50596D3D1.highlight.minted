@@ -1,0 +1,4 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{c+cp}{\PYGZsh{}}\PYG{c+cp}{define H5Z\PYGZus{}CLASS\PYGZus{}T\PYGZus{}VERS   1   }\PYG{c+cm}{/* Unchanged \PYGZhy{}\PYGZhy{} used by H5Z\PYGZus{}class2\PYGZus{}t */}
+\PYG{c+cp}{\PYGZsh{}}\PYG{c+cp}{define H5Z\PYGZus{}CLASS3\PYGZus{}T\PYGZus{}VERS  2   }\PYG{c+cm}{/* NEW \PYGZhy{}\PYGZhy{} used by H5Z\PYGZus{}class3\PYGZus{}t       */}
+\end{MintedVerbatim}

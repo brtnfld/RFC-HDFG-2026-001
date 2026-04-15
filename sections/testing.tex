@@ -1,0 +1,545 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+%% ======================================================================
+%%  Section 10 – Compatibility
+%% ======================================================================
+\section{Compatibility}
+\label{sec:compatibility}
+
+\subsection{Semantic Change in \texttt{H5Z\_class3\_t.name}}
+\label{sec:name-semantic-change}
+
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Compatibility Note:} Upgrading a plugin from
+  \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t} changes the role of the
+  \texttt{name} field from a freeform debug comment to a canonical identifier.
+  The new \texttt{description} field in \texttt{H5Z\_class3\_t} preserves the
+  display role: \texttt{H5Pget\_filter2} returns the \texttt{description} field
+  for v3 plugins when it is non-\texttt{NULL}, ensuring backward-compatible
+  output for applications that read the \texttt{name[]} output parameter.
+  Plugin authors \textbf{should} populate \texttt{description} when upgrading
+  to maintain continuity for downstream consumers.
+}}\medskip
+
+Although upgrading a filter plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
+introduces no source-level incompatibility (existing call sites continue to
+compile and link without modification) and no binary ABI incompatibility (the
+two structs are distinct types, not a modified version of the same struct), it
+does entail a \emph{semantic} shift in the role of the \texttt{name} field that plugin
+authors and application maintainers must understand.
+
+\verysubsection{Before (v2): freeform debug comment}
+In \texttt{H5Z\_class2\_t}, the \texttt{name} field is documented as a ``Comment for
+debugging'' and is also user-visible through the \texttt{name[]} output parameter of
+\texttt{H5Pget\_filter2}. Existing plugins commonly populate this field with
+human-readable prose such as \texttt{"HDF5 ZFP filter, version 1.0.0 (rate,
+precision, and accuracy modes)"} or \texttt{"My Compression Library v2.3"}.
+
+\verysubsection{After (v3): canonical identifier + description}
+In \texttt{H5Z\_class3\_t}, the \texttt{name} field serves as the canonical identifier
+used for registry lookup, on-demand plugin discovery, and as the string
+accepted by \texttt{H5Pset\_filter\_by\_name}. It MUST conform to the naming rules in
+\SectionRef{sec:param-rules}: printable ASCII, no commas, semicolons, or equals
+signs, and ideally short and lowercase (e.g., \texttt{"zfp"}, \texttt{"blosc2"},
+\texttt{"bitshuffle"}). Descriptive prose is not appropriate and MUST NOT be used.
+
+The new \texttt{description} field in \texttt{H5Z\_class3\_t} preserves the display role
+that the \texttt{name} field served in v2. It is an optional, human-readable string
+(e.g., \texttt{"HDF5 ZFP filter, version 1.0.0 (rate, precision, and accuracy
+modes)"}). No naming rules apply beyond requiring printable text. It is not
+used for registry lookup or any programmatic dispatch.
+
+\verysubsection{Impact on \texttt{H5Pget\_filter2}}
+For v3 plugins, \texttt{H5Pget\_filter2} returns the \texttt{description} field in
+its \texttt{name[]} output parameter when \texttt{description} is non-\texttt{NULL}.
+If \texttt{description} is \texttt{NULL}, it falls back to the \texttt{name} field (the
+canonical identifier). This means that plugin authors who populate
+\texttt{description} during the v2-to-v3 upgrade preserve full backward
+compatibility for applications that display the \texttt{H5Pget\_filter2} output.
+Only plugins that leave \texttt{description} as \texttt{NULL} will cause a
+user-visible change (the shorter canonical name appearing where a longer
+description was previously shown).
+
+\verysubsection{Migration guidance}
+
+\begin{itemize}
+\item \textbf{Registry lookup and programmatic dispatch:} Use
+  \texttt{H5Z\_class3\_t.name} (or the canonical name returned by
+  \texttt{H5Pget\_filter\_name\_by\_idx}) as the primary identifier for all
+  programmatic filter lookup. The canonical name is stable and suitable for
+  storage, comparison, and round-tripping.
+\item \textbf{Human-readable display:} Move the existing freeform v2
+  \texttt{name} text into the \texttt{description} field when upgrading to v3.
+  For example, a v2 plugin with
+  \texttt{name = "HDF5 ZFP filter, version 1.0.0 (rate mode)"} should become
+  a v3 plugin with \texttt{name = "zfp"} and
+  \texttt{description = "HDF5 ZFP filter, version 1.0.0 (rate mode)"}.
+  This ensures that \texttt{H5Pget\_filter2} continues to return the descriptive
+  text. Filters that need to expose additional metadata (e.g., version strings)
+  MAY also include those details as keys in the output of
+  \texttt{H5Z\_get\_config\_func\_t}.
+\item \textbf{No action required for consumers of \texttt{H5Pget\_filter2} that
+  display the string verbatim:} These applications continue to function
+  correctly, provided the plugin author populates the \texttt{description} field.
+  Only applications that parse the freeform string to extract version metadata
+  or descriptive information may need to adjust their display logic if the
+  plugin author's choice of \texttt{description} text differs from the original
+  v2 \texttt{name} text.
+\end{itemize}
+
+\subsection{On-Disk Format}
+
+No changes. The string configuration is resolved entirely at configuration
+time into \texttt{cd\_values}. The object header continues to store filter ID, flags,
+and \texttt{cd\_values} as before. Files written using the string API are
+byte-identical to files written using the existing \texttt{H5Pset\_filter} API with
+equivalent parameters.
+
+\subsection{Source Compatibility}
+
+All existing public APIs are unchanged and not deprecated. Application code
+using \texttt{H5Pset\_filter} continues to compile and function without modification.
+
+\subsection{Binary / ABI Compatibility}
+
+\texttt{H5Z\_class3\_t} is a new type, not a modification of \texttt{H5Z\_class2\_t}. New
+functions are added to the public API. This is an API extension, not a
+breaking change. A shared library minor version bump is appropriate.
+
+\subsection{Plugin Compatibility}
+
+Existing \texttt{H5Z\_class2\_t} plugins load and function without modification. They
+can be used with the new API only via numeric ID with a raw \texttt{cd\_values}
+parameter, or if they require no parameters. Plugin authors can upgrade to
+\texttt{H5Z\_class3\_t} at their discretion.
+
+
+%% ======================================================================
+%%  Section 11 – Open Questions
+%% ======================================================================
+\section{Open Questions}
+\label{sec:open-questions}
+
+The following items require discussion and resolution before implementation
+begins.
+
+\verysubsection{Q1. Pipeline-string API}
+Should a convenience function for specifying
+entire pipelines in a single string be included in this release, or deferred?
+See \SectionRef{sec:pipeline-string} for the tradeoffs. Reviewer feedback
+strongly favors deferral, and this document recommends the same.
+
+\verysubsection{Q2. Filter names in the HDF Group registry
+  \textnormal{[Resolved: MUST be addressed before 1.0 release]}}
+Canonical string names MUST be added to the HDF Group's external filter
+registry as a normative field before the first release that includes
+this feature. Without an authoritative name registry, independently
+developed plugins may claim the same canonical name (e.g., two plugins both
+registering \texttt{"lz4"}), and the first-registered-wins collision policy
+provides no recourse after the fact. The following actions are required:
+\begin{itemize}
+\item The HDF Group MUST publish canonical names for all filters currently
+  listed in the integer-ID filter registry~\cite{hdf5registeredfilters}
+  alongside their numeric IDs.
+\item The registration process for new filter IDs MUST be extended to
+  require a canonical name that conforms to the naming rules in
+  \SectionRef{sec:param-rules}.
+\item The published canonical name is the single source of truth. Plugin
+  authors MUST use the published name as their \texttt{H5Z\_class3\_t.name}
+  field. Names that are not registered with the HDF Group are considered
+  provisional and are subject to collision with future registrations.
+\end{itemize}
+This is a process requirement, not a technical change to the library.
+Implementation may proceed in parallel, but the feature MUST NOT ship
+without the registry update.
+
+\verysubsection{Q3. API expansion}
+The implementation introduces 7 new public or developer-facing functions and 3
+new public types.  Each candidate for consolidation was considered; the
+conclusions are summarized below.
+
+\textbf{H5Pget\_filter\_name\_by\_idx + H5Pget\_filter\_params\_by\_idx.}
+Merging these into a nine-parameter function was tried and reverted: the merged signature was unwieldy and callers who
+only need the name (e.g., to dispatch on filter type) were forced to allocate a
+params buffer they would never read.  The two-function design is retained.
+Callers who genuinely need both MAY call them back-to-back; the index
+validation overhead is negligible for pipeline sizes bounded by
+\texttt{H5Z\_MAX\_NFILTERS} (32).
+
+\textbf{H5Zlookup\_by\_name + H5Zfilter\_avail\_by\_name.}
+These are intentionally asymmetric: \texttt{H5Zlookup\_by\_name} is a pure
+in-memory query with no I/O side effects, while \texttt{H5Zfilter\_avail\_by\_name}
+may trigger a filesystem scan and shared-library \texttt{dlopen}.  Collapsing them
+into a single function with a \texttt{trigger\_load} flag would hide a potentially
+expensive, irreversible side effect behind a boolean parameter---a pattern the
+HDF5 API avoids elsewhere for good reason.  The two functions are retained as
+separate entry points with clearly distinct semantics.
+
+\textbf{H5Zregister\_name + H5Zpreregister\_name.}
+These serve orthogonal use cases: \texttt{H5Zregister\_name} binds an alias
+immediately (requires the filter to be present), while
+\texttt{H5Zpreregister\_name} supports deferred binding for initialization
+sequences that run before plugin load.  A single function could not satisfy
+both contracts without an ordering dependency that would be invisible at the
+call site.  They are retained as separate functions.
+
+\textbf{H5Zconfig\_get\_param.}
+This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
+the public API, limiting the public surface.  Plugin authors who do not use
+it incur no dependency.
+
+\textbf{Net assessment.}  The 7-function surface is the result of deliberate
+prior consolidation (R1) and clear semantic separation.  No further reductions
+are identified that would not sacrifice correctness, performance predictability,
+or API clarity.  If future releases warrant it, \texttt{H5Pget\_filter\_name\_by\_idx}
+and \texttt{H5Pget\_filter\_params\_by\_idx} could be supplemented by a
+convenience wrapper that fills both buffers in one call, but the two focused
+functions MUST remain available as the normative API.
+
+%% ======================================================================
+%%  Section 12 – Test Plan
+%% ======================================================================
+\section{Test Plan}
+\label{sec:test-plan}
+
+The following test categories MUST be satisfied before the implementation is
+merged.  Test names in \texttt{typewriter} font are illustrative identifiers
+for the test matrix; the actual test suite may group them differently.
+
+\subsection{Parser Unit Tests}
+\label{sec:test-parser}
+
+\noindent The parameter string parser (\SectionRef{sec:param-rules}) is the
+lowest-level component and MUST be exercised independently of any filter
+registration.  Tests invoke \texttt{H5Zconfig\_get\_param} (\SectionRef{sec:config-get-param})
+directly with hand-crafted strings.
+
+\verysubsection{Valid inputs}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{lXl}
+\toprule
+\textbf{Test ID} & \textbf{Input} & \textbf{Expected result} \\
+\midrule
+\texttt{parse-01} & \texttt{"level=6"}
+  & key=\texttt{level}, value=\texttt{"6"} \\
+\texttt{parse-02} & \texttt{"mode=rate, rate=3.5"}
+  & two key-value pairs; trailing whitespace stripped \\
+\texttt{parse-03} & \texttt{"fast\_mode, level=6"}
+  & bare key \texttt{fast\_mode} (empty value) + \texttt{level=6} \\
+\texttt{parse-04} & \texttt{"level="}
+  & key=\texttt{level}, explicit empty string value \\
+\texttt{parse-05} & \texttt{NULL}
+  & valid; zero parameters \\
+\texttt{parse-06} & \texttt{""}
+  & valid; zero parameters \\
+\texttt{parse-07} & \texttt{'dict\_path="/data/run\_1,v2/dict.bin"'}
+  & comma inside quotes is literal; value=\texttt{/data/run\_1,v2/dict.bin} \\
+\texttt{parse-08} & \texttt{'note="say ""hi"""'}
+  & doubled double-quote escape; value=\texttt{say "hi"} \\
+\texttt{parse-09} & \texttt{"  level  =  6  "}
+  & whitespace stripped; key=\texttt{level}, value=\texttt{6} \\
+\texttt{parse-10} & \texttt{'level = " value "'}
+  & key=\texttt{level}; value=\texttt{\ value\ } (leading/trailing spaces preserved inside quoted value) \\
+\texttt{parse-11} & \texttt{"LEVEL=6"}
+  & key normalized to lowercase \texttt{level}; value preserved as \texttt{"6"} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\verysubsection{Malformed inputs (must return \texttt{H5E\_BADVALUE})}
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Test ID} & \textbf{Input and reason for rejection} \\
+\midrule
+\texttt{parse-E01} & \texttt{"=value"} --- empty key before \texttt{=} \\
+\texttt{parse-E02} & \texttt{",level=6"} --- leading comma produces empty first token \\
+\texttt{parse-E03} & \texttt{"level=6,"} --- trailing comma produces empty last token \\
+\texttt{parse-E04} & \texttt{'path="/no/closing/quote'} --- unbalanced opening double-quote \\
+\texttt{parse-E05} & \texttt{"level=6, level=6"} --- duplicate key \\
+\texttt{parse-E06} & String longer than \texttt{H5Z\_CONFIG\_STRING\_MAX} (4096) bytes --- exceeds maximum \\
+\texttt{parse-E07} & String with more than \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) comma-separated tokens --- exceeds maximum parameter count \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\verysubsection{Boundary conditions}
+
+\begin{itemize}
+\item \texttt{parse-B01}: Single character key and value (\texttt{"a=1"}).
+\item \texttt{parse-B02}: Maximum allowed string length
+  (\texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096 bytes) --- accepted.
+\item \texttt{parse-B03}: \texttt{H5Z\_CONFIG\_STRING\_MAX}+1 byte string --- rejected
+  with \texttt{H5E\_BADVALUE}.
+\item \texttt{parse-B04}: Key consisting entirely of printable non-special ASCII
+  (\texttt{"\_0123456789abcdefghijklmnopqrstuvwxyz=ok"}).
+\item \texttt{parse-B05}: Value containing semicolons inside double quotes --- accepted;
+  value containing a bare semicolon outside quotes --- rejected (reserved delimiter).
+\item \texttt{parse-B06}: Exactly \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) parameters ---
+  accepted.
+\item \texttt{parse-B07}: \texttt{H5Z\_CONFIG\_MAX\_PARAMS}+1 (65) parameters --- rejected
+  with \texttt{H5E\_BADVALUE}.
+\end{itemize}
+
+
+\subsection{Callback Contract Tests}
+\label{sec:test-callbacks}
+
+These tests verify the two-pass \texttt{set\_config} contract
+(\SectionRef{sec:callback-specs}) and the \texttt{get\_config} round-trip guarantee.
+
+\begin{itemize}
+\item \texttt{cb-01}: First-pass call with \texttt{cd\_values=NULL} returns the correct
+  \texttt{cd\_nelmts}; second-pass call populates \texttt{cd\_values} without exceeding
+  the allocated buffer.
+\item \texttt{cb-02}: A mock callback that returns a larger \texttt{cd\_nelmts} on the
+  second pass triggers a library error (not a buffer overrun).
+\item \texttt{cb-03}: A mock callback that returns a smaller \texttt{cd\_nelmts} on the
+  second pass triggers a library error (not silent truncation).
+\item \texttt{cb-04}: A callback that modifies \texttt{flags} MUST push an
+  \texttt{H5E\_WARN}/\texttt{H5E\_ARGS} warning; verify via \texttt{H5Eget\_msg}.
+\item \texttt{cb-05}: A callback that does NOT modify \texttt{flags} MUST NOT push the
+  warning; verify the error stack remains empty after the call.
+\item \texttt{cb-06}: \texttt{get\_config} called with \texttt{buf=NULL} returns the required
+  length without writing any bytes.
+\item \texttt{cb-07}: \texttt{get\_config} output is a valid \texttt{set\_config} input (round-trip
+  grammar check: parse the output and confirm it tokenizes without error).
+\end{itemize}
+
+
+\subsection{Built-in Filter Round-Trip Tests}
+\label{sec:test-builtin-roundtrip}
+
+For each built-in filter that implements \texttt{set\_config}/\texttt{get\_config}, a
+round-trip test confirms that:
+\begin{align*}
+  \text{set\_config}(s) \;\Rightarrow\; cd\_values_1
+  \quad\text{and}\quad
+  \text{get\_config}(cd\_values_1) \;\Rightarrow\; s'
+  \quad\text{and}\quad
+  \text{set\_config}(s') \;\Rightarrow\; cd\_values_2
+  \quad\text{with}\quad cd\_values_1 = cd\_values_2
+\end{align*}
+The reconstructed string $s'$ need not equal $s$ literally; only the
+resulting \texttt{cd\_values} must be identical.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabular}{lll}
+\toprule
+\textbf{Test ID} & \textbf{Filter} & \textbf{Representative parameter string} \\
+\midrule
+\texttt{rt-01} & deflate    & \texttt{"level=0"} (minimum) \\
+\texttt{rt-02} & deflate    & \texttt{"level=6"} (default) \\
+\texttt{rt-03} & deflate    & \texttt{"level=9"} (maximum) \\
+\texttt{rt-04} & szip       & \texttt{"coding=entropy, pixels\_per\_block=2"} \\
+\texttt{rt-05} & szip       & \texttt{"coding=nn, pixels\_per\_block=32"} \\
+\texttt{rt-06} & scaleoffset & \texttt{"scale\_type=float\_dscale, scale\_factor=4"} \\
+\texttt{rt-07} & scaleoffset & \texttt{"scale\_type=float\_escale, scale\_factor=0"} \\
+\texttt{rt-08} & scaleoffset & \texttt{"scale\_type=int, scale\_factor=8"} \\
+\texttt{rt-09} & shuffle    & \texttt{NULL} (parameterless) \\
+\texttt{rt-10} & fletcher32 & \texttt{NULL} (parameterless) \\
+\texttt{rt-11} & nbit       & \texttt{NULL} (parameterless) \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\noindent Additional round-trip tests MUST verify that:
+\begin{itemize}
+\item \texttt{rt-E01}: Passing a non-NULL, non-empty \texttt{params} to a parameterless
+  built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns \texttt{H5E\_BADVALUE}.
+\item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{"clevl=6"}
+  instead of \texttt{"clevel=6"}) to any built-in returns
+  \texttt{H5E\_BADVALUE} with an error message identifying the unrecognized key.
+  v3 filters MUST reject unknown keys (\SectionRef{sec:callback-specs}).
+\item \texttt{rt-E03}: Passing an out-of-range value (\texttt{"level=10"} for deflate,
+  \texttt{"pixels\_per\_block=33"} for szip) returns \texttt{H5E\_BADVALUE}.
+\end{itemize}
+
+
+\subsection{Regression Tests: v1/v2 Plugin Behavior Unchanged}
+\label{sec:test-regression}
+
+These tests confirm that no existing behavior is broken.
+
+\begin{itemize}
+\item \texttt{reg-01}: A filter registered as \texttt{H5Z\_class2\_t} remains callable via
+  \texttt{H5Pset\_filter} with the same integer ID and \texttt{cd\_values} as before.
+  Data written and read through such a filter before and after the feature
+  introduction MUST be byte-identical.
+\item \texttt{reg-02}: \texttt{H5Pset\_filter\_by\_name} with \texttt{params=NULL} for a v2 filter
+  succeeds (NULL is treated as ``no parameters'').
+\item \texttt{reg-03}: \texttt{H5Pset\_filter\_by\_name} with a non-NULL \texttt{params} for a v2 filter
+  that does NOT implement \texttt{set\_config} returns \texttt{H5E\_UNSUPPORTED}.
+\item \texttt{reg-04a}: The existing \texttt{H5Pget\_filter2} continues to return the
+  \texttt{name} field from the class struct (the debug comment) for v2 plugins,
+  not the canonical registry name.  Verify that a v2 plugin with a verbose
+  name field (e.g., \texttt{"HDF5 deflate filter v1.0"}) returns that string,
+  not \texttt{"deflate"}.
+\item \texttt{reg-04b}: For a v3 plugin with a non-\texttt{NULL} \texttt{description}
+  field, \texttt{H5Pget\_filter2} returns the \texttt{description} text, not the
+  canonical \texttt{name}. For example, a plugin with \texttt{name = "zfp"} and
+  \texttt{description = "HDF5 ZFP filter v1.0"} returns
+  \texttt{"HDF5 ZFP filter v1.0"}.
+\item \texttt{reg-04c}: For a v3 plugin with \texttt{description = NULL},
+  \texttt{H5Pget\_filter2} falls back to returning the canonical \texttt{name}
+  field (e.g., \texttt{"zfp"}).
+\item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
+  syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
+  output files byte-identical to those produced by the pre-feature version of
+  \texttt{h5repack}.
+\end{itemize}
+
+
+\subsection{Parallel HDF5 Tests}
+\label{sec:test-parallel}
+
+These tests require a Parallel HDF5 build and at least two MPI ranks.
+
+\begin{itemize}
+\item \texttt{par-01} (\textbf{DCPL consistency}): All ranks call
+  \texttt{H5Pset\_filter\_by\_name} with the same name and parameter string; verify
+  that the resulting \texttt{cd\_values} in the DCPL are byte-identical across ranks
+  before \texttt{H5Dcreate}.
+\item \texttt{par-02} (\textbf{rank failure propagation}): Simulate a missing plugin
+  on one rank (e.g., by unsetting \texttt{HDF5\_PLUGIN\_PATH} on rank~1 only).
+  Verify that the failing rank returns \texttt{H5E\_NOFILTER} from
+  \texttt{H5Pset\_filter\_by\_name} and that the application can detect this and
+  abort collectively without an MPI deadlock.
+\item \texttt{par-03} (\textbf{debug-build consistency check}): In a debug build
+  (\texttt{NDEBUG} not defined), induce a rank-inconsistent DCPL (by having one rank
+  add an extra filter entry) and verify that \texttt{H5Dcreate} returns
+  \texttt{H5E\_CANTCREATE} with an informative diagnostic rather than silently
+  producing a corrupt file.
+\item \texttt{par-04} (\textbf{built-in-only pipeline}): Create a chunked dataset using
+  only built-in filters configured via the string API in a multi-rank parallel
+  job; verify that the dataset can be written and read back correctly from all
+  ranks.
+\end{itemize}
+
+
+\subsection{Thread-Safety Tests}
+\label{sec:test-threadsafety}
+
+These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
+
+\begin{itemize}
+\item \texttt{ts-01} (\textbf{concurrent lookups}): Spawn $N$ threads
+  ($N \geq 8$) that each call \texttt{H5Zlookup\_by\_name} and
+  \texttt{H5Zfilter\_avail\_by\_name} for built-in filter names in a tight loop.
+  No data race or crash MUST occur.
+\item \texttt{ts-02} (\textbf{concurrent registration and lookup}): One thread calls
+  \texttt{H5Zregister\_name} for a v2 plugin while other threads concurrently call
+  \texttt{H5Zlookup\_by\_name}.  The lookup MUST see either the old state (name not
+  present) or the new state (name present); no partial or corrupt state.
+\item \texttt{ts-03} (\textbf{concurrent \texttt{H5Pset\_filter\_by\_name}}): Threads each
+  create their own DCPL and call \texttt{H5Pset\_filter\_by\_name} concurrently for the
+  same built-in filter name.  All calls MUST succeed without error or data
+  corruption (property lists are per-object and not shared).
+\item \texttt{ts-04} (\textbf{on-demand plugin scan under contention}): Arrange for a
+  plugin to be loaded on-demand (remove its entry from the registry first).
+  Then have $N$ threads simultaneously call \texttt{H5Zfilter\_avail\_by\_name} for that
+  name.  Verify the plugin is registered exactly once and all threads receive a
+  positive result.
+\end{itemize}
+
+
+\subsection{Name Registry Tests}
+\label{sec:test-registry}
+
+\begin{itemize}
+\item \texttt{nr-01}: \texttt{H5Zregister\_name} for a name that already exists returns
+  an error (first-registered-wins).
+\item \texttt{nr-02}: Multiple names may map to the same filter ID (aliases);
+  \texttt{H5Zlookup\_by\_name} returns the same ID for all aliases.
+\item \texttt{nr-03}: \texttt{H5Zlookup\_by\_name} lookup is case-insensitive
+  (\texttt{"Deflate"}, \texttt{"DEFLATE"}, and \texttt{"deflate"} all return
+  \texttt{H5Z\_FILTER\_DEFLATE}).
+\item \texttt{nr-04}: After \texttt{H5Zunregister}, all name registry entries for the
+  unregistered filter ID are removed; subsequent \texttt{H5Zlookup\_by\_name} returns
+  \texttt{H5Z\_FILTER\_ERROR}.
+\item \texttt{nr-05}: \texttt{H5Zpreregister\_name} followed by \texttt{H5Zregister} promotes
+  the pending entry into the live registry.
+\item \texttt{nr-06}: \texttt{H5Zpreregister\_name} entries for filters that are never
+  registered are discarded silently at \texttt{H5close} (no memory leak; verify
+  with a memory checker).
+\item \texttt{nr-07}: \texttt{H5Zregister\_name} called before \texttt{H5Zregister} returns
+  \texttt{H5E\_NOTFOUND}.
+\item \texttt{nr-08}: A v3 plugin whose \texttt{name} field violates the naming rules
+  (\SectionRef{sec:param-rules}) is rejected at \texttt{H5Zregister} time with
+  \texttt{H5E\_BADVALUE}; the filter itself is NOT added to the filter table.
+\end{itemize}
+
+
+%% ======================================================================
+%%  Section 13 – Risks
+%% ======================================================================
+\section{Risks}
+\label{sec:risks}
+
+\verysubsection{Grammar maintenance}
+The key=value format with quoted-value support and
+bare-key flags constitutes a specification the library must support
+indefinitely. Future grammar extensions MUST be backward-compatible: any
+string valid under the current grammar MUST remain valid with the same
+semantics under future grammars. The semicolon is reserved in anticipation of
+a possible pipeline-string extension.
+
+\verysubsection{Plugin adoption}
+The value of the string API scales with the number of
+filters that implement \texttt{set\_config}. If adoption is slow, v2 plugins can only
+be used via the existing \texttt{H5Pset\_filter} API. Clear documentation and a low
+barrier to v3 adoption mitigate this.
+
+\verysubsection{Name collisions}
+Independently developed plugins could choose the same
+canonical name. The first-registered-wins collision policy prevents silent
+breakage at runtime. This risk is mitigated by the requirement that canonical
+names be published in the HDF Group's central filter
+registry~\cite{hdf5registeredfilters} before this feature ships (see Q2 in
+\SectionRef{sec:open-questions}). Plugins that register names not listed in the
+central registry are considered provisional and may collide with future
+registrations.
+
+\verysubsection{Plugin scan cost}
+Name-based plugin discovery scans all shared libraries
+in \texttt{HDF5\_PLUGIN\_PATH} until a match is found. This is not a new cost---it
+is identical to how the existing integer-ID plugin search already works for
+all plugin types (filters, VFDs, VOLs). The name registry caches the result
+so the scan occurs only on first reference to an unknown name.
+
+\verysubsection{Parsing overhead for small-data workloads}
+The string API adds parsing cost at \texttt{H5Pset\_filter\_by\_name} call time:
+one hash-table lookup for name resolution and one linear pass over the
+parameter string (bounded by \texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096~bytes) per
+filter, followed by two invocations of the \texttt{set\_config} callback (the
+two-pass size-query protocol). For typical scientific workloads where dataset
+creation is infrequent relative to I/O, this overhead is negligible.
+
+In ``small data'' workloads that create thousands of lightweight datasets in a
+tight loop, the per-dataset overhead of string parsing could become
+measurable. However, the dominant cost in such patterns is already the
+property list manipulation and object header creation, not parameter
+configuration. The string API adds at most one \texttt{strlen} + one
+\texttt{O(n)} parse + two callback invocations per filter per dataset, where
+$n$ is the string length. For a typical string like \texttt{"level=6"} (7~bytes),
+this is on the order of tens of nanoseconds---well below the microsecond-scale
+cost of \texttt{H5Dcreate} itself.
+
+Applications that are sensitive to dataset-creation latency and configure the
+same filter pipeline repeatedly SHOULD construct the DCPL once using
+\texttt{H5Pset\_filter\_by\_name} and reuse it across multiple
+\texttt{H5Dcreate} calls, avoiding repeated parsing. This is already the
+recommended practice for \texttt{H5Pset\_filter} and does not change with the
+new API.
+
+\end{document}

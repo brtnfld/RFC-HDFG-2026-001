@@ -1,0 +1,858 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+%% ======================================================================
+%%  Section 3 – Parameter String Format
+%% ======================================================================
+\section{Parameter String Format}
+\label{sec:param-format}
+
+\subsection{Design Rationale}
+
+The string passed to configure a filter's parameters needs a lightweight,
+unambiguous format. Several options were considered:
+
+\begin{itemize}
+\item \textbf{JSON:} Expressive but requires a parser dependency in libhdf5. Hostile in
+  CLI contexts (quoting rules, no trailing commas). Heavyweight for simple
+  cases.
+\item \textbf{YAML:} Even heavier parsing dependency. Whitespace-significant syntax is
+  problematic for single-line CLI arguments.
+\item \textbf{Comma-separated key=value pairs:} Lightweight, parseable in C with no
+  dependencies, consistent with how VFD/VOL configuration strings are already
+  handled in HDF5 1.14.
+\end{itemize}
+
+The recommended format is comma-separated key=value pairs, with support for
+bare keys (boolean flags) and double-quote-delimited values.
+
+\subsection{Rules}
+\label{sec:param-rules}
+
+\begin{itemize}
+\item Parameters are separated by commas.
+\item Each parameter is a key=value pair, or a bare key (without an equals sign)
+  acting as a boolean flag with an implicit empty value.
+\item Leading and trailing whitespace around keys and values is stripped.
+\item Keys are case-insensitive; the library normalizes to lowercase using ASCII
+  case folding only (C locale \texttt{tolower()}, not locale-dependent
+  \texttt{towlower()}). Values are passed to the filter callback verbatim and are
+  case-sensitive by default; the filter is responsible for type interpretation.
+  Note: This means \texttt{"coding=Entropy"} and \texttt{"coding=entropy"} are different
+  strings from the library's perspective. Filter authors are encouraged to
+  handle values case-insensitively where practical (e.g., for enum-like
+  parameters) to minimize user confusion.
+\item Keys and values consist of printable ASCII characters (excluding comma,
+  semicolon, and equals sign), unless quoted.
+\item \textbf{Quoted values:} If a value begins with a double quote (\texttt{"}) after
+  leading whitespace has been stripped, the value extends until the next
+  unescaped double quote. Within a quoted value, commas, semicolons, and
+  equals signs are literal and do not act as delimiters. Whitespace inside a
+  quoted value is preserved exactly as written (whitespace stripping applies
+  only outside of quotes). A literal double quote within a quoted value is
+  represented as two consecutive double quotes (\texttt{""}). An unbalanced quote
+  (opening \texttt{"} with no closing \texttt{"}) MUST cause the parser to return
+  \texttt{H5E\_BADVALUE} rather than silently consuming the rest of the string.
+\item \textbf{Order of operations for parsing:} split the parameter string on commas
+  (respecting quoted regions) $\rightarrow$ split each token on the first
+  equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
+  value $\rightarrow$ apply quote processing to the value if it begins with a
+  double quote.
+\item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
+  string, the parser MUST reject the string with \texttt{H5E\_BADVALUE}. The parser
+  can detect duplicates cheaply during a single pass by checking each key
+  against those already seen.
+\item Bare keys (without an equals sign) are permitted and treated as boolean
+  flags with an implicit empty value. For example, \texttt{"fast\_mode, level=6"}
+  contains two parameters: the flag \texttt{fast\_mode} (empty value) and
+  \texttt{level} with value \texttt{"6"}.
+\item The semicolon restriction (outside of quoted values) is reserved for a
+  possible future pipeline-string API extension.
+\item A \texttt{NULL} or empty string means ``no parameters'' (valid for filters like
+  shuffle and fletcher32).
+\item A practical maximum parameter string length of 4096 bytes is recommended.
+\end{itemize}
+
+\subsection{Examples}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Parameter String} & \textbf{Use Case} \\
+\midrule
+\texttt{"level=6"} & deflate \\
+\texttt{"mode=rate, rate=3.5"} & ZFP \\
+\texttt{"pixels\_per\_block=16, coding=entropy"} & SZIP \\
+\texttt{"scale\_type=float\_dscale, scale\_factor=4"} & scaleoffset \\
+\texttt{'dict\_path="/data/run\_1,v2/dict.bin"'} & quoted value containing a comma \\
+\texttt{"fast\_mode, level=6"} & bare key as boolean flag \\
+\texttt{NULL} & shuffle (no params) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+
+%% ======================================================================
+%%  Section 4 – Public API
+%% ======================================================================
+\section{Public API}
+\label{sec:public-api}
+
+\subsection{Single-Filter Configuration by Name}
+\label{sec:set-filter-by-name}
+
+\begin{minted}{c}
+herr_t H5Pset_filter_by_name(
+    hid_t       plist_id,
+    const char *name,
+    unsigned    flags,
+    const char *params
+);
+\end{minted}
+
+\verysubsection{Description}
+Looks up the filter identified by \texttt{name}, configures it using
+the key-value parameter string \texttt{params}, and appends it to the existing filter
+pipeline on \texttt{plist\_id}. If a filter with the same ID is already present in the
+pipeline, it is replaced (not duplicated)---this matches the existing
+behavior of \texttt{H5Pset\_filter}. The pipeline is subject to the existing maximum
+of \texttt{H5Z\_MAX\_NFILTERS} (32) entries.
+
+This function is modeled on \texttt{H5Pset\_filter}: it appends a single filter to
+the pipeline with explicit flag control. The difference is that the filter is
+identified by name rather than integer ID, and parameters are passed as a
+human-readable string rather than a \texttt{cd\_values} array. The two APIs are fully
+interchangeable on the same DCPL---calling \texttt{H5Pset\_filter\_by\_name} and
+\texttt{H5Pset\_filter} for the same filter ID produces identical results in the
+property list, and either can replace a filter entry created by the other.
+
+\verysubsection{Behavioral note on flags}
+Unlike \texttt{H5Pset\_filter}, where the caller has
+absolute control over flags, \texttt{H5Pset\_filter\_by\_name} passes the caller's
+flags through the filter's \texttt{set\_config} callback, which MAY modify them. This
+allows filters to enforce constraints (e.g., SZIP unconditionally forces
+\texttt{H5Z\_FLAG\_OPTIONAL}). This is a deliberate asymmetry: filters configured via
+string may override the caller's flag choice based on internal requirements.
+See \SectionRef{sec:callback-specs} for details.
+
+If the filter name is not found in the in-memory name registry, the library
+triggers an on-demand plugin search (see \SectionRef{sec:name-discovery}).
+
+\verysubsection{Parameters}
+
+\begin{itemize}
+\item \texttt{plist\_id}---A dataset creation property list identifier.
+\item \texttt{name}---A filter name (case-insensitive, e.g., \texttt{"deflate"},
+  \texttt{"zfp"}) or a string representation of a numeric filter ID (e.g.,
+  \texttt{"32013"}). Resolution order: the name registry is checked first; if the
+  name is not found and consists entirely of digits, it is parsed as a numeric
+  filter ID. This means a registered name takes precedence even if it happens
+  to be a numeric string.
+\item \texttt{flags}---A bit mask specifying filter behavior
+  (\texttt{H5Z\_FLAG\_MANDATORY}, \texttt{H5Z\_FLAG\_OPTIONAL}).
+\item \texttt{params}---A comma-separated key=value parameter string, or \texttt{NULL}
+  for filters that take no parameters. If \texttt{params} is non-\texttt{NULL} and
+  non-empty for a filter that takes no parameters, the filter's
+  \texttt{set\_config} callback SHOULD reject it with \texttt{H5E\_BADVALUE}. This is the
+  expected pattern for parameterless built-in filters (shuffle, fletcher32,
+  nbit).
+\end{itemize}
+
+\verysubsection{Returns}
+Non-negative on success; negative on failure.
+
+\verysubsection{Errors}
+
+\begin{itemize}
+\item \texttt{H5E\_NOFILTER}---The filter name could not be resolved to a registered
+  filter, even after an on-demand plugin search.
+\item \texttt{H5E\_UNSUPPORTED}---The filter was found but does not implement
+  \texttt{set\_config} and \texttt{params} is not \texttt{NULL}. The user should use
+  \texttt{H5Pset\_filter} with raw \texttt{cd\_values} instead.
+\item \texttt{H5E\_BADVALUE}---The parameter string is malformed or rejected by the
+  filter's \texttt{set\_config} callback.
+\end{itemize}
+
+\verysubsection{Usage example}
+
+\begin{minted}{c}
+// Current approach:
+H5Pset_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, &level);
+
+// Proposed equivalent:
+H5Pset_filter_by_name(plist, "deflate", H5Z_FLAG_MANDATORY, "level=6");
+
+// Plugin filter -- no compiled-in constants needed:
+H5Pset_filter_by_name(plist, "zfp", H5Z_FLAG_MANDATORY,
+                       "mode=rate, rate=3.5");
+
+// Building a pipeline with multiple calls:
+H5Pset_filter_by_name(plist, "shuffle", H5Z_FLAG_MANDATORY, NULL);
+H5Pset_filter_by_name(plist, "deflate", H5Z_FLAG_MANDATORY, "level=9");
+H5Pset_filter_by_name(plist, "fletcher32", H5Z_FLAG_MANDATORY, NULL);
+\end{minted}
+
+
+\subsection{Pipeline Introspection}
+\label{sec:introspection}
+
+\begin{minted}{c}
+herr_t H5Pget_filter_name_by_idx(
+    hid_t     plist_id,
+    unsigned  filter_idx,
+    char     *name_buf,
+    size_t    name_buf_size,
+    size_t   *name_len,
+    unsigned *flags
+);
+
+herr_t H5Pget_filter_params_by_idx(
+    hid_t     plist_id,
+    unsigned  filter_idx,
+    char     *params_buf,
+    size_t    params_buf_size,
+    size_t   *params_len
+);
+\end{minted}
+
+\verysubsection{Description}
+These two functions retrieve the string representation of a
+single filter in the pipeline at position \texttt{filter\_idx}.
+
+\texttt{H5Pget\_filter\_name\_by\_idx} returns the filter's canonical name and flags. If
+the filter is registered in the name registry, its canonical name is written
+to \texttt{name\_buf}. Otherwise, the numeric filter ID is formatted as a decimal
+string (e.g., \texttt{"32013"}).
+
+\texttt{H5Pget\_filter\_params\_by\_idx} returns the human-readable parameter string.
+For filters that implement \texttt{get\_config}, the callback's output is used. For
+filters that do not implement \texttt{get\_config}, the raw \texttt{cd\_values} are formatted
+as a fallback string using colon separators (e.g.,
+\texttt{"cd\_values=1:0:0:1074921472"}). The colon separator avoids ambiguity with
+the comma-separated key=value grammar defined in \SectionRef{sec:param-format}---a fallback
+string is a single key=value pair where the value contains colons. This means
+the fallback string is a valid parameter string under the grammar, preserving
+the possibility of round-tripping in a future release.
+
+\verysubsection{Note on string reconstruction}
+The DCPL does not retain the original
+parameter string. After \texttt{H5Pset\_filter\_by\_name} resolves the string into
+\texttt{cd\_values}, only the \texttt{cd\_values} are stored in the property list (identical
+to \texttt{H5Pset\_filter}). These functions rely on the filter's \texttt{get\_config}
+callback to reconstruct a human-readable string from the stored \texttt{cd\_values}.
+Consequently, the reconstructed string may differ in formatting from the
+original input (e.g., \texttt{"rate=3.5"} may become \texttt{"rate=3.500000"}). Consumers
+MUST NOT rely on exact string equality between input and output.
+
+\verysubsection{Note on \texttt{H5Pget\_filter2}}
+The existing \texttt{H5Pget\_filter2} function returns a
+filter name from the class struct's \texttt{name} field (the ``debug comment'' in v2
+plugins). \texttt{H5Pget\_filter\_name\_by\_idx} returns the canonical name from the name
+registry, which may differ. For example, a v2 plugin might have
+\texttt{name = "HDF5 deflate filter"} in its class struct, while the registry
+canonical name is \texttt{"deflate"}. The two functions serve different purposes and
+may return different strings for the same pipeline entry.
+
+\verysubsection{Parameters (\texttt{H5Pget\_filter\_name\_by\_idx})}
+
+\begin{itemize}
+\item \texttt{plist\_id}---A dataset creation property list identifier.
+\item \texttt{filter\_idx}---Zero-based index of the filter in the pipeline
+  (\texttt{unsigned}, consistent with \texttt{H5Pget\_filter2}).
+\item \texttt{name\_buf}---Buffer to receive the filter's canonical name, or
+  \texttt{NULL} to query size only.
+\item \texttt{name\_buf\_size}---Size of \texttt{name\_buf} in bytes.
+\item \texttt{name\_len}---On output, set to the length of the name string
+  (excluding NUL), or \texttt{NULL} if not needed. Set even when \texttt{name\_buf}
+  is \texttt{NULL}, enabling a size query.
+\item \texttt{flags}---Pointer to receive the filter's flags, or \texttt{NULL}.
+\end{itemize}
+
+\verysubsection{Parameters (\texttt{H5Pget\_filter\_params\_by\_idx})}
+
+\begin{itemize}
+\item \texttt{plist\_id}---A dataset creation property list identifier.
+\item \texttt{filter\_idx}---Zero-based index of the filter in the pipeline.
+\item \texttt{params\_buf}---Buffer to receive the parameter string, or \texttt{NULL}
+  to query size only.
+\item \texttt{params\_buf\_size}---Size of \texttt{params\_buf} in bytes.
+\item \texttt{params\_len}---On output, set to the length of the parameter string
+  (excluding NUL), or \texttt{NULL} if not needed. Set even when \texttt{params\_buf}
+  is \texttt{NULL}, enabling a size query.
+\end{itemize}
+
+\verysubsection{Returns (both functions)}
+Non-negative on success; negative on failure.
+
+These functions complement the existing \texttt{H5Pget\_filter2} by providing the same
+information in human-readable form.
+
+
+\subsection{Developer Helper: Parameter Lookup}
+\label{sec:config-get-param}
+
+\begin{minted}{c}
+htri_t H5Zconfig_get_param(
+    const char *params,
+    const char *key,
+    char       *value_buf,
+    size_t      buf_size,
+    size_t     *val_len
+);
+\end{minted}
+
+\verysubsection{Description}
+Searches the parameter string \texttt{params} for the given \texttt{key}
+and returns the associated value. This function is declared in
+\texttt{H5Zdevelop.h} and is the library-provided parameter parser that plugin
+authors are expected to use in their \texttt{set\_config} callbacks. All built-in
+filter \texttt{set\_config} implementations (deflate, szip, scaleoffset) use this
+function.
+
+Returns positive (\texttt{> 0}) if the key is present in \texttt{params}, \texttt{0} if the key
+is not present, or negative on error (malformed string). The \texttt{htri\_t} return
+type (HDF5's standard tri-state boolean) cleanly separates three cases: found,
+not found, and error---without triggering the error stack for a missing
+optional parameter. If the key is present and \texttt{value\_buf} is non-\texttt{NULL},
+the processed value is written to \texttt{value\_buf} (quotes stripped,
+\texttt{""} unescaped---the filter sees the final usable string, not the raw grammar
+tokens). If \texttt{val\_len} is non-\texttt{NULL}, it is set to the length of the
+processed value string (excluding NUL). A bare key like \texttt{"fast\_mode"} (no
+equals sign) returns positive with \texttt{val\_len = 0} and an empty
+\texttt{value\_buf}, distinguishable from an absent key (returns \texttt{0}).
+
+This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
+\texttt{H5Zpublic.h} to limit the public API surface.
+
+
+\subsection{Design Alternative: Pipeline-in-a-String API}
+\label{sec:pipeline-string}
+
+An alternative (or additional) API has been proposed in community discussion
+that allows an entire filter pipeline to be expressed as a single string:
+
+\begin{minted}{c}
+H5Pset_filter_pipeline(plist, "shuffle; deflate, level=9; fletcher32");
+\end{minted}
+
+In this variant, semicolons separate individual filter specifications, and the
+first token in each specification is the filter name. The function would
+replace the entire pipeline atomically.
+
+\verysubsection{Arguments in favor}
+
+\begin{itemize}
+\item Very concise for CLI tools and configuration files.
+\item A single string can be stored, logged, and passed around trivially.
+\item Mirrors how users think about a pipeline as a unit.
+\end{itemize}
+
+\verysubsection{Arguments against}
+
+\begin{itemize}
+\item Introduces a grammar (semicolons, ordering rules, escaping) that the
+  library must specify, parse, and maintain indefinitely.
+\item Departs from the established HDF5 pattern of one-filter-per-call with
+  explicit parameters per call.
+\item Makes per-filter flag control awkward (all filters share a default, or an
+  inline syntax must be invented).
+\item Conflates filter selection and parameter passing in a way that is harder to
+  validate and produces less precise error messages.
+\end{itemize}
+
+\verysubsection{Recommendation}
+This document proposes \texttt{H5Pset\_filter\_by\_name} (\SectionRef{sec:set-filter-by-name})
+as the primary API, following the established HDF5 pattern. The
+pipeline-string variant could be added as a convenience function in a future
+release if demand warrants it, since it can be trivially implemented as a
+wrapper that tokenizes on semicolons and calls \texttt{H5Pset\_filter\_by\_name} in a
+loop.
+
+\verysubsection{Note on grammar interaction}
+The bare-key feature (\SectionRef{sec:param-rules}) creates an
+ambiguity for the pipeline-string grammar. In a pipeline string like
+\texttt{"shuffle; deflate, fast\_mode, level=9"}, it is unclear whether
+\texttt{"fast\_mode"} is a second filter name or a bare-key parameter of deflate. If
+the pipeline-string variant is added in the future, the grammar MUST resolve
+this---the natural rule is that the filter name is always the first token
+after a semicolon delimiter, and all subsequent comma-separated tokens in the
+same spec are parameters.
+
+
+%% ======================================================================
+%%  Section 5 – Filter Name Registry
+%% ======================================================================
+\section{Filter Name Registry}
+\label{sec:name-registry}
+
+\subsection{Overview}
+
+The library maintains an internal mapping from canonical names to filter IDs
+(\texttt{H5Z\_filter\_t}). This registry is the mechanism by which the new APIs resolve
+filter names at runtime. It also serves as a cache for names discovered during
+plugin loading.
+
+\subsection{Built-in Registrations}
+
+The following names are registered at library initialization:
+
+\begin{center}
+\begin{tabular}{ll}
+\toprule
+\textbf{Name} & \textbf{Filter ID} \\
+\midrule
+\texttt{"deflate"}     & \texttt{H5Z\_FILTER\_DEFLATE} \\
+\texttt{"shuffle"}     & \texttt{H5Z\_FILTER\_SHUFFLE} \\
+\texttt{"fletcher32"}  & \texttt{H5Z\_FILTER\_FLETCHER32} \\
+\texttt{"szip"}        & \texttt{H5Z\_FILTER\_SZIP} \\
+\texttt{"nbit"}        & \texttt{H5Z\_FILTER\_NBIT} \\
+\texttt{"scaleoffset"} & \texttt{H5Z\_FILTER\_SCALEOFFSET} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+\subsection{Plugin Auto-Registration}
+
+When a filter plugin compiled against \texttt{H5Z\_class3\_t} is loaded (whether by
+integer-ID search or name-based search), the library reads the \texttt{name} field
+from the class structure and automatically registers it in the name registry.
+If the \texttt{name} field is \texttt{NULL}, the plugin is not registered by name and can
+only be addressed by numeric ID.
+
+The library MUST make an internal copy (\texttt{strdup}) of the name string when
+inserting it into the name registry. The \texttt{name} field in \texttt{H5Z\_class3\_t} points
+to memory inside the loaded shared library. If the plugin is later unloaded
+(e.g., via \texttt{H5Zunregister} or \texttt{H5close}), the registry would otherwise
+contain a dangling pointer.
+
+\verysubsection{Note on the \texttt{name} field}
+In \texttt{H5Z\_class2\_t}, the \texttt{name} field is
+documented as ``Comment for debugging'' but is also user-visible---it is the
+string returned by \texttt{H5Pget\_filter2} in its \texttt{name[]} output parameter.
+Existing plugins may contain freeform text (e.g., ``my cool zfp filter v2.1'').
+In \texttt{H5Z\_class3\_t}, the \texttt{name} field takes on a stronger role as a canonical
+identifier used for registry lookup and on-demand plugin discovery, and MUST
+follow the naming rules in \SectionRef{sec:param-rules} (printable ASCII, no
+commas/semicolons/equals signs). Plugin authors upgrading from v2 to v3 MUST
+choose a suitable canonical name. This semantic shift MUST be prominently
+documented in the migration guide.
+
+
+\subsection{Explicit Registration and Lookup}
+\label{sec:explicit-registration}
+
+\begin{minted}{c}
+herr_t H5Zregister_name(H5Z_filter_t id, const char *canonical_name);
+\end{minted}
+
+Registers a name mapping. This can be used to add aliases (e.g.,
+\texttt{"gzip"} $\rightarrow$ \texttt{H5Z\_FILTER\_DEFLATE}) or to register names for older v2 plugins
+that cannot self-register. A single filter ID MAY be associated with multiple
+names. In this case, the introspection functions (\SectionRef{sec:introspection}) return the name
+that was first registered for that ID (either the built-in name, the name from
+the plugin's class struct, or the first explicit registration).
+
+\begin{minted}{c}
+H5Z_filter_t H5Zlookup_by_name(const char *name);
+\end{minted}
+
+Returns the filter ID associated with \texttt{name}, or \texttt{H5Z\_FILTER\_ERROR} if not
+found. Lookup is case-insensitive (ASCII folding only). This function queries
+the in-memory name registry only. It does NOT trigger on-demand plugin
+loading. It is a fast, pure lookup with no I/O side effects.
+
+\begin{minted}{c}
+htri_t H5Zfilter_avail_by_name(const char *name);
+\end{minted}
+
+Returns positive if the filter identified by \texttt{name} is available (registered
+or discoverable via plugin search), \texttt{0} if not available, negative on error.
+Unlike \texttt{H5Zlookup\_by\_name}, this function DOES trigger on-demand plugin
+loading if the name is not already in the registry---it is the by-name
+equivalent of the existing \texttt{H5Zfilter\_avail()}. This allows users to test
+filter availability before committing to a DCPL configuration.
+
+
+\subsection{Collision Policy}
+\label{sec:collision-policy}
+
+If a name is already registered, \texttt{H5Zregister\_name} and plugin
+auto-registration MUST fail and return an error. First registration wins. This
+prevents silent behavioral changes when plugins are loaded in different orders.
+
+Note: The collision policy applies to names, not to IDs. Multiple names may
+map to the same filter ID (aliases). But a given name may map to only one ID.
+
+\subsubsection{Interaction with H5Zunregister}
+
+When \texttt{H5Zunregister()} removes a filter, all name registry entries pointing to
+that filter's ID MUST also be removed. If the entries persist,
+\texttt{H5Zlookup\_by\_name} would return a filter ID that is no longer registered, and
+a subsequent \texttt{H5Pset\_filter} with that ID would fail---producing a confusing
+error path. The reverse mapping (ID $\rightarrow$ names) required for this cleanup is an
+implementation requirement; see \SectionRef{sec:registry-impl}. The cleanup routine MUST free all
+internally copied name strings (via \texttt{H5MM\_xfree} or equivalent) to prevent
+memory leaks in long-running processes or test suites that repeatedly register
+and unregister filters.
+
+
+\subsection{Name-Based Plugin Discovery}
+\label{sec:name-discovery}
+
+This section describes how \texttt{H5Pset\_filter\_by\_name} finds and loads a plugin
+when the requested name is not yet in the registry. The mechanism extends the
+existing VFD/VOL by-name plugin search pattern.
+
+The VFD and VOL subsystems already solve this exact problem using a
+discriminated union in \texttt{H5PL\_key\_t}, a \texttt{kind} field that selects between
+by-name and by-value matching, and a \texttt{check\_plugin\_load} callback that
+performs the match. The filter case simply has not been upgraded yet. This
+design applies the same pattern.
+
+\verysubsection{Current state}
+The filter key in \texttt{H5PL\_key\_t} (\texttt{H5PLprivate.h}) is a bare
+\texttt{int}:
+
+\begin{minted}{c}
+typedef union H5PL_key_t {
+    int            id;            /* Filters: integer ID only     */
+    H5PL_vol_key_t vol;           /* VOL: supports by-name        */
+    H5PL_vfd_key_t vfd;           /* VFD: supports by-name        */
+} H5PL_key_t;
+\end{minted}
+
+By contrast, VFDs use a discriminated union (\texttt{H5PLprivate.h}):
+
+\begin{minted}{c}
+typedef struct H5PL_vfd_key_t {
+    H5FD_get_driver_kind_t kind;  /* BY_NAME or BY_VALUE          */
+    union {
+        H5FD_class_value_t value;
+        const char        *name;
+    } u;
+} H5PL_vfd_key_t;
+\end{minted}
+
+When \texttt{H5FD\_register\_driver\_by\_name()} (\texttt{H5FDint.c}) needs to find a driver, it
+sets \texttt{key.vfd.kind = H5FD\_GET\_DRIVER\_BY\_NAME}, passes the key to
+\texttt{H5PL\_load()}, and the existing scan logic in \texttt{H5PL\_\_open()} loads the \texttt{.so},
+calls \texttt{H5PLget\_plugin\_info()}, and invokes \texttt{H5FD\_check\_plugin\_load()} to do a
+\texttt{strcmp} on the class name. The library already does an exhaustive scan of all
+\texttt{.so} files in \texttt{HDF5\_PLUGIN\_PATH} for every plugin type---this is not a new
+cost.
+
+\verysubsection{Required changes}
+Give filters the same discriminated union:
+
+\begin{minted}{c}
+typedef enum {
+    H5Z_GET_FILTER_BY_ID,
+    H5Z_GET_FILTER_BY_NAME
+} H5Z_get_filter_kind_t;
+
+typedef struct H5PL_filter_key_t {
+    H5Z_get_filter_kind_t kind;
+    union {
+        H5Z_filter_t    id;
+        const char     *name;
+    } u;
+} H5PL_filter_key_t;
+\end{minted}
+
+Replace the bare \texttt{int} in \texttt{H5PL\_key\_t}:
+
+\begin{minted}{c}
+typedef union H5PL_key_t {
+    H5PL_filter_key_t filter;   /* NEW: by-name and by-id */
+    H5PL_vol_key_t    vol;
+    H5PL_vfd_key_t    vfd;
+} H5PL_key_t;
+\end{minted}
+
+Add an \texttt{H5Z\_check\_plugin\_load()} callback (analogous to
+\texttt{H5FD\_check\_plugin\_load} and \texttt{H5VL\_check\_plugin\_load}). In the
+\texttt{H5PL\_TYPE\_FILTER} case within \texttt{H5PL\_\_open()}, this callback inspects the
+class struct returned by \texttt{H5PLget\_plugin\_info()} and matches by either integer
+ID or name depending on \texttt{key.filter.kind}. For name matching, comparison is
+case-insensitive (ASCII folding).
+
+Existing integer-ID search paths MUST be updated to use the new
+\texttt{H5PL\_filter\_key\_t} with \texttt{kind = H5Z\_GET\_FILTER\_BY\_ID}. This is a mechanical
+refactor with no behavioral change---the match logic is identical, just
+accessed through the discriminated union. Note: this touches every existing
+call site that currently writes \texttt{key.id = filter\_id} (in \texttt{H5Z.c},
+\texttt{H5Pdcpl.c}, and any internal filter availability checks). Implementation
+reviewers should verify no call site was missed.
+
+\verysubsection{Resolution procedure}
+When \texttt{H5Pset\_filter\_by\_name} cannot resolve a name
+from the in-memory registry:
+
+\begin{enumerate}
+\item Check whether the filter is already registered by name in the registry---if
+  so, use the cached ID.
+\item Set \texttt{key.filter.kind = H5Z\_GET\_FILTER\_BY\_NAME} and
+  \texttt{key.filter.u.name = requested\_name}.
+\item Call \texttt{H5PL\_load(H5PL\_TYPE\_FILTER, \&key)}.
+\item The existing \texttt{H5PL\_\_find\_plugin\_in\_path\_table()} $\rightarrow$
+  \texttt{H5PL\_\_open()} scan iterates directories in \texttt{HDF5\_PLUGIN\_PATH}. For each
+  \texttt{.so}, it calls \texttt{H5PLget\_plugin\_type()} and \texttt{H5PLget\_plugin\_info()}.
+\item \texttt{H5Z\_check\_plugin\_load()} compares the class struct's \texttt{name} field
+  against the requested name (case-insensitive).
+\item On match, the plugin is registered (both by ID and by name), and the
+  filter ID is returned.
+\item If no match is found after scanning all directories, \texttt{H5E\_NOFILTER} is
+  returned.
+\end{enumerate}
+
+Once found, the name is cached in the registry. Subsequent calls resolve
+instantly without scanning.
+
+\verysubsection{v2 plugin behavior during name-based search}
+For v2 plugins
+(\texttt{H5Z\_class2\_t}), the \texttt{name} field is documented as ``Comment for debugging''
+and may contain arbitrary strings. The by-name search MUST only match against
+v3 plugins (\texttt{H5Z\_class3\_t}) where the \texttt{name} field is a canonical identifier.
+v2 plugins are skipped during name-based search. They can still be discovered
+by integer ID (the existing path) or pre-registered with \texttt{H5Zregister\_name}.
+
+\verysubsection{Plugin path management}
+Plugins discoverable by name are subject to the
+same path configuration as all other plugins. The directories searched are
+those configured via \texttt{HDF5\_PLUGIN\_PATH}, \texttt{H5PLappend()},
+\texttt{H5PLprepend()}, and related \texttt{H5PL} path management APIs. No separate path
+configuration is needed for name-based discovery.
+
+
+\subsection{Relationship to the HDF Group Filter Registry}
+
+The HDF Group maintains an external registry of filter
+IDs~\cite{hdf5registeredfilters}. It is recommended
+that canonical names be added to this registry as a normative reference to
+ensure global uniqueness of filter names. This is a process question for the
+HDF Group to decide, not a technical requirement of this design.
+
+
+\subsection{Registry Implementation Requirements}
+\label{sec:registry-impl}
+
+The name registry must support the following operations efficiently:
+
+\begin{itemize}
+\item \textbf{Forward lookup:} name $\rightarrow$ filter ID (used by
+  \texttt{H5Pset\_filter\_by\_name}, \texttt{H5Zlookup\_by\_name}).
+\item \textbf{Reverse lookup:} filter ID $\rightarrow$ canonical name (used by
+  \texttt{H5Pget\_filter\_name\_by\_idx}).
+\item \textbf{Reverse cleanup:} filter ID $\rightarrow$ all registered names (used by
+  \texttt{H5Zunregister}, \SectionRef{sec:collision-policy}).
+\item \textbf{Insertion-order tracking:} The introspection functions return ``the
+  name that was first registered for that ID''
+  (\SectionRef{sec:explicit-registration}). This requires either insertion-order
+  metadata or a separate ID $\rightarrow$ first-name mapping. A simple
+  name $\rightarrow$ ID hash map alone is not sufficient.
+\end{itemize}
+
+A bidirectional mapping (name $\rightarrow$ ID hash table plus ID $\rightarrow$ ordered name
+list) satisfies all requirements. The exact data structure is an
+implementation choice.
+
+
+%% ======================================================================
+%%  Section 6 – Filter Plugin Class Version 3
+%% ======================================================================
+\section{Filter Plugin Class Version 3}
+\label{sec:class3}
+
+\subsection{Rationale}
+
+The string configuration feature requires filters to participate voluntarily.
+A filter must be able to accept a parameter string and produce \texttt{cd\_values},
+and optionally to reverse the process for introspection. This is achieved by
+introducing two new optional callbacks in a version~3 filter class structure.
+
+\subsection{Version Numbering}
+\label{sec:version-numbering}
+
+The existing version-to-struct mapping in HDF5 is:
+
+\begin{center}
+\begin{tabular}{lll}
+\toprule
+\textbf{Struct} & \textbf{Version Field} & \textbf{Constant} \\
+\midrule
+\texttt{H5Z\_class1\_t} & none (legacy) & --- \\
+\texttt{H5Z\_class2\_t} & \texttt{1} & \texttt{H5Z\_CLASS\_T\_VERS} \\
+\texttt{H5Z\_class3\_t} & \texttt{2} & \texttt{H5Z\_CLASS3\_T\_VERS} \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+The dispatch logic in \texttt{H5Zregister()} currently uses a two-way branch: if
+\texttt{version == H5Z\_CLASS\_T\_VERS} (1), treat as \texttt{H5Z\_class2\_t}; otherwise, treat
+as legacy \texttt{H5Z\_class1\_t} (since the first field of a v1 struct is the filter
+ID, which is always $\geq 256$).
+
+This MUST be extended to a three-way branch:
+
+\begin{verbatim}
+    if (version == 1) -> H5Z_class2_t
+    else if (version == 2) -> H5Z_class3_t
+    else if (version >= 256) -> legacy H5Z_class1_t
+    else -> error (unknown version)
+\end{verbatim}
+
+Note: When \texttt{H5\_NO\_DEPRECATED\_SYMBOLS} is defined, the legacy
+\texttt{H5Z\_class1\_t} path is compiled out entirely and any
+\texttt{version != H5Z\_CLASS\_T\_VERS} produces a hard error. The three-way branch
+must account for this conditional compilation: under
+\texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, the dispatch accepts version~1 (v2 struct) and
+version~2 (v3 struct), and rejects all other values.
+
+The existing constant \texttt{H5Z\_CLASS\_T\_VERS} (currently 1) MUST NOT be changed.
+If it were updated to~2, existing v2 plugin source code that initializes
+\texttt{.version = H5Z\_CLASS\_T\_VERS} would silently produce a struct the library
+interprets as v3, despite missing the \texttt{set\_config}/\texttt{get\_config}
+fields---causing undefined behavior (reading uninitialized memory for callback
+pointers). Instead, a new constant MUST be introduced:
+
+\begin{minted}{c}
+#define H5Z_CLASS_T_VERS   1   /* Unchanged -- used by H5Z_class2_t */
+#define H5Z_CLASS3_T_VERS  2   /* NEW -- used by H5Z_class3_t       */
+\end{minted}
+
+The version-to-struct mapping table MUST be documented in \texttt{H5Zdevelop.h}.
+
+\verysubsection{Compatibility macro in \texttt{H5version.h}}
+The existing compatibility macro
+(\texttt{H5version.h}) maps the generic type alias \texttt{H5Z\_class\_t} to a versioned
+struct:
+
+\begin{minted}{c}
+#if !defined(H5Z_class_t_vers) || H5Z_class_t_vers == 2
+  #define H5Z_class_t H5Z_class2_t
+#elif H5Z_class_t_vers == 1
+  #define H5Z_class_t H5Z_class1_t
+#endif
+\end{minted}
+
+Currently \texttt{H5Z\_class\_t\_vers} defaults to \texttt{2}, mapping
+\texttt{H5Z\_class\_t} $\rightarrow$ \texttt{H5Z\_class2\_t}. This macro MUST NOT be changed to default to
+\texttt{3} (mapping to \texttt{H5Z\_class3\_t}), because existing code using \texttt{H5Z\_class\_t}
+would silently get the larger struct with uninitialized callback fields. The
+default MUST remain \texttt{2}. A new value of \texttt{3} MAY be added as an opt-in for
+code that explicitly requests \texttt{H5Z\_class3\_t}:
+
+\begin{minted}{c}
+#if !defined(H5Z_class_t_vers) || H5Z_class_t_vers == 2
+  #define H5Z_class_t H5Z_class2_t
+#elif H5Z_class_t_vers == 1
+  #define H5Z_class_t H5Z_class1_t
+#elif H5Z_class_t_vers == 3
+  #define H5Z_class_t H5Z_class3_t
+#endif
+\end{minted}
+
+Plugin authors adopting v3 SHOULD use \texttt{H5Z\_class3\_t} directly rather than
+relying on the \texttt{H5Z\_class\_t} alias.
+
+
+\subsection{Structure Definition}
+\label{sec:class3-struct}
+
+\begin{minted}{c}
+typedef herr_t (*H5Z_set_config_func_t)(
+    const char   *params,
+    unsigned     *flags,
+    size_t       *cd_nelmts,
+    unsigned      cd_values[],
+    size_t        cd_values_size
+);
+
+typedef ssize_t (*H5Z_get_config_func_t)(
+    unsigned          flags,
+    size_t            cd_nelmts,
+    const unsigned    cd_values[],
+    char             *buf,
+    size_t            buf_size
+);
+
+typedef struct H5Z_class3_t {
+    int                        version;
+    H5Z_filter_t               id;
+    unsigned                   encoder_present;
+    unsigned                   decoder_present;
+    const char                *name;
+    H5Z_can_apply_func_t      can_apply;
+    H5Z_set_local_func_t      set_local;
+    H5Z_func_t                filter;
+    H5Z_set_config_func_t     set_config;
+    H5Z_get_config_func_t     get_config;
+} H5Z_class3_t;
+\end{minted}
+
+
+\subsection{Callback Specifications}
+\label{sec:callback-specs}
+
+\verysubsection{\texttt{H5Z\_set\_config\_func\_t}}
+
+\begin{itemize}
+\item \texttt{params}---The key-value parameter string (e.g.,
+  \texttt{"mode=rate, rate=3.5"}). \texttt{NULL} if no parameters were provided.
+\item \texttt{flags}---On input, contains the flags value from the API call. The
+  callback MAY modify this value. If the callback modifies flags, the modified
+  value is what \texttt{H5Pset\_filter\_by\_name} writes into the DCPL. This gives the
+  filter the final say on properties like \texttt{H5Z\_FLAG\_MANDATORY} vs.\
+  \texttt{H5Z\_FLAG\_OPTIONAL}. The override is silent (no warning is emitted),
+  consistent with existing behavior in \texttt{H5Pset\_szip} which unconditionally
+  forces \texttt{H5Z\_FLAG\_OPTIONAL} without notification.
+\item \texttt{cd\_nelmts}---On input, points to a value of~0. On output, set to the
+  number of elements written to \texttt{cd\_values} (or the number of elements
+  required, if \texttt{cd\_values} is \texttt{NULL}).
+\item \texttt{cd\_values}---On output, populated with the filter's client data. If
+  \texttt{NULL}, the callback MUST still set \texttt{cd\_nelmts} to the required count,
+  enabling a two-pass size query pattern. The library calls the callback once
+  with \texttt{cd\_values=NULL} to determine the required size, allocates
+  accordingly, and calls it again with a sufficiently sized array. The library
+  MUST validate on the second pass that \texttt{cd\_nelmts} does not exceed the
+  allocated capacity; if it does, the library returns an error rather than
+  writing out of bounds.
+\item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array (0 when
+  \texttt{cd\_values} is \texttt{NULL}).
+\item Returns non-negative on success, negative on failure.
+\end{itemize}
+
+The callback SHOULD use \texttt{H5Epush} to report meaningful error messages for
+invalid parameters.
+
+\verysubsection{\texttt{H5Z\_get\_config\_func\_t}}
+
+\begin{itemize}
+\item Reconstructs a human-readable parameter string from \texttt{cd\_values}.
+\item Follows the standard HDF5 buffer-size query pattern: if \texttt{buf} is
+  \texttt{NULL} or \texttt{buf\_size} is~0, returns the required size.
+\item Returns the length of the string (excluding NUL) on success, negative on
+  failure.
+\item The reconstructed string is not required to be identical to the original
+  input string. Semantic equivalence is sufficient (e.g., \texttt{"rate=3.5"} may
+  be reconstructed as \texttt{"rate=3.500000"}). However, the output MUST conform
+  to the same grammar as \texttt{set\_config} input (\SectionRef{sec:param-rules}),
+  including support for bare keys and quoted values where appropriate, so that
+  the output of \texttt{get\_config} is valid input to \texttt{set\_config} for
+  round-tripping.
+\end{itemize}
+
+
+\subsection{Backward Compatibility}
+
+\texttt{H5Zregister()} inspects the \texttt{version} field to determine whether the
+structure is \texttt{H5Z\_class1\_t} (legacy), \texttt{H5Z\_class2\_t}, or
+\texttt{H5Z\_class3\_t}. Existing v1 and v2 plugins continue to function without
+modification. The new callbacks are never accessed for v1/v2 registrations.
+\texttt{H5Z\_class3\_t} is a new type, not a modification of \texttt{H5Z\_class2\_t}.
+
+A v3 plugin remains fully usable through the traditional \texttt{H5Pset\_filter} API.
+Upgrading to v3 is optional and additive.
+
+\end{document}

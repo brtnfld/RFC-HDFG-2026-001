@@ -1,0 +1,31 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+\begin{abstract}
+
+    
+This RFC proposes a string-based configuration API for HDF5 I/O filters.
+The current \texttt{H5Pset\_filter} interface requires users to construct raw
+\texttt{cd\_values} arrays of \texttt{unsigned int}, forcing error-prone type-punning for
+floating-point parameters and producing opaque configurations that are
+hostile to CLI tools and high-level language bindings.
+
+The proposed design
+introduces \texttt{H5Pset\_filter\_by\_name}, which accepts a filter name and a
+human-readable key=value parameter string, resolving them into standard
+\texttt{cd\_values} at configuration time with zero on-disk format changes. Filters
+opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
+optional \texttt{set\_config}/\texttt{get\_config} callbacks. Name-based plugin discovery
+extends the existing VFD/VOL by-name search pattern in the H5PL module.
+All existing APIs, plugins, and files remain fully compatible.
+\end{abstract}
+
+\vfill
+{\footnotesize\textbf{Acknowledgements:} This work is supported by the U.S.\
+Department of Energy, Office of Science, Advanced Scientific Computing Research,
+under Contract DE-AC02-06CH11357 and by the U.S.\ Department of Energy, Office
+of Science, Office of Advanced Scientific Computing Research, Scientific
+Discovery through Advanced Computing (SciDAC) program.}
+
+\end{document}

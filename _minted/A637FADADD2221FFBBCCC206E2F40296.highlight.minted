@@ -1,0 +1,9 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{n}{htri\PYGZus{}t}\PYG{+w}{ }\PYG{n+nf}{H5Zconfig\PYGZus{}get\PYGZus{}param}\PYG{p}{(}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{ }\PYG{o}{*}\PYG{n}{params}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{ }\PYG{o}{*}\PYG{n}{key}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{char}\PYG{+w}{       }\PYG{o}{*}\PYG{n}{value\PYGZus{}buf}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{      }\PYG{n}{buf\PYGZus{}size}\PYG{p}{,}
+\PYG{+w}{    }\PYG{k+kt}{size\PYGZus{}t}\PYG{+w}{     }\PYG{o}{*}\PYG{n}{val\PYGZus{}len}
+\PYG{p}{)}\PYG{p}{;}
+\end{MintedVerbatim}

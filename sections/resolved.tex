@@ -1,0 +1,248 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+%% ======================================================================
+%%  Section 12 – Resolved Design Decisions
+%% ======================================================================
+\section{Resolved Design Decisions}
+\label{sec:resolved}
+
+The following items were raised during review and have been resolved.
+
+\verysubsection{R1}
+API naming and signatures. The introspection API went through several
+iterations: (1) a single \texttt{ssize\_t}-returning function with two output buffers
+and ambiguous return semantics; (2) two \texttt{ssize\_t}-returning functions; (3) a
+single merged \texttt{herr\_t} function with nine parameters. The final design uses
+two focused \texttt{herr\_t}-returning functions---
+\texttt{H5Pget\_filter\_name\_by\_idx} (6~params) and \texttt{H5Pget\_filter\_params\_by\_idx}
+(5~params)---each with an explicit \texttt{size\_t*} output for string length. This
+follows the newer HDF5 API convention of reporting sizes via output
+parameters, keeps each signature clean, and avoids a nine-parameter monolith.
+The \texttt{filter\_idx} parameter uses \texttt{unsigned} to match \texttt{H5Pget\_filter2}. See
+\SectionRef{sec:introspection}.
+
+\verysubsection{R2}
+Memory bounds for \texttt{cd\_values}. The \texttt{set\_config} callback supports a
+two-pass size query pattern: the library first calls with \texttt{cd\_values=NULL} to
+get the required count, allocates accordingly, and calls again. See
+\SectionRef{sec:callback-specs}.
+
+\verysubsection{R3}
+Raw fallback syntax in the string API. The library does NOT implement a
+special \texttt{cd\_values=...} pass-through syntax within
+\texttt{H5Pset\_filter\_by\_name}. Users who need to pass raw \texttt{cd\_values} to a v2
+plugin should use the existing \texttt{H5Pset\_filter} API. This keeps the string
+API clean.
+
+\verysubsection{R4}
+Pipeline-in-a-string as primary API. The single-string pipeline
+variant (\SectionRef{sec:pipeline-string}) is NOT the primary API. The primary
+API is \texttt{H5Pset\_filter\_by\_name} (one filter per call, appending), consistent
+with established HDF5 conventions.
+
+\verysubsection{R5}
+DCPL string storage. The DCPL does NOT retain the original parameter
+string. After resolution, only the standard \texttt{cd\_values}, filter ID, and flags
+are stored. Introspection functions rely on \texttt{get\_config} to reconstruct a
+human-readable string from \texttt{cd\_values}.
+
+\verysubsection{R6}
+VOL connector interaction. The string API resolves to \texttt{cd\_values}
+before the VOL connector sees the DCPL. No changes to the VOL interface are
+required. See \SectionRef{sec:thread-safety}.
+
+\verysubsection{R7}
+Name-based plugin discovery. The plugin loading infrastructure (H5PL)
+is extended by giving filters the same discriminated-union key structure that
+VFDs and VOLs already use (\texttt{H5PL\_filter\_key\_t} with a
+\texttt{BY\_NAME}/\texttt{BY\_ID} kind field), and adding an
+\texttt{H5Z\_check\_plugin\_load()} callback. This follows the existing VFD/VOL
+pattern exactly---no new plugin type constants, no naming conventions, no
+manifest files. The name registry (\SectionRef{sec:name-registry}) serves as a
+cache after first discovery. Only v3 plugins are eligible for name-based
+matching; v2 plugins are skipped. See \SectionRef{sec:name-discovery}.
+
+\verysubsection{R8}
+Version numbering for \texttt{H5Z\_class3\_t}. The new struct carries
+\texttt{version = 2}. The dispatch logic in \texttt{H5Zregister()} is extended to a
+three-way branch (two-way under \texttt{H5\_NO\_DEPRECATED\_SYMBOLS}). The
+\texttt{H5Z\_class\_t\_vers} compatibility macro in \texttt{H5version.h} retains its default
+of~2 (mapping to \texttt{H5Z\_class2\_t}); it is NOT bumped to~3 to avoid silent
+struct-size mismatches. See \SectionRef{sec:version-numbering}.
+
+\verysubsection{R9}
+Built-in filter validation. \texttt{set\_config} callbacks for built-in
+filters with non-trivial validation (SZIP, Scale-Offset) delegate to existing
+internal validation code rather than reimplementing it. See
+\SectionRef{sec:builtin-filters}.
+
+\verysubsection{R10}
+Error code for unsupported string config. The error
+\texttt{H5E\_UNSUPPORTED} (not a new code) is used when a filter does not implement
+\texttt{set\_config}, rather than a novel \texttt{H5E\_CANTENCODE} code. See
+\SectionRef{sec:set-filter-by-name}.
+
+\verysubsection{R11}
+\texttt{H5Zlookup\_by\_name} does not trigger plugin loading. It is a pure
+in-memory registry lookup with no I/O side effects. Only
+\texttt{H5Pset\_filter\_by\_name} and \texttt{H5Zfilter\_avail\_by\_name} trigger on-demand
+plugin search. See \SectionRef{sec:explicit-registration}.
+
+\verysubsection{R12}
+Introspection fallback for filters without \texttt{get\_config}.
+\texttt{H5Pget\_filter\_params\_by\_idx} formats the raw \texttt{cd\_values} as a fallback
+string using colon separators (e.g., \texttt{"cd\_values=1:0:0:1074921472"}) so that
+introspection always yields something useful. The colon separator avoids
+ambiguity with the comma-separated grammar and keeps the fallback string valid
+under the grammar as a single key=value pair. See \SectionRef{sec:introspection}.
+
+\verysubsection{R13}
+Multiple names per filter ID (aliases). A single filter ID MAY have
+multiple registered names. \texttt{H5Zregister\_name} allows alias registration.
+Introspection returns the first-registered name for that ID. See
+\SectionRef{sec:explicit-registration}.
+
+\verysubsection{R14}
+Numeric name parsing order. When the \texttt{name} argument to
+\texttt{H5Pset\_filter\_by\_name} is a numeric string, the name registry is checked
+first. Only if the name is not found is it parsed as a numeric filter ID. A
+registered name always takes precedence. See \SectionRef{sec:set-filter-by-name}.
+
+\verysubsection{R15}
+\texttt{H5Z\_CLASS\_T\_VERS} and \texttt{H5Z\_class\_t\_vers} must not change. The
+existing constant \texttt{H5Z\_CLASS\_T\_VERS} (= 1) is left unchanged. A new constant
+\texttt{H5Z\_CLASS3\_T\_VERS} (= 2) is introduced for v3 structs. The
+\texttt{H5Z\_class\_t\_vers} compatibility macro in \texttt{H5version.h} retains its default
+value of~2 (mapping \texttt{H5Z\_class\_t} $\rightarrow$ \texttt{H5Z\_class2\_t}) and is NOT
+bumped to~3. See \SectionRef{sec:version-numbering}.
+
+\verysubsection{R16}
+Developer helper for plugin authors. The library provides
+\texttt{H5Zconfig\_get\_param} in \texttt{H5Zdevelop.h}, returning \texttt{htri\_t} with an
+explicit \texttt{size\_t *val\_len} output. See \SectionRef{sec:config-get-param}.
+
+\verysubsection{R17}
+Filter availability by name. A new function
+\texttt{H5Zfilter\_avail\_by\_name()} is provided as the by-name equivalent of
+\texttt{H5Zfilter\_avail()}. Unlike \texttt{H5Zlookup\_by\_name} (pure registry lookup), it
+triggers on-demand plugin loading. See \SectionRef{sec:explicit-registration}.
+
+\verysubsection{R18}
+Duplicate filter replacement semantics. \texttt{H5Pset\_filter\_by\_name}
+follows the same replacement behavior as \texttt{H5Pset\_filter}: if a filter with
+the same ID is already in the pipeline, it is replaced, not duplicated. The
+two APIs are fully interchangeable on the same DCPL. See
+\SectionRef{sec:set-filter-by-name}.
+
+\verysubsection{R19}
+Grammar forward compatibility. Future extensions to the parameter
+string grammar MUST be backward-compatible: any string valid under the current
+grammar MUST remain valid with the same semantics under future grammars. See
+\SectionRef{sec:risks}.
+
+\verysubsection{R20}
+Parameterless filter rejection. \texttt{set\_config} callbacks for filters
+that take no parameters (shuffle, fletcher32, nbit) SHOULD reject
+non-\texttt{NULL}, non-empty \texttt{params} strings with \texttt{H5E\_BADVALUE}. See
+\SectionRef{sec:set-filter-by-name}.
+
+\verysubsection{R21}
+\texttt{get\_config} round-tripping. The output of \texttt{get\_config} MUST conform
+to the same grammar as \texttt{set\_config} input (including bare keys and quoted
+values where appropriate) so that \texttt{get\_config} output is valid
+\texttt{set\_config} input. See \SectionRef{sec:callback-specs}.
+
+\verysubsection{R22}
+Introspection return convention. The introspection functions
+\texttt{H5Pget\_filter\_name\_by\_idx} and \texttt{H5Pget\_filter\_params\_by\_idx} return
+\texttt{herr\_t} with explicit \texttt{size\_t*} output parameters for reporting string
+lengths, following the newer HDF5 API convention. See
+\SectionRef{sec:introspection}.
+
+\verysubsection{R24}
+Two-pass \texttt{cd\_nelmts} identity contract. The \texttt{set\_config} callback MUST
+return the same \texttt{cd\_nelmts} on both passes of the size-query protocol. If
+the second-pass value differs from the first (in either direction), the
+library MUST return an error and MUST NOT write to the \texttt{cd\_values} buffer
+with the inconsistent count. A smaller second-pass value would silently
+truncate the populated array; a larger value risks a buffer overflow. Both
+cases indicate a buggy callback. The RFC previously specified only the
+overflow guard (second-pass exceeds allocated capacity). This resolved item
+adds the symmetric lower-bound check and makes identical counts the explicit
+contract. See \SectionRef{sec:callback-specs}.
+
+\verysubsection{R25}
+Empty keys and explicit-empty-value distinction. The grammar already
+forbids empty keys (\textit{key} requires one or more characters), but this
+constraint is now stated explicitly in the Rules section to guide
+implementors. In addition, the distinction between a bare key (\texttt{"flag"})
+and a key with an explicit empty value (\texttt{"key="}) is specified: both
+produce an empty string delivered to the callback, but via different
+syntactic paths. Callbacks MAY treat them identically in practice, but the
+distinction is preserved at the protocol level. The string \texttt{"=value"} MUST
+be rejected with \texttt{H5E\_BADVALUE}. See \SectionRef{sec:param-rules}.
+
+\verysubsection{R26}
+\texttt{h5repack} \texttt{UD=} disambiguation. When parsing the new
+\textit{filtername}\texttt{=}\textit{params} syntax, a filter name of exactly \texttt{UD}
+(case-insensitive) is ambiguous because the legacy \texttt{UD=id,flags,n,v1,...}
+syntax uses the same prefix. A precedence rule is added: if the text
+following \texttt{UD=} begins with a decimal digit, the specification is parsed
+as the legacy syntax; otherwise it is treated as new-syntax where \texttt{UD} is a
+registered canonical filter name. See \SectionRef{sec:cli-tools}.
+
+\verysubsection{R27}
+\texttt{h5dump} \texttt{PARAMS\_STRING} format change. The addition of
+\texttt{PARAMS\_STRING} to \texttt{h5dump} output constitutes a format change that may
+break downstream parsers. The field is gated behind a command-line option
+(\texttt{--filter-params}) so that the default output is unchanged. The output
+format when the option is active is specified normatively in the CLI Tools
+section. See \SectionRef{sec:cli-tools}.
+
+\verysubsection{R23}
+Flags-override warning contract. Rather than silently overriding the
+caller's \texttt{flags} value, a \texttt{set\_config} callback that modifies \texttt{flags} MUST
+push a non-fatal warning via \texttt{H5Epush} with severity \texttt{H5E\_WARN} and class
+\texttt{H5E\_ARGS} before returning. Callbacks that accept the caller's flags
+without modification MUST NOT push this warning. This allows callers who want
+to detect a flag override to inspect the error stack after
+\texttt{H5Pset\_filter\_by\_name} returns, while callers that do not check the stack
+are entirely unaffected---preserving the existing SZIP behavior of
+unconditionally forcing \texttt{H5Z\_FLAG\_OPTIONAL}. This contract MUST be
+documented in \texttt{H5Zdevelop.h} as part of the \texttt{H5Z\_set\_config\_func\_t}
+contract. See \SectionRef{sec:callback-specs} and \SectionRef{sec:builtin-filters}.
+
+\verysubsection{R28}
+Normative string and parameter limits. The maximum parameter string length
+(4096~bytes, \texttt{H5Z\_CONFIG\_STRING\_MAX}) and the maximum number of
+parameters per string (64, \texttt{H5Z\_CONFIG\_MAX\_PARAMS}) are normative
+MUST-level limits enforced by the library, not recommendations. Both
+constants are public. See \SectionRef{sec:param-rules}.
+
+\verysubsection{R29}
+Locale independence for both input and output. The library's parameter
+string parser, \texttt{set\_config} callbacks, and \texttt{get\_config} callbacks
+MUST all operate in C-locale semantics. Process-wide locale settings MUST NOT
+affect parsing or formatting. This ensures round-trip correctness in
+environments with non-ASCII-compatible locale settings. See
+\SectionRef{sec:param-rules} and \SectionRef{sec:callback-specs}.
+
+\verysubsection{R30}
+Canonical \texttt{set\_config} implementation template. A normative code
+template is provided in the architecture section to guide plugin authors in
+correctly implementing the two-pass \texttt{set\_config} protocol. All built-in
+filter \texttt{set\_config} callbacks follow this structure. See
+\SectionRef{sec:set-config-template}.
+
+\verysubsection{R31}
+\texttt{description} field in \texttt{H5Z\_class3\_t}. A new optional
+\texttt{description} field preserves the display role of the v2 \texttt{name}
+field. For v3 plugins, \texttt{H5Pget\_filter2} returns \texttt{description}
+when non-\texttt{NULL}, falling back to \texttt{name} otherwise. This mitigates
+the semantic change in the \texttt{name} field by allowing plugin authors to
+provide backward-compatible human-readable text. See
+\SectionRef{sec:class3-struct} and \SectionRef{sec:name-semantic-change}.
+
+\end{document}

@@ -1,0 +1,208 @@
+\documentclass[../HDF5_RFC.tex]{subfiles}
+
+\begin{document}
+
+%% ======================================================================
+%%  Section 7 – Built-in Filter Parameters
+%% ======================================================================
+\section{Built-in Filter Parameters}
+\label{sec:builtin-filters}
+
+Each built-in filter MUST implement \texttt{set\_config} and \texttt{get\_config} so that the
+string API is fully functional without third-party plugins.
+
+For built-in filters that have dedicated \texttt{H5Pset\_*} functions with non-trivial
+validation logic (particularly SZIP and Scale-Offset), the \texttt{set\_config}
+callback MUST delegate to the existing internal validation code rather than
+reimplementing it independently. This prevents divergence between the two
+configuration paths and ensures that validation constraints are applied
+consistently regardless of whether the filter was configured via
+\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter\_by\_name}.
+
+\verysubsection{Implementation note}
+Built-in filters are registered internally as
+\texttt{H5Z\_class2\_t} structs. Rather than converting these to \texttt{H5Z\_class3\_t}, the
+implementation provides the \texttt{set\_config} and \texttt{get\_config} callbacks via a
+parallel extension table (\texttt{H5Z\_v3\_ext\_t}) registered with
+\texttt{H5Z\_register\_v3\_ext()}. This allows the built-in filter class structs to
+remain unchanged while still supporting string configuration. The extension
+table is consulted by \texttt{H5Pset\_filter\_by\_name} and the introspection functions
+whenever a filter is registered as v2 but has a v3 extension.
+
+\subsection{Deflate}
+
+\begin{itemize}
+\item \texttt{level} (integer 0--9, default 6): Compression level.
+\item Example: \texttt{"level=6"}
+\end{itemize}
+
+\subsection{Shuffle}
+
+No parameters. \texttt{params} should be \texttt{NULL}.
+
+\subsection{Fletcher32}
+
+No parameters. \texttt{params} should be \texttt{NULL}.
+
+\subsection{SZIP}
+
+\begin{itemize}
+\item \texttt{coding} (\texttt{"entropy"} or \texttt{"nn"}, default \texttt{"nn"}): Coding
+  method.
+\item \texttt{pixels\_per\_block} (even integer 2--32, default 16): Pixels per block.
+\item The \texttt{set\_config} callback translates these into the appropriate option
+  masks (\texttt{H5\_SZIP\_EC\_OPTION\_MASK} or \texttt{H5\_SZIP\_NN\_OPTION\_MASK}) and
+  delegates to the existing \texttt{H5Pset\_szip} validation path. The existing
+  \texttt{H5Pset\_szip} (\texttt{H5Pdcpl.c}) performs the following operations beyond
+  simple parameter translation: checks whether the SZIP encoder is available
+  (\texttt{H5Z\_FILTER\_CONFIG\_ENCODE\_ENABLED}); validates \texttt{pixels\_per\_block} is
+  even and does not exceed \texttt{H5\_SZIP\_MAX\_PIXELS\_PER\_BLOCK}; applies
+  \texttt{H5\_SZIP\_ALLOW\_K13\_OPTION\_MASK}; sets \texttt{H5\_SZIP\_RAW\_OPTION\_MASK};
+  strips \texttt{H5\_SZIP\_CHIP\_OPTION\_MASK}, \texttt{H5\_SZIP\_LSB\_OPTION\_MASK}, and
+  \texttt{H5\_SZIP\_MSB\_OPTION\_MASK}; and forces \texttt{H5Z\_FLAG\_OPTIONAL} regardless
+  of the caller's flag choice. The \texttt{set\_config} callback MUST replicate all
+  of this behavior. Consequently, the \texttt{flags} argument to
+  \texttt{H5Pset\_filter\_by\_name} is overridden for SZIP---the filter is always
+  optional. This is existing behavior of \texttt{H5Pset\_szip} and SHOULD be
+  documented but is not changed by this feature.
+\item Example: \texttt{"coding=entropy, pixels\_per\_block=8"}
+\end{itemize}
+
+\subsection{N-Bit}
+
+No user-facing parameters (derived from datatype). \texttt{params} should be
+\texttt{NULL}.
+
+\subsection{Scale-Offset}
+
+\begin{itemize}
+\item \texttt{scale\_type} (\texttt{"float\_dscale"}, \texttt{"float\_escale"}, or
+  \texttt{"int"}): Scale type. Required.
+\item \texttt{scale\_factor} (integer): Scale factor. Required.
+\item The \texttt{set\_config} callback delegates to the existing
+  \texttt{H5Pset\_scaleoffset} validation path.
+\item Example: \texttt{"scale\_type=float\_dscale, scale\_factor=4"}
+\end{itemize}
+
+
+%% ======================================================================
+%%  Section 8 – Thread Safety and Concurrency
+%% ======================================================================
+\section{Thread Safety and Concurrency}
+\label{sec:thread-safety}
+
+\subsection{Global Registry Protection}
+
+The canonical name registry is a global mutable data structure. In
+thread-safe builds of HDF5 (configured with \texttt{--enable-threadsafe}), all
+access to the registry---including lookups during \texttt{H5Pset\_filter\_by\_name}
+and mutations during \texttt{H5Zregister\_name} or plugin auto-registration---MUST
+be serialized.
+
+The existing HDF5 global API lock serializes all public API entry points.
+This is sufficient to prevent concurrent mutation of the registry from
+user-facing calls. Plugin auto-registration during on-demand search
+(\SectionRef{sec:name-discovery}) occurs within the same API call scope and is
+therefore covered by the same lock. No new locking mechanisms are introduced.
+
+\verysubsection{Future-proofing note}
+\texttt{H5Zlookup\_by\_name} is a pure read operation with
+no I/O side effects. If the library moves toward finer-grained concurrency
+(as discussed in the context of VOLs and asynchronous I/O), the name registry
+SHOULD be protected by a dedicated readers-writer (RW) lock rather than the
+global API lock, allowing concurrent lookups without serialization. The
+internal data structure chosen for the registry should be compatible with this
+future migration.
+
+\subsection{Parallel HDF5 (MPI) Considerations}
+
+In Parallel HDF5, all MPI ranks participating in collective dataset creation
+MUST present identical dataset creation property lists (DCPLs). Because filter
+name resolution depends on locally loaded plugins, non-deterministic plugin
+loading across ranks (e.g., due to filesystem latency or differing
+\texttt{HDF5\_PLUGIN\_PATH} settings) could cause Rank~0 to resolve \texttt{"zfp"}
+successfully while Rank~1 fails.
+
+This is not a new problem introduced by this design---the same class of
+issue exists today when any rank fails to load a required plugin. However,
+this design makes the issue more visible because the failure mode changes from
+a missing compiled-in constant (caught at compile time) to a runtime name
+resolution failure.
+
+The following mitigations are recommended:
+
+\begin{itemize}
+\item Documentation MUST clearly state that all ranks must have identical plugin
+  availability and registry state for collective operations.
+\item Applications using Parallel HDF5 SHOULD ensure that all required plugins
+  are pre-loaded (via explicit \texttt{H5Zregister} calls) before collective
+  dataset creation, rather than relying on on-demand plugin search.
+\end{itemize}
+
+\subsection{VOL Connector Interaction}
+
+Filters are applied to chunks by the native VOL connector during I/O. The new
+string-based API resolves filter names and parameter strings into standard
+\texttt{cd\_values} before modifying the DCPL. From the VOL connector's perspective,
+the DCPL contains the same filter ID, flags, and \texttt{cd\_values} as if
+\texttt{H5Pset\_filter} had been called directly.
+
+Therefore, no changes to the VOL connector interface are required. Third-party
+VOL connectors that intercept DCPLs will see standard filter configurations
+regardless of whether they were set via the string API or the traditional API.
+
+
+%% ======================================================================
+%%  Section 9 – CLI Tool Integration
+%% ======================================================================
+\section{CLI Tool Integration}
+\label{sec:cli-tools}
+
+\subsection{h5repack}
+
+\texttt{h5repack} currently accepts filter specifications via the \texttt{-f} flag. The
+existing syntax (\texttt{GZIP}, \texttt{SZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{NBIT},
+\texttt{SOFF}, and \texttt{UD=id,flags,n,v1,...}) MUST continue to work unchanged.
+
+A new form is added that accepts a filter name and parameter string:
+
+\begin{Verbatim}[fontsize=\scriptsize]
+    h5repack -f 'deflate=level=6' input.h5 output.h5
+    h5repack -f 'zfp=mode=rate,rate=3.5' input.h5 output.h5
+    h5repack -f '/group/dataset:zfp=mode=rate,rate=3.5' \
+              input.h5 output.h5
+\end{Verbatim}
+
+The equals sign is used as the delimiter between filter name and parameter
+string. A colon cannot be used because it is already the separator between the
+object path and filter specification in the existing \texttt{h5repack} syntax (e.g.,
+\texttt{/group/dataset:GZIP=6}). Using equals for both the name-to-params delimiter
+and within key=value pairs is unambiguous because the filter name is always
+the text before the first equals sign.
+
+The old filter name aliases used in \texttt{h5repack} (\texttt{GZIP}, \texttt{SHUF},
+\texttt{FLET}, \texttt{SOFF}) are unrelated to the canonical names introduced in this
+design. The old aliases MUST continue to work unchanged. Whether to also
+register them as canonical name aliases (e.g., \texttt{"gzip"} $\rightarrow$
+\texttt{H5Z\_FILTER\_DEFLATE}) is left as an implementation decision, but doing so
+would simplify the \texttt{h5repack} parsing code by allowing it to delegate all
+name resolution to \texttt{H5Pset\_filter\_by\_name}.
+
+\subsection{h5dump}
+
+\texttt{h5dump} is extended to print the string representation of filter
+configurations when displaying dataset creation properties. For filters that
+implement \texttt{get\_config}, the output includes a \texttt{PARAMS\_STRING} field alongside
+the existing filter information. For example:
+
+\begin{verbatim}
+    FILTERS {
+      COMPRESSION DEFLATE { LEVEL 6 }
+      PARAMS_STRING "level=6"
+    }
+\end{verbatim}
+
+For filters without \texttt{get\_config}, the \texttt{PARAMS\_STRING} field is omitted and the
+existing display format is unchanged.
+
+\end{document}

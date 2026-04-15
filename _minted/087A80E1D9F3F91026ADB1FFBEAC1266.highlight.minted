@@ -1,0 +1,16 @@
+\begin{MintedVerbatim}[commandchars=\\\{\}]
+\PYG{c+c1}{// Current approach:}
+\PYG{n}{H5Pset\PYGZus{}filter}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FILTER\PYGZus{}DEFLATE}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}\PYG{+w}{ }\PYG{l+m+mi}{1}\PYG{p}{,}\PYG{+w}{ }\PYG{o}{\PYGZam{}}\PYG{n}{level}\PYG{p}{)}\PYG{p}{;}
+
+\PYG{c+c1}{// Proposed equivalent:}
+\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{deflate}\PYG{l+s}{\PYGZdq{}}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{level=6}\PYG{l+s}{\PYGZdq{}}\PYG{p}{)}\PYG{p}{;}
+
+\PYG{c+c1}{// Plugin filter \PYGZhy{}\PYGZhy{} no compiled\PYGZhy{}in constants needed:}
+\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{zfp}\PYG{l+s}{\PYGZdq{}}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}
+\PYG{+w}{                       }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{mode=rate, rate=3.5}\PYG{l+s}{\PYGZdq{}}\PYG{p}{)}\PYG{p}{;}
+
+\PYG{c+c1}{// Building a pipeline with multiple calls:}
+\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{shuffle}\PYG{l+s}{\PYGZdq{}}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}\PYG{+w}{ }\PYG{n+nb}{NULL}\PYG{p}{)}\PYG{p}{;}
+\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{deflate}\PYG{l+s}{\PYGZdq{}}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{level=9}\PYG{l+s}{\PYGZdq{}}\PYG{p}{)}\PYG{p}{;}
+\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{fletcher32}\PYG{l+s}{\PYGZdq{}}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FLAG\PYGZus{}MANDATORY}\PYG{p}{,}\PYG{+w}{ }\PYG{n+nb}{NULL}\PYG{p}{)}\PYG{p}{;}
+\end{MintedVerbatim}
