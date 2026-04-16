@@ -12,12 +12,11 @@ floating-point parameters and producing opaque configurations that are
 hostile to CLI tools and high-level language bindings.
 
 The proposed design
-introduces \texttt{H5Pset\_filter\_by\_name}, which accepts a filter name and a
+introduces \texttt{H5Pset\_filter2}, which accepts a filter ID and a
 human-readable key=value parameter string, resolving them into standard
 \texttt{cd\_values} at configuration time with zero on-disk format changes. Filters
 opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
-optional \texttt{set\_config}/\texttt{get\_config} callbacks. Name-based plugin discovery
-extends the existing VFD/VOL by-name search pattern in the H5PL module.
+optional \texttt{set\_config}/\texttt{get\_config} callbacks.
 All existing APIs, plugins, and files remain fully compatible.
 \end{abstract}
 
