@@ -1,7 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{k+kt}{unsigned}\PYG{+w}{ }\PYG{k+kt}{int}\PYG{+w}{ }\PYG{n}{cd\PYGZus{}vals}\PYG{p}{[}\PYG{l+m+mi}{4}\PYG{p}{]}\PYG{p}{;}
-\PYG{k+kt}{double}\PYG{+w}{ }\PYG{n}{rate}\PYG{+w}{ }\PYG{o}{=}\PYG{+w}{ }\PYG{l+m+mf}{3.5}\PYG{p}{;}
-\PYG{n}{cd\PYGZus{}vals}\PYG{p}{[}\PYG{l+m+mi}{0}\PYG{p}{]}\PYG{+w}{ }\PYG{o}{=}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}ZFP\PYGZus{}MODE\PYGZus{}RATE}\PYG{p}{;}
-\PYG{n}{memcpy}\PYG{p}{(}\PYG{o}{\PYGZam{}}\PYG{n}{cd\PYGZus{}vals}\PYG{p}{[}\PYG{l+m+mi}{2}\PYG{p}{]}\PYG{p}{,}\PYG{+w}{ }\PYG{o}{\PYGZam{}}\PYG{n}{rate}\PYG{p}{,}\PYG{+w}{ }\PYG{k}{sizeof}\PYG{p}{(}\PYG{k+kt}{double}\PYG{p}{)}\PYG{p}{)}\PYG{p}{;}
-\PYG{n}{H5Pset\PYGZus{}filter}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{H5Z\PYGZus{}FILTER\PYGZus{}ZFP}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{flags}\PYG{p}{,}\PYG{+w}{ }\PYG{l+m+mi}{4}\PYG{p}{,}\PYG{+w}{ }\PYG{n}{cd\PYGZus{}vals}\PYG{p}{)}\PYG{p}{;}
-\end{MintedVerbatim}

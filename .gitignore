@@ -1,0 +1,16 @@
+*.tex~
+_minted/
+*.aux
+*.bbl
+*.bcf
+*.blg
+*.fdb_latexmk
+*.fls
+*.idx
+*.ilg
+*.ind
+*.log
+*.out
+*.run.xml
+*.toc
+RFC-HDFG-2026-001.pdf

@@ -1,8 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{n}{herr\PYGZus{}t}\PYG{+w}{ }\PYG{n+nf}{H5Pset\PYGZus{}filter\PYGZus{}by\PYGZus{}name}\PYG{p}{(}
-\PYG{+w}{    }\PYG{n}{hid\PYGZus{}t}\PYG{+w}{       }\PYG{n}{plist\PYGZus{}id}\PYG{p}{,}
-\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{ }\PYG{o}{*}\PYG{n}{name}\PYG{p}{,}
-\PYG{+w}{    }\PYG{k+kt}{unsigned}\PYG{+w}{    }\PYG{n}{flags}\PYG{p}{,}
-\PYG{+w}{    }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{ }\PYG{o}{*}\PYG{n}{params}
-\PYG{p}{)}\PYG{p}{;}
-\end{MintedVerbatim}

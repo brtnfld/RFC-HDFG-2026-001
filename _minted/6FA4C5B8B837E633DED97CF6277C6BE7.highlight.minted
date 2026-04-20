@@ -1,3 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{n}{htri\PYGZus{}t}\PYG{+w}{ }\PYG{n+nf}{H5Zfilter\PYGZus{}avail\PYGZus{}by\PYGZus{}name}\PYG{p}{(}\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{ }\PYG{o}{*}\PYG{n}{name}\PYG{p}{)}\PYG{p}{;}
-\end{MintedVerbatim}

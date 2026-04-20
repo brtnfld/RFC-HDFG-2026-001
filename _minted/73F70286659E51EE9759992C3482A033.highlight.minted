@@ -1,3 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{n}{H5Pset\PYGZus{}filter\PYGZus{}pipeline}\PYG{p}{(}\PYG{n}{plist}\PYG{p}{,}\PYG{+w}{ }\PYG{l+s}{\PYGZdq{}}\PYG{l+s}{shuffle; deflate, level=9; fletcher32}\PYG{l+s}{\PYGZdq{}}\PYG{p}{)}\PYG{p}{;}
-\end{MintedVerbatim}

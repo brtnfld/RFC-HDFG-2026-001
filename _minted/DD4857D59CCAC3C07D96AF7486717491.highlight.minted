@@ -1,9 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{k}{typedef}\PYG{+w}{ }\PYG{k}{struct}\PYG{+w}{ }\PYG{n+nc}{H5PL\PYGZus{}vfd\PYGZus{}key\PYGZus{}t}\PYG{+w}{ }\PYG{p}{\PYGZob{}}
-\PYG{+w}{    }\PYG{n}{H5FD\PYGZus{}get\PYGZus{}driver\PYGZus{}kind\PYGZus{}t}\PYG{+w}{ }\PYG{n}{kind}\PYG{p}{;}\PYG{+w}{  }\PYG{c+cm}{/* BY\PYGZus{}NAME or BY\PYGZus{}VALUE          */}
-\PYG{+w}{    }\PYG{k}{union}\PYG{+w}{ }\PYG{p}{\PYGZob{}}
-\PYG{+w}{        }\PYG{n}{H5FD\PYGZus{}class\PYGZus{}value\PYGZus{}t}\PYG{+w}{ }\PYG{n}{value}\PYG{p}{;}
-\PYG{+w}{        }\PYG{k}{const}\PYG{+w}{ }\PYG{k+kt}{char}\PYG{+w}{        }\PYG{o}{*}\PYG{n}{name}\PYG{p}{;}
-\PYG{+w}{    }\PYG{p}{\PYGZcb{}}\PYG{+w}{ }\PYG{n}{u}\PYG{p}{;}
-\PYG{p}{\PYGZcb{}}\PYG{+w}{ }\PYG{n}{H5PL\PYGZus{}vfd\PYGZus{}key\PYGZus{}t}\PYG{p}{;}
-\end{MintedVerbatim}

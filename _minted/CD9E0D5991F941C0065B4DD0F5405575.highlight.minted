@@ -1,7 +1,0 @@
-\begin{MintedVerbatim}[commandchars=\\\{\}]
-\PYG{k}{typedef}\PYG{+w}{ }\PYG{k}{union}\PYG{+w}{ }\PYG{n+nc}{H5PL\PYGZus{}key\PYGZus{}t}\PYG{+w}{ }\PYG{p}{\PYGZob{}}
-\PYG{+w}{    }\PYG{k+kt}{int}\PYG{+w}{            }\PYG{n}{id}\PYG{p}{;}\PYG{+w}{            }\PYG{c+cm}{/* Filters: integer ID only     */}
-\PYG{+w}{    }\PYG{n}{H5PL\PYGZus{}vol\PYGZus{}key\PYGZus{}t}\PYG{+w}{ }\PYG{n}{vol}\PYG{p}{;}\PYG{+w}{           }\PYG{c+cm}{/* VOL: supports by\PYGZhy{}name        */}
-\PYG{+w}{    }\PYG{n}{H5PL\PYGZus{}vfd\PYGZus{}key\PYGZus{}t}\PYG{+w}{ }\PYG{n}{vfd}\PYG{p}{;}\PYG{+w}{           }\PYG{c+cm}{/* VFD: supports by\PYGZhy{}name        */}
-\PYG{p}{\PYGZcb{}}\PYG{+w}{ }\PYG{n}{H5PL\PYGZus{}key\PYGZus{}t}\PYG{p}{;}
-\end{MintedVerbatim}
