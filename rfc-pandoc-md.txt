@@ -1,0 +1,1291 @@
+---
+title: "RFC: String-Based Filter Configuration API"
+subtitle: "RFC-2026-001"
+date: 2026-03-05
+author:
+  - "[To be filled]"
+status: Draft
+abstract: |
+  This RFC proposes a string-based configuration API for HDF5 I/O filters.
+  The current `H5Pset_filter` interface requires users to construct raw
+  `cd_values` arrays of `unsigned int`, forcing error-prone type-punning for
+  floating-point parameters and producing opaque configurations that are
+  hostile to CLI tools and high-level language bindings. The proposed design
+  introduces `H5Pset_filter_by_name`, which accepts a filter name and a
+  human-readable key=value parameter string, resolving them into standard
+  `cd_values` at configuration time with zero on-disk format changes. Filters
+  opt into string configuration via a new `H5Z_class3_t` plugin class with
+  optional `set_config`/`get_config` callbacks. Name-based plugin discovery
+  extends the existing VFD/VOL by-name search pattern in the H5PL module.
+  All existing APIs, plugins, and files remain fully compatible.
+header-includes:
+  - \usepackage{booktabs}
+  - \usepackage{longtable}
+  - \usepackage{enumitem}
+  - \setlistdepth{4}
+documentclass: article
+geometry: margin=1in
+fontsize: 11pt
+numbersections: true
+toc: true
+colorlinks: true
+linkcolor: NavyBlue
+urlcolor: NavyBlue
+citecolor: NavyBlue
+---
+
+\newpage
+
+| Field            | Value                                                       |
+|:-----------------|:------------------------------------------------------------|
+| Document Number  | RFC-2026-001                                                |
+| Date             | 2026-03-05                                                  |
+| Status           | Draft                                                       |
+| Target Release   | TBD                                                         |
+| Related Issue    | [HDFGroup/hdf5\#6153](https://github.com/HDFGroup/hdf5/issues/6153) |
+| Related Work     | llnl/H5Z-ZFP\#159, VFD/VOL string config (HDF5 1.14)      |
+
+# Introduction
+
+## Purpose
+
+This document describes the high-level design for a new string-based interface
+for configuring HDF5 I/O filters. The feature adds a usability layer on top of
+the existing filter machinery, allowing users to specify filter names and
+parameters as human-readable strings rather than constructing raw `cd_values`
+arrays of `unsigned int`.
+
+## Scope
+
+This design covers:
+
+- New public API functions in the `H5P` and `H5Z` modules for string-based
+  filter configuration.
+- A new version of the filter plugin class (`H5Z_class3_t`) with optional
+  string-configuration callbacks.
+- A canonical name registry for filter lookup by name.
+- Extensions to the plugin loading infrastructure (`H5PL`) for name-based
+  plugin discovery.
+- Integration points for HDF5 command-line tools (`h5repack`, `h5dump`).
+- The Fortran and Java bindings that ship with HDF5 (3 `H5P` subroutines and
+  4 `H5Z` subroutines for Fortran; corresponding Java wrappers).
+
+This design does not cover:
+
+- Changes to the on-disk format or object header layout.
+- Changes to the filter execution pipeline itself.
+- External high-level language binding implementations (h5py, etc.), though
+  the design is motivated in part by their needs.
+- Data-attribute-dependent compression strategies (e.g., choosing different
+  filters based on dimensionality or datatype), which could be layered on top
+  of this feature in the future.
+
+
+# Motivation
+
+## Problem Statement
+
+The current generic interface for configuring HDF5 filters is `H5Pset_filter`,
+which accepts an array of `unsigned int` values (`cd_values`). This interface
+presents three categories of problems.
+
+**Type punning.** Filters that accept floating-point parameters (rates,
+tolerances, precision thresholds) require users to manually bit-cast `double`
+or `float` values into one or more `unsigned int` slots. This is error-prone,
+endian-sensitive, and difficult or impossible to express naturally in
+high-level languages such as Python, Java, and MATLAB without dedicated
+wrapper code. For example, configuring H5Z-ZFP in rate mode currently
+requires:
+
+```c
+unsigned int cd_vals[4];
+double rate = 3.5;
+cd_vals[0] = H5Z_ZFP_MODE_RATE;
+memcpy(&cd_vals[2], &rate, sizeof(double));
+H5Pset_filter(plist, H5Z_FILTER_ZFP, flags, 4, cd_vals);
+```
+
+**CLI usability.** Command-line tools such as `h5repack` require users to pass
+opaque integer sequences (e.g., `-f UD=32013,0,4,1,0,0,1074921472`). External
+helper scripts exist solely to translate human-readable settings into these
+sequences.
+
+**Opaque introspection.** When examining a file's dataset creation properties,
+the `cd_values` array is meaningless without external documentation. There is
+no standard way to recover the original intent of the configuration (e.g.,
+"ZFP rate mode, rate=3.5").
+
+## Precedent Within HDF5
+
+HDF5 1.14 introduced string-based configuration for Virtual File Drivers:
+
+```c
+H5Pset_driver_by_name(fapl, "sec2", NULL)
+```
+
+This API allows drivers to be selected and configured by name at runtime
+without requiring compiled-in constants. The VOL subsystem provides analogous
+by-name functionality through `H5VLregister_connector_by_name()` and
+`H5VLget_connector_id_by_name()`, though it does not have a direct
+`H5Pset_vol_by_name` equivalent. The proposed filter configuration API follows
+the VFD pattern most closely and extends it with structured parameter passing.
+
+## Goals
+
+1. Users MUST be able to configure any filter using human-readable named
+   parameters.
+2. Filter plugins MUST be addressable by a canonical name, without requiring
+   compiled-in integer constants.
+3. The on-disk format MUST NOT change.
+4. All existing APIs, plugins, and call sites MUST continue to work without
+   modification.
+5. The design MUST support both built-in and dynamically loaded plugin
+   filters.
+6. The API MUST be consistent with the structure and conventions of existing
+   HDF5 public APIs.
+
+
+# Parameter String Format
+
+## Design Rationale
+
+The string passed to configure a filter's parameters needs a lightweight,
+unambiguous format. Several options were considered:
+
+- **JSON:** Expressive but requires a parser dependency in libhdf5. Hostile in
+  CLI contexts (quoting rules, no trailing commas). Heavyweight for simple
+  cases.
+- **YAML:** Even heavier parsing dependency. Whitespace-significant syntax is
+  problematic for single-line CLI arguments.
+- **Comma-separated key=value pairs:** Lightweight, parseable in C with no
+  dependencies, consistent with how VFD/VOL configuration strings are already
+  handled in HDF5 1.14.
+
+The recommended format is comma-separated key=value pairs, with support for
+bare keys (boolean flags) and double-quote-delimited values:
+
+    mode=rate, rate=3.5
+    level=6
+    pixels_per_block=16, coding=entropy
+    fast_mode, level=6
+
+## Rules
+
+- Parameters are separated by commas.
+- Each parameter is a key=value pair, or a bare key (without an equals sign)
+  acting as a boolean flag with an implicit empty value.
+- Leading and trailing whitespace around keys and values is stripped.
+- Keys are case-insensitive; the library normalizes to lowercase using ASCII
+  case folding only (C locale `tolower()`, not locale-dependent `towlower()`).
+  Values are passed to the filter callback verbatim and are case-sensitive by
+  default; the filter is responsible for type interpretation. Note: This means
+  `"coding=Entropy"` and `"coding=entropy"` are different strings from the
+  library's perspective. Filter authors are encouraged to handle values
+  case-insensitively where practical (e.g., for enum-like parameters) to
+  minimize user confusion.
+- Keys and values consist of printable ASCII characters (excluding comma,
+  semicolon, and equals sign), unless quoted.
+- Quoted values: If a value begins with a double quote (`"`) after leading
+  whitespace has been stripped, the value extends until the next unescaped
+  double quote. Within a quoted value, commas, semicolons, and equals signs
+  are literal and do not act as delimiters. Whitespace inside a quoted value
+  is preserved exactly as written (whitespace stripping applies only outside
+  of quotes). A literal double quote within a quoted value is represented as
+  two consecutive double quotes (`""`). An unbalanced quote (opening `"` with
+  no closing `"`) MUST cause the parser to return `H5E_BADVALUE` rather than
+  silently consuming the rest of the string.
+- Order of operations for parsing: split the parameter string on commas
+  (respecting quoted regions) → split each token on the first equals sign →
+  strip leading/trailing whitespace from both key and value → apply quote
+  processing to the value if it begins with a double quote.
+- Duplicate keys: If the same key appears more than once in a parameter
+  string, the parser MUST reject the string with `H5E_BADVALUE`. The parser
+  can detect duplicates cheaply during a single pass by checking each key
+  against those already seen.
+- Bare keys (without an equals sign) are permitted and treated as boolean
+  flags with an implicit empty value. For example, `"fast_mode, level=6"`
+  contains two parameters: the flag `fast_mode` (empty value) and `level`
+  with value `"6"`.
+- The semicolon restriction (outside of quoted values) is reserved for a
+  possible future pipeline-string API extension.
+- A `NULL` or empty string means "no parameters" (valid for filters like
+  shuffle and fletcher32).
+
+## Maximum String Length
+
+A practical maximum parameter string length of 4096 bytes is recommended. The
+hard limit is implementation-defined. Implementations SHOULD reject
+pathologically large strings (e.g., multi-megabyte) early.
+
+## Examples
+
+    "level=6"                                  — deflate
+    "mode=rate, rate=3.5"                      — ZFP
+    "pixels_per_block=16, coding=entropy"      — SZIP
+    "scale_type=float_dscale, scale_factor=4"  — scaleoffset
+    'dict_path="/data/run_1,v2/dict.bin"'      — quoted value containing a comma
+    "fast_mode, level=6"                       — bare key as boolean flag
+    NULL                                       — shuffle (no params)
+
+
+# Public API
+
+## Single-Filter Configuration by Name
+
+```c
+herr_t H5Pset_filter_by_name(
+    hid_t       plist_id,
+    const char *name,
+    unsigned    flags,
+    const char *params
+);
+```
+
+**Description:** Looks up the filter identified by `name`, configures it using
+the key-value parameter string `params`, and appends it to the existing filter
+pipeline on `plist_id`. If a filter with the same ID is already present in the
+pipeline, it is replaced (not duplicated) --- this matches the existing
+behavior of `H5Pset_filter`. The pipeline is subject to the existing maximum
+of `H5Z_MAX_NFILTERS` (32) entries.
+
+This function is modeled on `H5Pset_filter`: it appends a single filter to
+the pipeline with explicit flag control. The difference is that the filter is
+identified by name rather than integer ID, and parameters are passed as a
+human-readable string rather than a `cd_values` array. The two APIs are fully
+interchangeable on the same DCPL --- calling `H5Pset_filter_by_name` and
+`H5Pset_filter` for the same filter ID produces identical results in the
+property list, and either can replace a filter entry created by the other.
+
+**Behavioral note on flags:** Unlike `H5Pset_filter`, where the caller has
+absolute control over flags, `H5Pset_filter_by_name` passes the caller's
+flags through the filter's `set_config` callback, which MAY modify them. This
+allows filters to enforce constraints (e.g., SZIP unconditionally forces
+`H5Z_FLAG_OPTIONAL`). This is a deliberate asymmetry: filters configured via
+string may override the caller's flag choice based on internal requirements.
+See Section 6.4 for details.
+
+If the filter name is not found in the in-memory name registry, the library
+triggers an on-demand plugin search (see Section 5.6).
+
+**Parameters:**
+
+- `plist_id` --- A dataset creation property list identifier.
+- `name` --- A filter name (case-insensitive, e.g., `"deflate"`, `"zfp"`) or
+  a string representation of a numeric filter ID (e.g., `"32013"`).
+  Resolution order: the name registry is checked first; if the name is not
+  found and consists entirely of digits, it is parsed as a numeric filter ID.
+  This means a registered name takes precedence even if it happens to be a
+  numeric string.
+- `flags` --- A bit mask specifying filter behavior (`H5Z_FLAG_MANDATORY`,
+  `H5Z_FLAG_OPTIONAL`).
+- `params` --- A comma-separated key=value parameter string, or `NULL` for
+  filters that take no parameters. If `params` is non-`NULL` and non-empty
+  for a filter that takes no parameters, the filter's `set_config` callback
+  SHOULD reject it with `H5E_BADVALUE`. This is the expected pattern for
+  parameterless built-in filters (shuffle, fletcher32, nbit).
+
+**Returns:** Non-negative on success; negative on failure.
+
+**Errors:**
+
+- `H5E_NOFILTER` --- The filter name could not be resolved to a registered
+  filter, even after an on-demand plugin search.
+- `H5E_UNSUPPORTED` --- The filter was found but does not implement
+  `set_config` and `params` is not `NULL`. The user should use
+  `H5Pset_filter` with raw `cd_values` instead.
+- `H5E_BADVALUE` --- The parameter string is malformed or rejected by the
+  filter's `set_config` callback.
+
+**Usage example:**
+
+```c
+// Current approach:
+H5Pset_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, &level);
+
+// Proposed equivalent:
+H5Pset_filter_by_name(plist, "deflate", H5Z_FLAG_MANDATORY, "level=6");
+
+// Plugin filter — no compiled-in constants needed:
+H5Pset_filter_by_name(plist, "zfp", H5Z_FLAG_MANDATORY,
+                       "mode=rate, rate=3.5");
+
+// Building a pipeline with multiple calls:
+H5Pset_filter_by_name(plist, "shuffle", H5Z_FLAG_MANDATORY, NULL);
+H5Pset_filter_by_name(plist, "deflate", H5Z_FLAG_MANDATORY, "level=9");
+H5Pset_filter_by_name(plist, "fletcher32", H5Z_FLAG_MANDATORY, NULL);
+```
+
+## Pipeline Introspection
+
+```c
+herr_t H5Pget_filter_name_by_idx(
+    hid_t     plist_id,
+    unsigned  filter_idx,
+    char     *name_buf,
+    size_t    name_buf_size,
+    size_t   *name_len,
+    unsigned *flags
+);
+
+herr_t H5Pget_filter_params_by_idx(
+    hid_t     plist_id,
+    unsigned  filter_idx,
+    char     *params_buf,
+    size_t    params_buf_size,
+    size_t   *params_len
+);
+```
+
+**Description:** These two functions retrieve the string representation of a
+single filter in the pipeline at position `filter_idx`.
+
+`H5Pget_filter_name_by_idx` returns the filter's canonical name and flags. If
+the filter is registered in the name registry, its canonical name is written
+to `name_buf`. Otherwise, the numeric filter ID is formatted as a decimal
+string (e.g., `"32013"`).
+
+`H5Pget_filter_params_by_idx` returns the human-readable parameter string.
+For filters that implement `get_config`, the callback's output is used. For
+filters that do not implement `get_config`, the raw `cd_values` are formatted
+as a fallback string using colon separators (e.g.,
+`"cd_values=1:0:0:1074921472"`). The colon separator avoids ambiguity with
+the comma-separated key=value grammar defined in Section 3 --- a fallback
+string is a single key=value pair where the value contains colons. This means
+the fallback string is a valid parameter string under the grammar, preserving
+the possibility of round-tripping in a future release.
+
+**Note on string reconstruction:** The DCPL does not retain the original
+parameter string. After `H5Pset_filter_by_name` resolves the string into
+`cd_values`, only the `cd_values` are stored in the property list (identical
+to `H5Pset_filter`). These functions rely on the filter's `get_config`
+callback to reconstruct a human-readable string from the stored `cd_values`.
+Consequently, the reconstructed string may differ in formatting from the
+original input (e.g., `"rate=3.5"` may become `"rate=3.500000"`). Consumers
+MUST NOT rely on exact string equality between input and output.
+
+**Note on `H5Pget_filter2`:** The existing `H5Pget_filter2` function returns a
+filter name from the class struct's `name` field (the "debug comment" in v2
+plugins). `H5Pget_filter_name_by_idx` returns the canonical name from the name
+registry, which may differ. For example, a v2 plugin might have
+`name = "HDF5 deflate filter"` in its class struct, while the registry
+canonical name is `"deflate"`. The two functions serve different purposes and
+may return different strings for the same pipeline entry.
+
+**Parameters (`H5Pget_filter_name_by_idx`):**
+
+- `plist_id` --- A dataset creation property list identifier.
+- `filter_idx` --- Zero-based index of the filter in the pipeline (`unsigned`,
+  consistent with `H5Pget_filter2`).
+- `name_buf` --- Buffer to receive the filter's canonical name, or `NULL` to
+  query size only.
+- `name_buf_size` --- Size of `name_buf` in bytes.
+- `name_len` --- On output, set to the length of the name string (excluding
+  NUL), or `NULL` if not needed. Set even when `name_buf` is `NULL`, enabling
+  a size query.
+- `flags` --- Pointer to receive the filter's flags, or `NULL`.
+
+**Parameters (`H5Pget_filter_params_by_idx`):**
+
+- `plist_id` --- A dataset creation property list identifier.
+- `filter_idx` --- Zero-based index of the filter in the pipeline.
+- `params_buf` --- Buffer to receive the parameter string, or `NULL` to query
+  size only.
+- `params_buf_size` --- Size of `params_buf` in bytes.
+- `params_len` --- On output, set to the length of the parameter string
+  (excluding NUL), or `NULL` if not needed. Set even when `params_buf` is
+  `NULL`, enabling a size query.
+
+**Returns (both functions):** Non-negative on success; negative on failure.
+
+These functions complement the existing `H5Pget_filter2` by providing the same
+information in human-readable form.
+
+## Developer Helper: Parameter Lookup
+
+```c
+htri_t H5Zconfig_get_param(
+    const char *params,
+    const char *key,
+    char       *value_buf,
+    size_t      buf_size,
+    size_t     *val_len
+);
+```
+
+**Description:** Searches the parameter string `params` for the given `key`
+and returns the associated value. This function is declared in `H5Zdevelop.h`
+and is the library-provided parameter parser that plugin authors are expected
+to use in their `set_config` callbacks. All built-in filter `set_config`
+implementations (deflate, szip, scaleoffset) use this function.
+
+Returns positive (`> 0`) if the key is present in `params`, `0` if the key is
+not present, or negative on error (malformed string). The `htri_t` return type
+(HDF5's standard tri-state boolean) cleanly separates three cases: found, not
+found, and error --- without triggering the error stack for a missing optional
+parameter. If the key is present and `value_buf` is non-`NULL`, the processed
+value is written to `value_buf` (quotes stripped, `""` unescaped --- the
+filter sees the final usable string, not the raw grammar tokens). If
+`val_len` is non-`NULL`, it is set to the length of the processed value string
+(excluding NUL). A bare key like `"fast_mode"` (no equals sign) returns
+positive with `val_len = 0` and an empty `value_buf`, distinguishable from an
+absent key (returns `0`).
+
+This function is placed in `H5Zdevelop.h` (developer-facing) rather than
+`H5Zpublic.h` to limit the public API surface.
+
+## Design Alternative: Pipeline-in-a-String API
+
+An alternative (or additional) API has been proposed in community discussion
+that allows an entire filter pipeline to be expressed as a single string:
+
+```c
+H5Pset_filter_pipeline(plist, "shuffle; deflate, level=9; fletcher32");
+```
+
+In this variant, semicolons separate individual filter specifications, and the
+first token in each specification is the filter name. The function would
+replace the entire pipeline atomically.
+
+*Arguments in favor:*
+
+- Very concise for CLI tools and configuration files.
+- A single string can be stored, logged, and passed around trivially.
+- Mirrors how users think about a pipeline as a unit.
+
+*Arguments against:*
+
+- Introduces a grammar (semicolons, ordering rules, escaping) that the
+  library must specify, parse, and maintain indefinitely.
+- Departs from the established HDF5 pattern of one-filter-per-call with
+  explicit parameters per call.
+- Makes per-filter flag control awkward (all filters share a default, or an
+  inline syntax must be invented).
+- Conflates filter selection and parameter passing in a way that is harder to
+  validate and produces less precise error messages.
+
+**Recommendation:** This document proposes `H5Pset_filter_by_name` (Section
+4.1) as the primary API, following the established HDF5 pattern. The
+pipeline-string variant could be added as a convenience function in a future
+release if demand warrants it, since it can be trivially implemented as a
+wrapper that tokenizes on semicolons and calls `H5Pset_filter_by_name` in a
+loop.
+
+**Note on grammar interaction:** The bare-key feature (Section 3.2) creates an
+ambiguity for the pipeline-string grammar. In a pipeline string like
+`"shuffle; deflate, fast_mode, level=9"`, it is unclear whether `"fast_mode"`
+is a second filter name or a bare-key parameter of deflate. If the
+pipeline-string variant is added in the future, the grammar MUST resolve
+this --- the natural rule is that the filter name is always the first token
+after a semicolon delimiter, and all subsequent comma-separated tokens in the
+same spec are parameters.
+
+
+# Filter Name Registry
+
+## Overview
+
+The library maintains an internal mapping from canonical names to filter IDs
+(`H5Z_filter_t`). This registry is the mechanism by which the new APIs resolve
+filter names at runtime. It also serves as a cache for names discovered during
+plugin loading.
+
+## Built-in Registrations
+
+The following names are registered at library initialization:
+
+| Name             | Filter ID                   |
+|:-----------------|:----------------------------|
+| `"deflate"`      | `H5Z_FILTER_DEFLATE`        |
+| `"shuffle"`      | `H5Z_FILTER_SHUFFLE`        |
+| `"fletcher32"`   | `H5Z_FILTER_FLETCHER32`     |
+| `"szip"`         | `H5Z_FILTER_SZIP`           |
+| `"nbit"`         | `H5Z_FILTER_NBIT`           |
+| `"scaleoffset"`  | `H5Z_FILTER_SCALEOFFSET`    |
+
+## Plugin Auto-Registration
+
+When a filter plugin compiled against `H5Z_class3_t` is loaded (whether by
+integer-ID search or name-based search), the library reads the `name` field
+from the class structure and automatically registers it in the name registry.
+If the `name` field is `NULL`, the plugin is not registered by name and can
+only be addressed by numeric ID.
+
+The library MUST make an internal copy (`strdup`) of the name string when
+inserting it into the name registry. The `name` field in `H5Z_class3_t` points
+to memory inside the loaded shared library. If the plugin is later unloaded
+(e.g., via `H5Zunregister` or `H5close`), the registry would otherwise
+contain a dangling pointer.
+
+**Note on the `name` field:** In `H5Z_class2_t`, the `name` field is
+documented as "Comment for debugging" but is also user-visible --- it is the
+string returned by `H5Pget_filter2` in its `name[]` output parameter.
+Existing plugins may contain freeform text (e.g., "my cool zfp filter v2.1").
+In `H5Z_class3_t`, the `name` field takes on a stronger role as a canonical
+identifier used for registry lookup and on-demand plugin discovery, and MUST
+follow the naming rules in Section 3.2 (printable ASCII, no
+commas/semicolons/equals signs). Plugin authors upgrading from v2 to v3 MUST
+choose a suitable canonical name. This semantic shift MUST be prominently
+documented in the migration guide.
+
+## Explicit Registration and Lookup
+
+```c
+herr_t H5Zregister_name(H5Z_filter_t id, const char *canonical_name);
+```
+
+Registers a name mapping. This can be used to add aliases (e.g.,
+`"gzip"` → `H5Z_FILTER_DEFLATE`) or to register names for older v2 plugins
+that cannot self-register. A single filter ID MAY be associated with multiple
+names. In this case, the introspection functions (Section 4.2) return the name
+that was first registered for that ID (either the built-in name, the name from
+the plugin's class struct, or the first explicit registration).
+
+```c
+H5Z_filter_t H5Zlookup_by_name(const char *name);
+```
+
+Returns the filter ID associated with `name`, or `H5Z_FILTER_ERROR` if not
+found. Lookup is case-insensitive (ASCII folding only). This function queries
+the in-memory name registry only. It does NOT trigger on-demand plugin
+loading. It is a fast, pure lookup with no I/O side effects.
+
+```c
+htri_t H5Zfilter_avail_by_name(const char *name);
+```
+
+Returns positive if the filter identified by `name` is available (registered
+or discoverable via plugin search), `0` if not available, negative on error.
+Unlike `H5Zlookup_by_name`, this function DOES trigger on-demand plugin
+loading if the name is not already in the registry --- it is the by-name
+equivalent of the existing `H5Zfilter_avail()`. This allows users to test
+filter availability before committing to a DCPL configuration.
+
+## Collision Policy
+
+If a name is already registered, `H5Zregister_name` and plugin
+auto-registration MUST fail and return an error. First registration wins. This
+prevents silent behavioral changes when plugins are loaded in different orders.
+
+Note: The collision policy applies to names, not to IDs. Multiple names may
+map to the same filter ID (aliases). But a given name may map to only one ID.
+
+### Interaction with H5Zunregister
+
+When `H5Zunregister()` removes a filter, all name registry entries pointing to
+that filter's ID MUST also be removed. If the entries persist,
+`H5Zlookup_by_name` would return a filter ID that is no longer registered, and
+a subsequent `H5Pset_filter` with that ID would fail --- producing a confusing
+error path. The reverse mapping (ID → names) required for this cleanup is an
+implementation requirement; see Section 5.8. The cleanup routine MUST free all
+internally copied name strings (via `H5MM_xfree` or equivalent) to prevent
+memory leaks in long-running processes or test suites that repeatedly register
+and unregister filters.
+
+## Name-Based Plugin Discovery
+
+This section describes how `H5Pset_filter_by_name` finds and loads a plugin
+when the requested name is not yet in the registry. The mechanism extends the
+existing VFD/VOL by-name plugin search pattern.
+
+The VFD and VOL subsystems already solve this exact problem using a
+discriminated union in `H5PL_key_t`, a `kind` field that selects between
+by-name and by-value matching, and a `check_plugin_load` callback that
+performs the match. The filter case simply has not been upgraded yet. This
+design applies the same pattern.
+
+**Current state.** The filter key in `H5PL_key_t` (`H5PLprivate.h`) is a bare
+`int`:
+
+```c
+typedef union H5PL_key_t {
+    int            id;            /* Filters: integer ID only     */
+    H5PL_vol_key_t vol;           /* VOL: supports by-name        */
+    H5PL_vfd_key_t vfd;           /* VFD: supports by-name        */
+} H5PL_key_t;
+```
+
+By contrast, VFDs use a discriminated union (`H5PLprivate.h`):
+
+```c
+typedef struct H5PL_vfd_key_t {
+    H5FD_get_driver_kind_t kind;  /* BY_NAME or BY_VALUE          */
+    union {
+        H5FD_class_value_t value;
+        const char        *name;
+    } u;
+} H5PL_vfd_key_t;
+```
+
+When `H5FD_register_driver_by_name()` (`H5FDint.c`) needs to find a driver, it
+sets `key.vfd.kind = H5FD_GET_DRIVER_BY_NAME`, passes the key to
+`H5PL_load()`, and the existing scan logic in `H5PL__open()` loads the `.so`,
+calls `H5PLget_plugin_info()`, and invokes `H5FD_check_plugin_load()` to do a
+`strcmp` on the class name. The library already does an exhaustive scan of all
+`.so` files in `HDF5_PLUGIN_PATH` for every plugin type --- this is not a new
+cost.
+
+**Required changes.** Give filters the same discriminated union:
+
+```c
+typedef enum {
+    H5Z_GET_FILTER_BY_ID,
+    H5Z_GET_FILTER_BY_NAME
+} H5Z_get_filter_kind_t;
+
+typedef struct H5PL_filter_key_t {
+    H5Z_get_filter_kind_t kind;
+    union {
+        H5Z_filter_t    id;
+        const char     *name;
+    } u;
+} H5PL_filter_key_t;
+```
+
+Replace the bare `int` in `H5PL_key_t`:
+
+```c
+typedef union H5PL_key_t {
+    H5PL_filter_key_t filter;   /* NEW: by-name and by-id */
+    H5PL_vol_key_t    vol;
+    H5PL_vfd_key_t    vfd;
+} H5PL_key_t;
+```
+
+Add an `H5Z_check_plugin_load()` callback (analogous to
+`H5FD_check_plugin_load` and `H5VL_check_plugin_load`). In the
+`H5PL_TYPE_FILTER` case within `H5PL__open()`, this callback inspects the
+class struct returned by `H5PLget_plugin_info()` and matches by either integer
+ID or name depending on `key.filter.kind`. For name matching, comparison is
+case-insensitive (ASCII folding).
+
+Existing integer-ID search paths MUST be updated to use the new
+`H5PL_filter_key_t` with `kind = H5Z_GET_FILTER_BY_ID`. This is a mechanical
+refactor with no behavioral change --- the match logic is identical, just
+accessed through the discriminated union. Note: this touches every existing
+call site that currently writes `key.id = filter_id` (in `H5Z.c`,
+`H5Pdcpl.c`, and any internal filter availability checks). Implementation
+reviewers should verify no call site was missed.
+
+**Resolution procedure.** When `H5Pset_filter_by_name` cannot resolve a name
+from the in-memory registry:
+
+1. Check whether the filter is already registered by name in the registry ---
+   if so, use the cached ID.
+2. Set `key.filter.kind = H5Z_GET_FILTER_BY_NAME` and
+   `key.filter.u.name = requested_name`.
+3. Call `H5PL_load(H5PL_TYPE_FILTER, &key)`.
+4. The existing `H5PL__find_plugin_in_path_table()` → `H5PL__open()` scan
+   iterates directories in `HDF5_PLUGIN_PATH`. For each `.so`, it calls
+   `H5PLget_plugin_type()` and `H5PLget_plugin_info()`.
+5. `H5Z_check_plugin_load()` compares the class struct's `name` field against
+   the requested name (case-insensitive).
+6. On match, the plugin is registered (both by ID and by name), and the
+   filter ID is returned.
+7. If no match is found after scanning all directories, `H5E_NOFILTER` is
+   returned.
+
+Once found, the name is cached in the registry. Subsequent calls resolve
+instantly without scanning.
+
+**v2 plugin behavior during name-based search.** For v2 plugins
+(`H5Z_class2_t`), the `name` field is documented as "Comment for debugging"
+and may contain arbitrary strings. The by-name search MUST only match against
+v3 plugins (`H5Z_class3_t`) where the `name` field is a canonical identifier.
+v2 plugins are skipped during name-based search. They can still be discovered
+by integer ID (the existing path) or pre-registered with `H5Zregister_name`.
+
+**Plugin path management.** Plugins discoverable by name are subject to the
+same path configuration as all other plugins. The directories searched are
+those configured via `HDF5_PLUGIN_PATH`, `H5PLappend()`, `H5PLprepend()`, and
+related `H5PL` path management APIs. No separate path configuration is needed
+for name-based discovery.
+
+## Relationship to the HDF Group Filter Registry
+
+The HDF Group maintains an external registry of filter IDs. It is recommended
+that canonical names be added to this registry as a normative reference to
+ensure global uniqueness of filter names. This is a process question for the
+HDF Group to decide, not a technical requirement of this design.
+
+## Registry Implementation Requirements
+
+The name registry must support the following operations efficiently:
+
+- **Forward lookup:** name → filter ID (used by `H5Pset_filter_by_name`,
+  `H5Zlookup_by_name`).
+- **Reverse lookup:** filter ID → canonical name (used by
+  `H5Pget_filter_name_by_idx`).
+- **Reverse cleanup:** filter ID → all registered names (used by
+  `H5Zunregister`, Section 5.5.1).
+- **Insertion-order tracking:** The introspection functions return "the name
+  that was first registered for that ID" (Section 5.4). This requires either
+  insertion-order metadata or a separate ID → first-name mapping. A simple
+  name → ID hash map alone is not sufficient.
+
+A bidirectional mapping (name → ID hash table plus ID → ordered name list)
+satisfies all requirements. The exact data structure is an implementation
+choice.
+
+
+# Filter Plugin Class Version 3
+
+## Rationale
+
+The string configuration feature requires filters to participate voluntarily.
+A filter must be able to accept a parameter string and produce `cd_values`,
+and optionally to reverse the process for introspection. This is achieved by
+introducing two new optional callbacks in a version 3 filter class structure.
+
+## Version Numbering
+
+The existing version-to-struct mapping in HDF5 is:
+
+| Struct           | Version Field | Constant            |
+|:-----------------|:--------------|:--------------------|
+| `H5Z_class1_t`  | none (legacy) | ---                 |
+| `H5Z_class2_t`  | `1`           | `H5Z_CLASS_T_VERS`  |
+| `H5Z_class3_t`  | `2`           | `H5Z_CLASS3_T_VERS` |
+
+The dispatch logic in `H5Zregister()` currently uses a two-way branch: if
+`version == H5Z_CLASS_T_VERS` (1), treat as `H5Z_class2_t`; otherwise, treat
+as legacy `H5Z_class1_t` (since the first field of a v1 struct is the filter
+ID, which is always ≥ 256).
+
+This MUST be extended to a three-way branch:
+
+    if (version == 1) → H5Z_class2_t
+    else if (version == 2) → H5Z_class3_t
+    else if (version >= 256) → legacy H5Z_class1_t
+    else → error (unknown version)
+
+Note: When `H5_NO_DEPRECATED_SYMBOLS` is defined, the legacy `H5Z_class1_t`
+path is compiled out entirely and any `version != H5Z_CLASS_T_VERS` produces a
+hard error. The three-way branch must account for this conditional
+compilation: under `H5_NO_DEPRECATED_SYMBOLS`, the dispatch accepts version 1
+(v2 struct) and version 2 (v3 struct), and rejects all other values.
+
+The existing constant `H5Z_CLASS_T_VERS` (currently 1) MUST NOT be changed. If
+it were updated to 2, existing v2 plugin source code that initializes
+`.version = H5Z_CLASS_T_VERS` would silently produce a struct the library
+interprets as v3, despite missing the `set_config`/`get_config` fields ---
+causing undefined behavior (reading uninitialized memory for callback
+pointers). Instead, a new constant MUST be introduced:
+
+```c
+#define H5Z_CLASS_T_VERS   1   /* Unchanged — used by H5Z_class2_t */
+#define H5Z_CLASS3_T_VERS  2   /* NEW — used by H5Z_class3_t       */
+```
+
+The version-to-struct mapping table MUST be documented in `H5Zdevelop.h`.
+
+**Compatibility macro in `H5version.h`.** The existing compatibility macro
+(`H5version.h`) maps the generic type alias `H5Z_class_t` to a versioned
+struct:
+
+```c
+#if !defined(H5Z_class_t_vers) || H5Z_class_t_vers == 2
+  #define H5Z_class_t H5Z_class2_t
+#elif H5Z_class_t_vers == 1
+  #define H5Z_class_t H5Z_class1_t
+#endif
+```
+
+Currently `H5Z_class_t_vers` defaults to `2`, mapping
+`H5Z_class_t → H5Z_class2_t`. This macro MUST NOT be changed to default to
+`3` (mapping to `H5Z_class3_t`), because existing code using `H5Z_class_t`
+would silently get the larger struct with uninitialized callback fields. The
+default MUST remain `2`. A new value of `3` MAY be added as an opt-in for
+code that explicitly requests `H5Z_class3_t`:
+
+```c
+#if !defined(H5Z_class_t_vers) || H5Z_class_t_vers == 2
+  #define H5Z_class_t H5Z_class2_t
+#elif H5Z_class_t_vers == 1
+  #define H5Z_class_t H5Z_class1_t
+#elif H5Z_class_t_vers == 3
+  #define H5Z_class_t H5Z_class3_t
+#endif
+```
+
+Plugin authors adopting v3 SHOULD use `H5Z_class3_t` directly rather than
+relying on the `H5Z_class_t` alias.
+
+## Structure Definition
+
+```c
+typedef herr_t (*H5Z_set_config_func_t)(
+    const char   *params,
+    unsigned     *flags,
+    size_t       *cd_nelmts,
+    unsigned      cd_values[],
+    size_t        cd_values_size
+);
+
+typedef ssize_t (*H5Z_get_config_func_t)(
+    unsigned          flags,
+    size_t            cd_nelmts,
+    const unsigned    cd_values[],
+    char             *buf,
+    size_t            buf_size
+);
+
+typedef struct H5Z_class3_t {
+    int                        version;
+    H5Z_filter_t               id;
+    unsigned                   encoder_present;
+    unsigned                   decoder_present;
+    const char                *name;
+    H5Z_can_apply_func_t      can_apply;
+    H5Z_set_local_func_t      set_local;
+    H5Z_func_t                filter;
+    H5Z_set_config_func_t     set_config;
+    H5Z_get_config_func_t     get_config;
+} H5Z_class3_t;
+```
+
+## Callback Specifications
+
+**`H5Z_set_config_func_t`:**
+
+- `params` --- The key-value parameter string (e.g., `"mode=rate, rate=3.5"`).
+  `NULL` if no parameters were provided.
+- `flags` --- On input, contains the flags value from the API call. The
+  callback MAY modify this value. If the callback modifies flags, the modified
+  value is what `H5Pset_filter_by_name` writes into the DCPL. This gives the
+  filter the final say on properties like `H5Z_FLAG_MANDATORY` vs.
+  `H5Z_FLAG_OPTIONAL`. The override is silent (no warning is emitted),
+  consistent with existing behavior in `H5Pset_szip` which unconditionally
+  forces `H5Z_FLAG_OPTIONAL` without notification.
+- `cd_nelmts` --- On input, points to a value of 0. On output, set to the
+  number of elements written to `cd_values` (or the number of elements
+  required, if `cd_values` is `NULL`).
+- `cd_values` --- On output, populated with the filter's client data. If
+  `NULL`, the callback MUST still set `cd_nelmts` to the required count,
+  enabling a two-pass size query pattern. The library calls the callback once
+  with `cd_values=NULL` to determine the required size, allocates accordingly,
+  and calls it again with a sufficiently sized array. The library MUST
+  validate on the second pass that `cd_nelmts` does not exceed the allocated
+  capacity; if it does, the library returns an error rather than writing out
+  of bounds.
+- `cd_values_size` --- The capacity of the `cd_values` array (0 when
+  `cd_values` is `NULL`).
+- Returns non-negative on success, negative on failure.
+
+The callback SHOULD use `H5Epush` to report meaningful error messages for
+invalid parameters.
+
+**`H5Z_get_config_func_t`:**
+
+- Reconstructs a human-readable parameter string from `cd_values`.
+- Follows the standard HDF5 buffer-size query pattern: if `buf` is `NULL` or
+  `buf_size` is 0, returns the required size.
+- Returns the length of the string (excluding NUL) on success, negative on
+  failure.
+- The reconstructed string is not required to be identical to the original
+  input string. Semantic equivalence is sufficient (e.g., `"rate=3.5"` may be
+  reconstructed as `"rate=3.500000"`). However, the output MUST conform to the
+  same grammar as `set_config` input (Section 3.2), including support for bare
+  keys and quoted values where appropriate, so that the output of `get_config`
+  is valid input to `set_config` for round-tripping.
+
+## Backward Compatibility
+
+`H5Zregister()` inspects the `version` field to determine whether the
+structure is `H5Z_class1_t` (legacy), `H5Z_class2_t`, or `H5Z_class3_t`.
+Existing v1 and v2 plugins continue to function without modification. The new
+callbacks are never accessed for v1/v2 registrations. `H5Z_class3_t` is a new
+type, not a modification of `H5Z_class2_t`.
+
+A v3 plugin remains fully usable through the traditional `H5Pset_filter` API.
+Upgrading to v3 is optional and additive.
+
+
+# Built-in Filter Parameters
+
+Each built-in filter MUST implement `set_config` and `get_config` so that the
+string API is fully functional without third-party plugins.
+
+For built-in filters that have dedicated `H5Pset_*` functions with non-trivial
+validation logic (particularly SZIP and Scale-Offset), the `set_config`
+callback MUST delegate to the existing internal validation code rather than
+reimplementing it independently. This prevents divergence between the two
+configuration paths and ensures that validation constraints are applied
+consistently regardless of whether the filter was configured via `H5Pset_szip`
+or `H5Pset_filter_by_name`.
+
+**Implementation note:** Built-in filters are registered internally as
+`H5Z_class2_t` structs. Rather than converting these to `H5Z_class3_t`, the
+implementation provides the `set_config` and `get_config` callbacks via a
+parallel extension table (`H5Z_v3_ext_t`) registered with
+`H5Z_register_v3_ext()`. This allows the built-in filter class structs to
+remain unchanged while still supporting string configuration. The extension
+table is consulted by `H5Pset_filter_by_name` and the introspection functions
+whenever a filter is registered as v2 but has a v3 extension.
+
+**Deflate:**
+
+- `level` (integer 0--9, default 6): Compression level.
+- Example: `"level=6"`
+
+**Shuffle:**
+
+- No parameters. `params` should be `NULL`.
+
+**Fletcher32:**
+
+- No parameters. `params` should be `NULL`.
+
+**SZIP:**
+
+- `coding` (`"entropy"` or `"nn"`, default `"nn"`): Coding method.
+- `pixels_per_block` (even integer 2--32, default 16): Pixels per block.
+- The `set_config` callback translates these into the appropriate option masks
+  (`H5_SZIP_EC_OPTION_MASK` or `H5_SZIP_NN_OPTION_MASK`) and delegates to
+  the existing `H5Pset_szip` validation path. The existing `H5Pset_szip`
+  (`H5Pdcpl.c`) performs the following operations beyond simple parameter
+  translation: checks whether the SZIP encoder is available
+  (`H5Z_FILTER_CONFIG_ENCODE_ENABLED`); validates `pixels_per_block` is even
+  and does not exceed `H5_SZIP_MAX_PIXELS_PER_BLOCK`; applies
+  `H5_SZIP_ALLOW_K13_OPTION_MASK`; sets `H5_SZIP_RAW_OPTION_MASK`; strips
+  `H5_SZIP_CHIP_OPTION_MASK`, `H5_SZIP_LSB_OPTION_MASK`, and
+  `H5_SZIP_MSB_OPTION_MASK`; and forces `H5Z_FLAG_OPTIONAL` regardless of the
+  caller's flag choice. The `set_config` callback MUST replicate all of this
+  behavior. Consequently, the `flags` argument to `H5Pset_filter_by_name` is
+  overridden for SZIP --- the filter is always optional. This is existing
+  behavior of `H5Pset_szip` and SHOULD be documented but is not changed by
+  this feature.
+- Example: `"coding=entropy, pixels_per_block=8"`
+
+**N-Bit:**
+
+- No user-facing parameters (derived from datatype). `params` should be
+  `NULL`.
+
+**Scale-Offset:**
+
+- `scale_type` (`"float_dscale"`, `"float_escale"`, or `"int"`): Scale type.
+  Required.
+- `scale_factor` (integer): Scale factor. Required.
+- The `set_config` callback delegates to the existing `H5Pset_scaleoffset`
+  validation path.
+- Example: `"scale_type=float_dscale, scale_factor=4"`
+
+
+# Thread Safety and Concurrency
+
+## Global Registry Protection
+
+The canonical name registry is a global mutable data structure. In
+thread-safe builds of HDF5 (configured with `--enable-threadsafe`), all
+access to the registry --- including lookups during `H5Pset_filter_by_name`
+and mutations during `H5Zregister_name` or plugin auto-registration --- MUST
+be serialized.
+
+The existing HDF5 global API lock serializes all public API entry points.
+This is sufficient to prevent concurrent mutation of the registry from
+user-facing calls. Plugin auto-registration during on-demand search (Section
+5.6) occurs within the same API call scope and is therefore covered by the
+same lock. No new locking mechanisms are introduced.
+
+**Future-proofing note:** `H5Zlookup_by_name` is a pure read operation with
+no I/O side effects. If the library moves toward finer-grained concurrency
+(as discussed in the context of VOLs and asynchronous I/O), the name registry
+SHOULD be protected by a dedicated readers-writer (RW) lock rather than the
+global API lock, allowing concurrent lookups without serialization. The
+internal data structure chosen for the registry should be compatible with this
+future migration.
+
+## Parallel HDF5 (MPI) Considerations
+
+In Parallel HDF5, all MPI ranks participating in collective dataset creation
+MUST present identical dataset creation property lists (DCPLs). Because filter
+name resolution depends on locally loaded plugins, non-deterministic plugin
+loading across ranks (e.g., due to filesystem latency or differing
+`HDF5_PLUGIN_PATH` settings) could cause Rank 0 to resolve `"zfp"`
+successfully while Rank 1 fails.
+
+This is not a new problem introduced by this design --- the same class of
+issue exists today when any rank fails to load a required plugin. However,
+this design makes the issue more visible because the failure mode changes from
+a missing compiled-in constant (caught at compile time) to a runtime name
+resolution failure.
+
+The following mitigations are recommended:
+
+- Documentation MUST clearly state that all ranks must have identical plugin
+  availability and registry state for collective operations.
+- Applications using Parallel HDF5 SHOULD ensure that all required plugins
+  are pre-loaded (via explicit `H5Zregister` calls) before collective dataset
+  creation, rather than relying on on-demand plugin search.
+
+## VOL Connector Interaction
+
+Filters are applied to chunks by the native VOL connector during I/O. The new
+string-based API resolves filter names and parameter strings into standard
+`cd_values` before modifying the DCPL. From the VOL connector's perspective,
+the DCPL contains the same filter ID, flags, and `cd_values` as if
+`H5Pset_filter` had been called directly.
+
+Therefore, no changes to the VOL connector interface are required. Third-party
+VOL connectors that intercept DCPLs will see standard filter configurations
+regardless of whether they were set via the string API or the traditional API.
+
+
+# CLI Tool Integration
+
+## h5repack
+
+`h5repack` currently accepts filter specifications via the `-f` flag. The
+existing syntax (`GZIP`, `SZIP`, `SHUF`, `FLET`, `NBIT`, `SOFF`, and
+`UD=id,flags,n,v1,...`) MUST continue to work unchanged.
+
+A new form is added that accepts a filter name and parameter string:
+
+    h5repack -f 'deflate=level=6' input.h5 output.h5
+    h5repack -f 'zfp=mode=rate,rate=3.5' input.h5 output.h5
+    h5repack -f '/group/dataset:zfp=mode=rate,rate=3.5' input.h5 output.h5
+
+The equals sign is used as the delimiter between filter name and parameter
+string. A colon cannot be used because it is already the separator between the
+object path and filter specification in the existing `h5repack` syntax (e.g.,
+`/group/dataset:GZIP=6`). Using equals for both the name-to-params delimiter
+and within key=value pairs is unambiguous because the filter name is always
+the text before the first equals sign.
+
+The old filter name aliases used in `h5repack` (`GZIP`, `SHUF`, `FLET`,
+`SOFF`) are unrelated to the canonical names introduced in this design. The
+old aliases MUST continue to work unchanged. Whether to also register them as
+canonical name aliases (e.g., `"gzip"` → `H5Z_FILTER_DEFLATE`) is left as an
+implementation decision, but doing so would simplify the `h5repack` parsing
+code by allowing it to delegate all name resolution to
+`H5Pset_filter_by_name`.
+
+## h5dump
+
+`h5dump` is extended to print the string representation of filter
+configurations when displaying dataset creation properties. For filters that
+implement `get_config`, the output includes a `PARAMS_STRING` field alongside
+the existing filter information. For example:
+
+    FILTERS {
+      COMPRESSION DEFLATE { LEVEL 6 }
+      PARAMS_STRING "level=6"
+    }
+
+For filters without `get_config`, the `PARAMS_STRING` field is omitted and the
+existing display format is unchanged.
+
+
+# Compatibility
+
+## On-Disk Format
+
+No changes. The string configuration is resolved entirely at configuration
+time into `cd_values`. The object header continues to store filter ID, flags,
+and `cd_values` as before. Files written using the string API are
+byte-identical to files written using the existing `H5Pset_filter` API with
+equivalent parameters.
+
+## Source Compatibility
+
+All existing public APIs are unchanged and not deprecated. Application code
+using `H5Pset_filter` continues to compile and function without modification.
+
+## Binary / ABI Compatibility
+
+`H5Z_class3_t` is a new type, not a modification of `H5Z_class2_t`. New
+functions are added to the public API. This is an API extension, not a
+breaking change. A shared library minor version bump is appropriate.
+
+## Plugin Compatibility
+
+Existing `H5Z_class2_t` plugins load and function without modification. They
+can be used with the new API only via numeric ID with a raw `cd_values`
+parameter, or if they require no parameters. Plugin authors can upgrade to
+`H5Z_class3_t` at their discretion.
+
+
+# Open Questions
+
+The following items require discussion and resolution before implementation
+begins.
+
+**Q1. Pipeline-string API.** Should a convenience function for specifying
+entire pipelines in a single string be included in this release, or deferred?
+See Section 4.4 for the tradeoffs. Reviewer feedback strongly favors
+deferral, and this document recommends the same.
+
+**Q2. Filter names in the HDF Group registry.** Should canonical string names
+be added to the HDF Group's external filter registry as a normative field?
+This would ensure global uniqueness but introduces a governance process.
+
+
+# Resolved Design Decisions
+
+The following items were raised during review and have been resolved.
+
+**R1.** API naming and signatures. The introspection API went through several
+iterations: (1) a single `ssize_t`-returning function with two output buffers
+and ambiguous return semantics; (2) two `ssize_t`-returning functions; (3) a
+single merged `herr_t` function with nine parameters. The final design uses
+two focused `herr_t`-returning functions ---
+`H5Pget_filter_name_by_idx` (6 params) and `H5Pget_filter_params_by_idx`
+(5 params) --- each with an explicit `size_t*` output for string length. This
+follows the newer HDF5 API convention of reporting sizes via output
+parameters, keeps each signature clean, and avoids a nine-parameter monolith.
+The `filter_idx` parameter uses `unsigned` to match `H5Pget_filter2`. See
+Section 4.2.
+
+**R2.** Memory bounds for `cd_values`. The `set_config` callback supports a
+two-pass size query pattern: the library first calls with `cd_values=NULL` to
+get the required count, allocates accordingly, and calls again. See Section
+6.4.
+
+**R3.** Raw fallback syntax in the string API. The library does NOT implement a
+special `cd_values=...` pass-through syntax within `H5Pset_filter_by_name`.
+Users who need to pass raw `cd_values` to a v2 plugin should use the existing
+`H5Pset_filter` API. This keeps the string API clean.
+
+**R4.** Pipeline-in-a-string as primary API. The single-string pipeline
+variant (Section 4.4) is NOT the primary API. The primary API is
+`H5Pset_filter_by_name` (one filter per call, appending), consistent with
+established HDF5 conventions.
+
+**R5.** DCPL string storage. The DCPL does NOT retain the original parameter
+string. After resolution, only the standard `cd_values`, filter ID, and flags
+are stored. Introspection functions rely on `get_config` to reconstruct a
+human-readable string from `cd_values`.
+
+**R6.** VOL connector interaction. The string API resolves to `cd_values`
+before the VOL connector sees the DCPL. No changes to the VOL interface are
+required. See Section 8.3.
+
+**R7.** Name-based plugin discovery. The plugin loading infrastructure (H5PL)
+is extended by giving filters the same discriminated-union key structure that
+VFDs and VOLs already use (`H5PL_filter_key_t` with a `BY_NAME`/`BY_ID` kind
+field), and adding an `H5Z_check_plugin_load()` callback. This follows the
+existing VFD/VOL pattern exactly --- no new plugin type constants, no naming
+conventions, no manifest files. The name registry (Section 5) serves as a
+cache after first discovery. Only v3 plugins are eligible for name-based
+matching; v2 plugins are skipped. See Section 5.6.
+
+**R8.** Version numbering for `H5Z_class3_t`. The new struct carries
+`version = 2`. The dispatch logic in `H5Zregister()` is extended to a
+three-way branch (two-way under `H5_NO_DEPRECATED_SYMBOLS`). The
+`H5Z_class_t_vers` compatibility macro in `H5version.h` retains its default
+of 2 (mapping to `H5Z_class2_t`); it is NOT bumped to 3 to avoid silent
+struct-size mismatches. See Section 6.2.
+
+**R9.** Built-in filter validation. `set_config` callbacks for built-in
+filters with non-trivial validation (SZIP, Scale-Offset) delegate to existing
+internal validation code rather than reimplementing it. See Section 7.
+
+**R10.** Error code for unsupported string config. The error `H5E_UNSUPPORTED`
+(not a new code) is used when a filter does not implement `set_config`, rather
+than a novel `H5E_CANTENCODE` code. See Section 4.1.
+
+**R11.** `H5Zlookup_by_name` does not trigger plugin loading. It is a pure
+in-memory registry lookup with no I/O side effects. Only
+`H5Pset_filter_by_name` and `H5Zfilter_avail_by_name` trigger on-demand
+plugin search. See Section 5.4.
+
+**R12.** Introspection fallback for filters without `get_config`.
+`H5Pget_filter_params_by_idx` formats the raw `cd_values` as a fallback
+string using colon separators (e.g., `"cd_values=1:0:0:1074921472"`) so that
+introspection always yields something useful. The colon separator avoids
+ambiguity with the comma-separated grammar and keeps the fallback string valid
+under the grammar as a single key=value pair. See Section 4.2.
+
+**R13.** Multiple names per filter ID (aliases). A single filter ID MAY have
+multiple registered names. `H5Zregister_name` allows alias registration.
+Introspection returns the first-registered name for that ID. See Section 5.4.
+
+**R14.** Numeric name parsing order. When the `name` argument to
+`H5Pset_filter_by_name` is a numeric string, the name registry is checked
+first. Only if the name is not found is it parsed as a numeric filter ID. A
+registered name always takes precedence. See Section 4.1.
+
+**R15.** `H5Z_CLASS_T_VERS` and `H5Z_class_t_vers` must not change. The
+existing constant `H5Z_CLASS_T_VERS` (= 1) is left unchanged. A new constant
+`H5Z_CLASS3_T_VERS` (= 2) is introduced for v3 structs. The
+`H5Z_class_t_vers` compatibility macro in `H5version.h` retains its default
+value of 2 (mapping `H5Z_class_t → H5Z_class2_t`) and is NOT bumped to 3.
+See Section 6.2.
+
+**R16.** Developer helper for plugin authors. The library provides
+`H5Zconfig_get_param` in `H5Zdevelop.h`, returning `htri_t` with an explicit
+`size_t *val_len` output. See Section 4.3.
+
+**R17.** Filter availability by name. A new function
+`H5Zfilter_avail_by_name()` is provided as the by-name equivalent of
+`H5Zfilter_avail()`. Unlike `H5Zlookup_by_name` (pure registry lookup), it
+triggers on-demand plugin loading. See Section 5.4.
+
+**R18.** Duplicate filter replacement semantics. `H5Pset_filter_by_name`
+follows the same replacement behavior as `H5Pset_filter`: if a filter with
+the same ID is already in the pipeline, it is replaced, not duplicated. The
+two APIs are fully interchangeable on the same DCPL. See Section 4.1.
+
+**R19.** Grammar forward compatibility. Future extensions to the parameter
+string grammar MUST be backward-compatible: any string valid under the current
+grammar MUST remain valid with the same semantics under future grammars. See
+Section 13.
+
+**R20.** Parameterless filter rejection. `set_config` callbacks for filters
+that take no parameters (shuffle, fletcher32, nbit) SHOULD reject non-`NULL`,
+non-empty `params` strings with `H5E_BADVALUE`. See Section 4.1.
+
+**R21.** `get_config` round-tripping. The output of `get_config` MUST conform
+to the same grammar as `set_config` input (including bare keys and quoted
+values where appropriate) so that `get_config` output is valid `set_config`
+input. See Section 6.4.
+
+**R22.** Introspection return convention. The introspection functions
+`H5Pget_filter_name_by_idx` and `H5Pget_filter_params_by_idx` return `herr_t`
+with explicit `size_t*` output parameters for reporting string lengths,
+following the newer HDF5 API convention. See Section 4.2.
+
+
+# Risks
+
+**Grammar maintenance.** The key=value format with quoted-value support and
+bare-key flags constitutes a specification the library must support
+indefinitely. Future grammar extensions MUST be backward-compatible: any
+string valid under the current grammar MUST remain valid with the same
+semantics under future grammars. The semicolon is reserved in anticipation of
+a possible pipeline-string extension.
+
+**Plugin adoption.** The value of the string API scales with the number of
+filters that implement `set_config`. If adoption is slow, v2 plugins can only
+be used via the existing `H5Pset_filter` API. Clear documentation and a low
+barrier to v3 adoption mitigate this.
+
+**Name collisions.** Independently developed plugins could choose the same
+canonical name. The first-registered-wins collision policy prevents silent
+breakage. Long-term mitigation is to make names part of the HDF Group's
+central filter registry.
+
+**Plugin scan cost.** Name-based plugin discovery scans all shared libraries
+in `HDF5_PLUGIN_PATH` until a match is found. This is not a new cost --- it
+is identical to how the existing integer-ID plugin search already works for
+all plugin types (filters, VFDs, VOLs). The name registry caches the result
+so the scan occurs only on first reference to an unknown name.
+
+
+# References
+
+1. HDFGroup/hdf5\#6153 --- Original feature request.
+2. llnl/H5Z-ZFP\#159 --- Discussion of generic ZFP usage complexity.
+3. `H5Pset_driver_by_name` (`H5FDint.c`) --- Precedent for string-based
+   driver configuration.
+4. `H5VLregister_connector_by_name`, `H5VLget_connector_id_by_name`
+   (`H5VLint.c`) --- VOL by-name registration and lookup.
+5. HDF5 Registered Filter Plugins ---
+   <https://portal.hdfgroup.org/documentation/hdf5-docs/registered_filter_plugins.html>
+6. `H5PLint.c` --- Plugin loading infrastructure: `H5PL_load()`,
+   `H5PL__open()`, `H5PL__find_plugin_in_path_table()`.
+7. `H5PLprivate.h` --- `H5PL_key_t` union definition, `H5PL_vfd_key_t` and
+   `H5PL_vol_key_t` discriminated union precedent.
+8. `H5Zdevelop.h` --- `H5Z_CLASS_T_VERS` definition, `H5Z_class2_t` struct
+   layout.
+9. `H5version.h` --- `H5Z_class_t_vers` compatibility macro.

@@ -9,8 +9,8 @@
 
 This document describes the high-level design for a new string-based interface
 for configuring HDF5 I/O filters. The feature adds a usability layer on top of
-the existing filter machinery, allowing users to specify filter parameters as
-human-readable strings rather than constructing raw \texttt{cd\_values}
+the existing filter machinery, allowing users to specify filter names and
+parameters as human-readable strings rather than constructing raw \texttt{cd\_values}
 arrays of \texttt{unsigned int}.
 
 \subsection{Scope}
@@ -22,9 +22,12 @@ This design covers:
   filter configuration.
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
+\item A canonical name registry for filter lookup by name.
+\item Extensions to the plugin loading infrastructure (\texttt{H5PL}) for name-based
+  plugin discovery.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
-\item The Fortran and Java bindings that ship with HDF5 (2 \texttt{H5P} subroutines and
-  1 \texttt{H5Z} developer subroutine for Fortran; corresponding Java wrappers).
+\item The Fortran and Java bindings that ship with HDF5 (3 \texttt{H5P} subroutines and
+  4 \texttt{H5Z} subroutines for Fortran; corresponding Java wrappers).
 \end{itemize}
 
 This design does not cover:
@@ -87,22 +90,21 @@ H5Pset_driver_by_name(fapl, "sec2", NULL)
 \end{minted}
 
 This API allows drivers to be selected and configured by name at runtime
-without requiring compiled-in constants. The proposed filter configuration API
-applies the same principle of structured parameter passing---a human-readable
-string instead of opaque integers---but retains the existing numeric filter ID
-for filter identification, avoiding the complexity of a name-based lookup
-registry.
+without requiring compiled-in constants. The VOL subsystem provides analogous
+by-name functionality through \texttt{H5VLregister\_connector\_by\_name()} and
+\texttt{H5VLget\_connector\_id\_by\_name()}, though it does not have a direct
+\texttt{H5Pset\_vol\_by\_name} equivalent. The proposed filter configuration API follows
+the VFD pattern most closely and extends it with structured parameter passing.
 
 \subsection{Goals}
 
 \begin{enumerate}
 \item Users MUST be able to configure any filter using human-readable named
-   parameters via a key=value string, without constructing raw \texttt{cd\_values}
-   arrays.
-\item Filters continue to be identified by their existing numeric ID
-   (\texttt{H5Z\_filter\_t}). See the design-decision rationale in
-   \SectionRef{sec:set-filter2} for the tradeoffs between ID-based and
-   name-based identification.
+   parameters.
+\item Filter plugins MUST be addressable by a canonical name, without requiring
+   compiled-in integer constants. (See the open design decision in
+   \SectionRef{sec:set-filter-by-name} regarding whether name-based
+   identification justifies its added complexity over an ID-based approach.)
 \item The on-disk format MUST NOT change.
 \item All existing APIs, plugins, and call sites MUST continue to work without
    modification.

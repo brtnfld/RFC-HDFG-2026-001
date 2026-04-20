@@ -17,7 +17,7 @@ callback MUST delegate to the existing internal validation code rather than
 reimplementing it independently. This prevents divergence between the two
 configuration paths and ensures that validation constraints are applied
 consistently regardless of whether the filter was configured via
-\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter2}.
+\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter\_by\_name}.
 
 \verysubsection{Implementation note}
 Built-in filters are currently registered internally as \texttt{H5Z\_class2\_t}
@@ -65,7 +65,7 @@ No parameters. \texttt{params} should be \texttt{NULL}.
   \texttt{H5\_SZIP\_MSB\_OPTION\_MASK}; and forces \texttt{H5Z\_FLAG\_OPTIONAL} regardless
   of the caller's flag choice. The \texttt{set\_config} callback MUST replicate all
   of this behavior. Consequently, the \texttt{flags} argument to
-  \texttt{H5Pset\_filter2} is overridden for SZIP---the filter is always
+  \texttt{H5Pset\_filter\_by\_name} is overridden for SZIP---the filter is always
   optional. This is existing behavior of \texttt{H5Pset\_szip} and SHOULD be
   documented but is not changed by this feature. Callers that need to
   detect the flag override can compare the flags they passed with the
@@ -96,33 +96,54 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 \section{Thread Safety and Concurrency}
 \label{sec:thread-safety}
 
-\subsection{Concurrency}
+\subsection{Global Registry Protection}
 
-The string-based API introduces no new global mutable state.
-\texttt{H5Pset\_filter2} operates on a caller-owned DCPL and invokes the
-filter's \texttt{set\_config} callback; both are per-call operations that do not
-modify shared library state beyond the existing filter table.
+The canonical name registry is a global mutable data structure. In
+thread-safe builds of HDF5 (configured with \texttt{--enable-threadsafe}), all
+access to the registry---including lookups during \texttt{H5Pset\_filter\_by\_name}
+and mutations during \texttt{H5Zregister\_name} or plugin auto-registration---MUST
+be serialized.
 
-In thread-safe builds of HDF5 (configured with \texttt{--enable-threadsafe}),
-the existing global API lock serializes all public API entry points.  This is
-sufficient: each \texttt{H5Pset\_filter2} call is fully enclosed within a single
-lock acquisition, and on-demand plugin loading (if the filter is not yet
-registered) follows the same by-ID search path used by
-\texttt{H5Pset\_filter}---no new locking mechanisms are introduced.
+The existing HDF5 global API lock serializes all public API entry points.
+This is sufficient to prevent concurrent mutation of the registry from
+user-facing calls. Plugin auto-registration during on-demand search
+(\SectionRef{sec:name-discovery}) occurs within the same API call scope and is
+therefore covered by the same lock. No new locking mechanisms are introduced.
+
+\verysubsection{Future-proofing note}
+\texttt{H5Zlookup\_by\_name} is a pure read operation with
+no I/O side effects. If the library moves toward finer-grained concurrency
+(as discussed in the context of VOLs and asynchronous I/O), the name registry
+SHOULD be protected by a dedicated readers-writer (RW) lock rather than the
+global API lock, allowing concurrent lookups without serialization. The
+internal data structure chosen for the registry should be compatible with this
+future migration.
+
+In addition to the registry lookup, the on-demand plugin scan triggered by
+\texttt{H5PL\_load} performs filesystem I/O (directory iteration and shared-library
+opens). In thread-safe builds, this I/O is also serialized under the global
+API lock. When many threads simultaneously encounter an unknown filter name at
+startup, all threads queue behind the first thread performing the scan,
+producing a convoy effect. Reducing lock granularity for the scan itself---for
+example by allowing concurrent read-only scans while only serializing the
+final registry insertion---would therefore benefit throughput independently of
+the registry RW-lock migration described above.
 
 \subsection{Parallel HDF5 (MPI) Considerations}
 
 In Parallel HDF5, all MPI ranks participating in collective dataset creation
-MUST present identical dataset creation property lists (DCPLs). Non-deterministic
-plugin loading across ranks (e.g., due to filesystem latency or differing
-\texttt{HDF5\_PLUGIN\_PATH} settings) could cause one rank to load a plugin
-successfully while another fails.
+MUST present identical dataset creation property lists (DCPLs). Because filter
+name resolution depends on locally loaded plugins, non-deterministic plugin
+loading across ranks (e.g., due to filesystem latency or differing
+\texttt{HDF5\_PLUGIN\_PATH} settings) could cause Rank~0 to resolve \texttt{"zfp"}
+successfully while Rank~1 fails.
 
 This is not a new problem introduced by this design---the same class of
-issue exists today with \texttt{H5Pset\_filter} when any rank fails to load a
-required plugin, and there are already several runtime-specific mechanisms
-(environment variables, plugin path configuration, dynamic library search
-order) that can cause per-rank divergence.
+issue exists today when any rank fails to load a required plugin, and there
+are already several runtime-specific mechanisms (environment variables,
+plugin path configuration, dynamic library search order) that can cause
+per-rank divergence independently of whether filters are identified by name
+or by ID.
 
 An additional parallel-specific concern is that parameter string parsing is
 performed independently on every rank, even though the resulting
@@ -132,25 +153,33 @@ should be noted that the existing plugin interface was not designed with
 parallel use in mind and this RFC does not claim to address that broader
 limitation.
 
-\verysubsection{Plugin loading order}
+\verysubsection{Failure mode and plugin loading order}
 
-\texttt{H5Pset\_filter2} MUST load the plugin at call time if the filter is not
-already registered.  Unlike \texttt{H5Pset\_filter}, which can record the filter
-ID and raw \texttt{cd\_values} without loading the plugin, \texttt{H5Pset\_filter2}
-must invoke the filter's \texttt{set\_config} callback to convert the parameter
-string into \texttt{cd\_values}---this requires the plugin to be loaded.  For
-built-in filters (always registered), no plugin loading occurs.
+\noindent\colorbox{yellow!25}{\parbox{\dimexpr\linewidth-2\fboxsep}{%
+  \textbf{Open Design Decision --- When does \texttt{H5Pset\_filter\_by\_name} load the plugin?}
+  \texttt{H5Pset\_filter} does not load a plugin---it records the filter ID and
+  \texttt{cd\_values} in the DCPL and defers all plugin loading to dataset creation
+  or I/O time.  By analogy, \texttt{H5Pset\_filter\_by\_name} probably should not load
+  the plugin at call time either.  If it does not, then name resolution,
+  parameter parsing, and \texttt{set\_config} validation cannot occur at call time,
+  and the failure mode described above (immediate \texttt{H5E\_NOFILTER} on a
+  per-rank basis) is incorrect---failure would instead surface later, at
+  \texttt{H5Dcreate} or I/O time, consistent with the existing plugin-loading model.
 
-This means that filter availability errors (\texttt{H5E\_NOFILTER}) surface at
-\texttt{H5Pset\_filter2} call time rather than at \texttt{H5Dcreate} or I/O time.
-Applications that wish to validate filter availability before committing to
-a DCPL configuration should use \texttt{H5Zfilter\_avail()} with the filter's
-numeric ID.
+  The group must decide the plugin loading order for this API before the
+  failure mode, error codes, and parallel guidance below can be specified
+  normatively.  If plugin loading is deferred, the recommended pattern for
+  pre-validating filter availability should be \texttt{H5Zfilter\_avail} (or the
+  new \texttt{H5Zfilter\_avail\_by\_name}), which should be prominently documented
+  as the correct way to check availability before committing to a DCPL
+  configuration---something not currently recommended anywhere in the HDF5
+  documentation.
+}}
 
 \subsection{VOL Connector Interaction}
 
 Filters are applied to chunks by the native VOL connector during I/O. The new
-string-based API resolves parameter strings into standard
+string-based API resolves filter names and parameter strings into standard
 \texttt{cd\_values} before modifying the DCPL. From the VOL connector's perspective,
 the DCPL contains the same filter ID, flags, and \texttt{cd\_values} as if
 \texttt{H5Pset\_filter} had been called directly.
@@ -159,7 +188,7 @@ Therefore, no changes to the VOL connector interface are required. Third-party
 VOL connectors that intercept DCPLs will see standard filter configurations
 regardless of whether they were set via the string API or the traditional API.
 
-String-based filter configuration is resolved at \texttt{H5Pset\_filter2}
+String-based filter configuration is resolved at \texttt{H5Pset\_filter\_by\_name}
 call time, before any dataset is opened or created. It therefore has no
 interaction with SWMR (which governs I/O access patterns on open datasets) or
 with asynchronous VOL event sets (which are populated after the DCPL is fully
@@ -194,24 +223,25 @@ and within key=value pairs is unambiguous because the filter name is always
 the text before the first equals sign.
 
 The old filter name aliases used in \texttt{h5repack} (\texttt{GZIP}, \texttt{SHUF},
-\texttt{FLET}, \texttt{SOFF}) MUST continue to work unchanged.
-Because the library API (\texttt{H5Pset\_filter2}) identifies filters by numeric
-ID, \texttt{h5repack} is responsible for maintaining its own name-to-ID mapping
-to translate user-facing filter names (e.g., \texttt{"deflate"}, \texttt{"zfp"})
-into the corresponding \texttt{H5Z\_filter\_t} values before calling
-\texttt{H5Pset\_filter2}.  This mapping already exists implicitly in \texttt{h5repack}
-for the legacy aliases and can be extended to cover the v3 plugin names
-reported by \texttt{H5Z\_class3\_t.name} at plugin load time.
+\texttt{FLET}, \texttt{SOFF}) are unrelated to the canonical names introduced in this
+design. The old aliases MUST continue to work unchanged. Whether to also
+register them as canonical name aliases (e.g., \texttt{"gzip"} $\rightarrow$
+\texttt{H5Z\_FILTER\_DEFLATE}) is left as an implementation decision, but doing so
+would simplify the \texttt{h5repack} parsing code by allowing it to delegate all
+name resolution to \texttt{H5Pset\_filter\_by\_name}.
 
 \verysubsection{\texttt{UD=} disambiguation}
 \label{sec:ud-disambiguation}
 
 The legacy user-defined filter syntax \texttt{UD=id,flags,n,v1,...} uses
 \texttt{UD} as a reserved token.  To avoid ambiguity with the new
-\textit{filtername}\texttt{=}\textit{params} syntax, the \texttt{h5repack} parser
-MUST always treat \texttt{UD=} as the legacy syntax when the text following
-\texttt{UD=} begins with a decimal digit.  The library itself does not perform
-this disambiguation---it is entirely an \texttt{h5repack} parsing concern.
+\textit{filtername}\texttt{=}\textit{params} syntax, \texttt{UD} is a
+\emph{forbidden} canonical filter name and MUST be rejected by the name
+registry.  The \texttt{h5repack} parser MUST always treat \texttt{UD=} as the
+legacy syntax and handle disambiguation itself before calling
+\texttt{H5Pset\_filter\_by\_name}---it is not the library's responsibility to
+resolve this ambiguity.  Any filter that previously relied on the name
+\texttt{UD} MUST use a different canonical name.
 
 \subsection{h5dump}
 
