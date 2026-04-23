@@ -22,18 +22,22 @@ This design covers:
   filter configuration.
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
-\item A canonical name registry for filter lookup by name.
-\item Extensions to the plugin loading infrastructure (\texttt{H5PL}) for name-based
-  plugin discovery.
+\item An internal canonical name registry used by \texttt{h5repack} to resolve
+  filter names to IDs for the new filter-specification syntax.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The Fortran and Java bindings that ship with HDF5 (3 \texttt{H5P} subroutines and
   4 \texttt{H5Z} subroutines for Fortran; corresponding Java wrappers).
+\item An on-disk format extension, \texttt{H5O\_PLINE\_VERSION\_3}
+  (\SectionRef{sec:pline-v3}), that appends per-slot type tags to
+  \texttt{cd\_values} entries.  The extension is gated by the file's
+  \texttt{H5Pset\_libver\_bounds} upper bound; files whose bound requires
+  an earlier format continue to use version~2 (byte-identical to
+  \texttt{H5Pset\_filter} output).
 \end{itemize}
 
 This design does not cover:
 
 \begin{itemize}
-\item Changes to the on-disk format or object header layout.
 \item Changes to the filter execution pipeline itself.
 \item External high-level language binding implementations (h5py, etc.), though
   the design is motivated in part by their needs.
@@ -99,18 +103,24 @@ the VFD pattern most closely and extends it with structured parameter passing.
 \subsection{Goals}
 
 \begin{enumerate}
-\item Users MUST be able to configure any filter using human-readable named
+\item Users can configure any filter using human-readable named
    parameters.
-\item Filter plugins MUST be addressable by a canonical name, without requiring
-   compiled-in integer constants. (See the open design decision in
-   \SectionRef{sec:set-filter-by-name} regarding whether name-based
-   identification justifies its added complexity over an ID-based approach.)
-\item The on-disk format MUST NOT change.
-\item All existing APIs, plugins, and call sites MUST continue to work without
+\item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter2}
+   (\SectionRef{sec:set-filter2}). Each v3 plugin self-registers a canonical
+   name used internally for h5repack name-to-ID resolution.
+\item The on-disk format is extended with \texttt{H5O\_PLINE\_VERSION\_3}
+   (\SectionRef{sec:pline-v3}), which records per-slot type tags alongside
+   \texttt{cd\_values}, making filter parameters self-describing without the
+   plugin.  The extension is gated by \texttt{H5Pset\_libver\_bounds}: users
+   who need files readable by an earlier library version constrain the upper
+   bound and receive version-2 output that is byte-identical to
+   \texttt{H5Pset\_filter}.  HDF5 does not guarantee forward compatibility;
+   this gate is the standard mechanism for user-controlled format selection.
+\item All existing APIs, plugins, and call sites continue to work without
    modification.
-\item The design MUST support both built-in and dynamically loaded plugin
+\item The design supports both built-in and dynamically loaded plugin
    filters.
-\item The API MUST be consistent with the structure and conventions of existing
+\item The API is consistent with the structure and conventions of existing
    HDF5 public APIs.
 \end{enumerate}
 
