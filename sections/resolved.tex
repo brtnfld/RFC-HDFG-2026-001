@@ -134,11 +134,10 @@ correct API for checking filter availability before committing to a DCPL
 configuration.
 
 \verysubsection{R18}
-Duplicate filter replacement semantics. \texttt{H5Pset\_filter2}
-follows the same replacement behavior as \texttt{H5Pset\_filter}: if a filter with
-the same ID is already in the pipeline, it is replaced, not duplicated. The
-two APIs are fully interchangeable on the same DCPL. See
-\SectionRef{sec:set-filter2}.
+Duplicate filter IDs. A filter ID never appears more than once in a
+pipeline; it is the caller's responsibility not to add the same filter ID
+twice. \texttt{H5Pset\_filter2} appends to the pipeline, matching
+\texttt{H5Pset\_filter}. See \SectionRef{sec:set-filter2}.
 
 \verysubsection{R19}
 Grammar forward compatibility. Future extensions to the parameter
@@ -212,7 +211,7 @@ pushes a non-fatal warning via \texttt{H5Epush} with severity \texttt{H5E\_WARN}
 \texttt{H5E\_ARGS} before returning. Callbacks that accept the caller's flags
 without modification do not push this warning. This allows callers who want
 to detect a flag override to inspect the error stack after
-\texttt{H5Pset\_filter\_by\_name} returns, while callers that do not check the stack
+\texttt{H5Pset\_filter2} returns, while callers that do not check the stack
 are entirely unaffected---preserving the existing SZIP behavior of
 unconditionally forcing \texttt{H5Z\_FLAG\_OPTIONAL}. Document this contract in
 \texttt{H5Zdevelop.h} as part of the \texttt{H5Z\_set\_config\_func\_t}
@@ -271,7 +270,7 @@ format selection is \texttt{H5Pset\_libver\_bounds}, which already gates all
 other format extensions; (2)~stopping at string-in/uint32-on-disk leaves
 parameters opaque to tools that cannot load the plugin, which contradicts the
 self-describing goal of HDF5.  Files written with a libver upper bound below
-\texttt{H5F\_LIBVER\_V200} are byte-identical to \texttt{H5Pset\_filter} output.
+\texttt{H5F\_LIBVER\_V300} are byte-identical to \texttt{H5Pset\_filter} output.
 The \texttt{H5Z\_class4\_t} schema extension (\SectionRef{sec:class4}) remains
 informative and is deferred to a follow-on RFC.
 See \SectionRef{sec:introspection}.
@@ -281,9 +280,9 @@ See \SectionRef{sec:introspection}.
 \texttt{H5Pget\_filter2} returns \texttt{description} when non-\texttt{NULL},
 falling back to \texttt{name}.  This preserves backward-compatible
 human-readable output provided plugin authors populate \texttt{description}
-on migration.  Both \texttt{H5Pget\_filter\_name\_by\_idx} (canonical name)
-and \texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
-\texttt{get\_config}) are retained.  See \SectionRef{sec:introspection}.
+on migration.  \texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
+\texttt{get\_config}) is the new introspection function.
+See \SectionRef{sec:introspection}.
 
 \verysubsection{R37}
 \texttt{H5Pset\_filter2} loads the plugin eagerly at call time.  Unlike

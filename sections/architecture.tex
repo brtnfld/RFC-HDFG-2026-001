@@ -239,8 +239,10 @@ and \texttt{H5Z\_CLASS3\_T\_VERS} (v3 struct) are accepted.
 
 \texttt{H5Z\_class3\_t} is an independent flat struct; it does NOT embed
 \texttt{H5Z\_class2\_t} as a member.  The library reads the \texttt{version}
-field in \texttt{H5Zregister()} and \texttt{H5PL\_\_open} via \texttt{memcpy}
+field in \texttt{H5Zregister()} via \texttt{memcpy}
 through a \texttt{char~*} to avoid strict-aliasing undefined behaviour.
+\texttt{H5PL\_\_open} receives an already-typed pointer via the plugin's
+exported \texttt{H5PLget\_plugin\_info()} symbol and does not need this.
 
 The version constants are:
 
@@ -510,18 +512,13 @@ herr_t H5Pset_filter2(
 \verysubsection{Description}
 Configures the filter identified by \texttt{id} using the key-value parameter
 string \texttt{params} and appends it to the existing filter pipeline on
-\texttt{plist\_id}. If a filter with the same ID is already present in the
-pipeline, it is replaced (not duplicated)---this matches the existing
-behavior of \texttt{H5Pset\_filter}. The pipeline is subject to the existing
+\texttt{plist\_id}. The pipeline is subject to the existing
 maximum of \texttt{H5Z\_MAX\_NFILTERS} (32) entries.
 
 This function is modeled on \texttt{H5Pset\_filter}: it appends a single filter
 to the pipeline with explicit flag control. The difference is that parameters
 are passed as a human-readable key=value string rather than a
-\texttt{cd\_values} array. The two APIs are fully interchangeable on the same
-DCPL---calling \texttt{H5Pset\_filter2} and \texttt{H5Pset\_filter} for the same
-filter ID produces identical results in the property list, and either can
-replace a filter entry created by the other.
+\texttt{cd\_values} array.
 
 \verysubsection{Behavioral note on flags}
 Like \texttt{H5Pset\_filter}, the caller controls flags directly. However,
@@ -1159,7 +1156,7 @@ The version constant introduced by this feature is:
 
 \begin{minted}{c}
 /* In H5Fpublic.h */
-#define H5F_LIBVER_V200  5   /* HDF5 2.0 -- introduces H5O_PLINE_VERSION_3 */
+#define H5F_LIBVER_V300  6   /* HDF5 3.0 -- introduces H5O_PLINE_VERSION_3 */
 \end{minted}
 
 The existing libver-bounds enforcement in \texttt{H5O\_\_pline\_encode} is
@@ -1172,7 +1169,7 @@ Applications that need plugin-free typed reconstruction and do not require
 backward compatibility should use:
 
 \begin{minted}{c}
-H5Pset_libver_bounds(fapl, H5F_LIBVER_V200, H5F_LIBVER_LATEST);
+H5Pset_libver_bounds(fapl, H5F_LIBVER_V300, H5F_LIBVER_LATEST);
 \end{minted}
 
 Applications that must remain compatible with earlier libraries should use a

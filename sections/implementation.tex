@@ -110,8 +110,9 @@ occurs within the same API call scope and is therefore covered by the same
 lock. No new locking mechanisms are introduced.
 
 \verysubsection{Future-proofing note}
-Name registry lookups (used internally by introspection functions, \texttt{h5repack},
-and \texttt{h5dump}) are pure read operations with no I/O side effects. If the
+Name registry lookups (used internally by \texttt{h5repack} for
+name-to-ID resolution and by \texttt{h5dump} for filter display) are pure
+read operations with no I/O side effects. If the
 library moves toward finer-grained concurrency
 (as discussed in the context of VOLs and asynchronous I/O), the name registry
 should be protected by a dedicated readers-writer (RW) lock rather than the

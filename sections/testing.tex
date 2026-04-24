@@ -95,11 +95,22 @@ part of any v2-to-v3 plugin migration.
 
 \subsection{On-Disk Format}
 
-No changes. The string configuration is resolved entirely at configuration
-time into \texttt{cd\_values}. The object header continues to store filter ID, flags,
-and \texttt{cd\_values} as before. Files written using the string API are
-byte-identical to files written using the existing \texttt{H5Pset\_filter} API with
-equivalent parameters.
+The string configuration is resolved at configuration time into
+\texttt{cd\_values}.  When the file's \texttt{H5Pset\_libver\_bounds} upper bound
+is below \texttt{H5F\_LIBVER\_V300}, the library writes a standard
+\texttt{H5O\_PLINE\_VERSION\_2} entry that is byte-identical to
+\texttt{H5Pset\_filter} output---no format change for such files.
+
+When the upper bound is at least \texttt{H5F\_LIBVER\_V300} and the filter
+uses typed slots (float, double, or string parameters packed via the
+\texttt{H5Z\_cd\_pack\_*} helpers), the library writes
+\texttt{H5O\_PLINE\_VERSION\_3}, which appends a per-slot type-tag block after
+the \texttt{cd\_values} array.  Files containing a version-3 pipeline message
+require a reader that recognises this version; earlier readers return an error
+for such files (standard HDF5 object-header versioning behavior).
+
+All-integer pipelines (all slots \texttt{H5Z\_SLOT\_UINT32}) always produce
+version-2 output regardless of the libver bound.
 
 \subsection{Source Compatibility}
 
@@ -349,7 +360,10 @@ These tests confirm that no existing behavior is broken.
 \item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
-  \texttt{h5repack}.
+  \texttt{h5repack}, provided the libver upper bound remains below
+  \texttt{H5F\_LIBVER\_V300}.  With a V300 upper bound and typed slots, the
+  output file contains \texttt{H5O\_PLINE\_VERSION\_3} entries and is not
+  byte-for-byte identical to pre-feature output.
 \end{itemize}
 
 
@@ -386,13 +400,13 @@ These tests require a Parallel HDF5 build and at least two MPI ranks.
 These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
 
 \begin{itemize}
-\item \texttt{ts-01} (\textbf{concurrent name lookups}): Spawn $N$ threads
-  ($N \geq 8$) that each call \texttt{H5Pget\_filter\_name\_by\_idx} for built-in filter
+\item \texttt{ts-01} (\textbf{concurrent param lookups}): Spawn $N$ threads
+  ($N \geq 8$) that each call \texttt{H5Pget\_filter\_params\_by\_idx} for built-in filter
   pipeline entries in a tight loop.  No data race or crash occurs.
-\item \texttt{ts-02} (\textbf{concurrent registration and name lookup}): One thread
+\item \texttt{ts-02} (\textbf{concurrent registration and param lookup}): One thread
   calls \texttt{H5Zregister} with a new v3 plugin while other threads concurrently
-  call \texttt{H5Pget\_filter\_name\_by\_idx} on pipeline entries that may include that
-  filter.  Lookups see a consistent state (name absent or name present);
+  call \texttt{H5Pget\_filter\_params\_by\_idx} on pipeline entries that may include that
+  filter.  Lookups see a consistent state (plugin absent or present);
   no partial or corrupt state.
 \item \texttt{ts-03} (\textbf{concurrent \texttt{H5Pset\_filter2}}): Threads each create
   their own DCPL and call \texttt{H5Pset\_filter2} concurrently for the same built-in
