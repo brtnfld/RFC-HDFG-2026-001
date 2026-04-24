@@ -61,8 +61,12 @@ path (\texttt{H5PL}). The \texttt{H5PL\_filter\_key\_t} discriminated-union exte
 \texttt{H5Z\_check\_plugin\_load()} callback described in an earlier draft are NOT
 part of this release---they are deferred pending adoption of a name-based
 primary API. Plugin loading is always by integer ID; the name registry
-(\SectionRef{sec:name-registry}) is display-only and does not trigger plugin
-loading.
+(\SectionRef{sec:name-registry}) does not trigger plugin loading.  A plugin
+must already be registered (either as a built-in or via a prior
+\texttt{H5Zregister} / \texttt{H5PL} load) before its name appears in the
+registry.  The registry is used by \texttt{h5repack} to resolve canonical
+filter names to integer IDs before calling \texttt{H5Pset\_filter2}; this
+lookup performs no dynamic library loading.
 
 \verysubsection{R8}
 Version numbering for \texttt{H5Z\_class3\_t}. The new struct carries
@@ -87,8 +91,9 @@ Error code for unsupported string config. The error
 \verysubsection{R11}
 On-demand plugin loading path. Plugin loading is always by integer ID via
 the existing \texttt{H5PL} infrastructure. The name registry
-(\SectionRef{sec:name-registry}) is a display-only cache populated during
-plugin registration; it has no role in the plugin loading path.
+(\SectionRef{sec:name-registry}) is populated during plugin registration and
+is used by \texttt{h5repack} to resolve canonical names to filter IDs; it has
+no role in triggering plugin loading.
 \texttt{H5Zfilter\_avail} (by integer ID) is the correct API for pre-validating
 filter availability before committing to a DCPL configuration.
 
@@ -221,8 +226,14 @@ contract. See \SectionRef{sec:callback-specs} and \SectionRef{sec:builtin-filter
 API chosen: \texttt{H5Pset\_filter2} (ID-based with string params). The
 working group decided to introduce a versioned variant \texttt{H5Pset\_filter2} rather
 than a name-based \texttt{H5Pset\_filter\_by\_name}. Taking the filter ID from the
-caller eliminates name-to-ID resolution, name-based plugin discovery, and the
-associated registry write-path complexity. The cost is the full HDF5 versioning
+caller eliminates name-to-ID resolution from the public library API and
+name-based plugin discovery, along with the associated registry write-path
+complexity.  Name-to-ID resolution is still performed by \texttt{h5repack}
+internally, using the library's name registry, before calling
+\texttt{H5Pset\_filter2}; this is necessary because external filter plugins
+can only be addressed by a name that was registered when the plugin was
+loaded---there is no other way for \texttt{h5repack} to obtain the integer ID
+for an external filter at runtime. The cost is the full HDF5 versioning
 machinery (\texttt{H5version.h} compatibility macros, Fortran/Java bindings,
 deprecation handling) for the \texttt{H5Pset\_filter2} name, which the group judged
 acceptable given the long-term usability benefit. This decision also simplifies
