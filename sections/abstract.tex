@@ -16,9 +16,7 @@ introduces \texttt{H5Pset\_filter2}, which accepts a filter ID and a
 human-readable key=value parameter string, resolving them into standard
 \texttt{cd\_values} at configuration time. Filters
 opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
-optional \texttt{set\_config}/\texttt{get\_config} callbacks. An internal name registry
-maps canonical filter names to IDs and is used by \texttt{h5repack} for
-name-to-ID resolution; plugin loading itself remains by integer ID.
+optional \texttt{set\_config}/\texttt{get\_config} callbacks.
 All existing APIs, plugins, and files remain fully compatible.
 \end{abstract}
 
