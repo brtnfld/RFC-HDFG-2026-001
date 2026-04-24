@@ -924,6 +924,14 @@ auto-register (e.g., two v3 plugins share the same canonical name), the later
 registration is silently ignored---first registration wins. This prevents
 silent behavioral changes when plugins are loaded in different orders.
 
+The six built-in canonical names (\texttt{"deflate"}, \texttt{"szip"},
+\texttt{"shuffle"}, \texttt{"fletcher32"}, \texttt{"nbit"},
+\texttt{"scaleoffset"}) and the reserved token \texttt{"UD"} are permanently
+reserved.  Because built-in names are registered at library initialization
+(i.e., before any user plugin can be loaded), first-registered-wins
+guarantees that no plugin auto-registration can claim these names regardless
+of registration order.
+
 When \texttt{H5Zunregister()} removes a filter, all name registry entries pointing to
 that filter's ID are also removed. The cleanup routine frees all
 internally copied name strings (via \texttt{H5MM\_xfree} or equivalent) to prevent
@@ -1083,9 +1091,8 @@ when \textbf{both} of the following hold:
 
 \begin{enumerate}
 \item The file's \texttt{H5Pset\_libver\_bounds} upper bound is at least
-  \texttt{H5F\_LIBVER\_V200} (the version constant introduced with this
-  feature; the exact value is defined in \texttt{H5Fpublic.h} for the
-  release that ships this RFC).
+  \texttt{H5F\_LIBVER\_V300} (the version constant introduced by this
+  feature; see \SectionRef{sec:libver-integration} for the definition).
 \item At least one element of \texttt{cd\_types[]} for that filter entry
   is not \texttt{H5Z\_SLOT\_UINT32}.
 \end{enumerate}
@@ -1095,7 +1102,7 @@ When condition~(1) holds but condition~(2) does not (all slots are
 byte-identical output for all-integer pipelines regardless of libver bound.
 
 When condition~(1) does not hold (libver upper bound below
-\texttt{H5F\_LIBVER\_V200}), the library emits a version-2 entry
+\texttt{H5F\_LIBVER\_V300}), the library emits a version-2 entry
 regardless of slot types; see \SectionRef{sec:pline-v3-fallback} for
 filter author requirements in this case.
 
@@ -1151,6 +1158,7 @@ the internal pipeline copy routine (\texttt{H5O\_\_pline\_copy}).  When
 copy updates the pointer to the new inline array, not the source.
 
 \subsection{\texttt{H5Pset\_libver\_bounds} Integration}
+\label{sec:libver-integration}
 
 The version constant introduced by this feature is:
 
@@ -1162,7 +1170,7 @@ The version constant introduced by this feature is:
 The existing libver-bounds enforcement in \texttt{H5O\_\_pline\_encode} is
 extended: before writing a filter entry with non-UINT32 slot types, the
 encoder queries the file's upper bound.  If the bound is below
-\texttt{H5F\_LIBVER\_V200}, the encoder falls back to version~2 and issues
+\texttt{H5F\_LIBVER\_V300}, the encoder falls back to version~2 and issues
 the warning described in \SectionRef{sec:pline-v3-fallback}.
 
 Applications that need plugin-free typed reconstruction and do not require

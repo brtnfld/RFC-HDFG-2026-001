@@ -154,6 +154,22 @@ should be noted that the existing plugin interface was not designed with
 parallel use in mind and this RFC does not claim to address that broader
 limitation.
 
+A further concern specific to floating-point parameters is
+\textit{strtod} determinism on heterogeneous clusters.  On a cluster mixing
+CPU architectures (e.g., x86\_64 and ARM64), the conversion of a decimal
+string such as \texttt{"rate=3.55555555"} to a \texttt{double} may produce
+different bit patterns if the platform \texttt{strtod} implementations are
+not both correctly-rounded per IEEE~754.  Because \texttt{H5Z\_cd\_pack\_double}
+is layout-deterministic only after the \texttt{double} value is in hand, a
+per-rank difference in the string-to-double conversion step propagates into
+\texttt{cd\_values} and causes a DCPL mismatch at the collective
+\texttt{H5Dcreate} call.  Applications running on heterogeneous clusters
+with floating-point filter parameters should obtain a single parsed DCPL on
+one rank and broadcast it to all others (e.g., via
+\texttt{H5Pset\_libver\_bounds} followed by serialisation through
+\texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
+independently invoke \texttt{H5Pset\_filter2}.
+
 \verysubsection{Failure mode and plugin loading order}
 
 \noindent\textbf{Decision:} \texttt{H5Pset\_filter2} loads the plugin
