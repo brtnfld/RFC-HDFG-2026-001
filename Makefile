@@ -4,7 +4,7 @@
 
 LATEXMK=latexmk -bibtex
 
-MAIN=RFC-HDFG-2026-001 
+MAIN=RFC-HDFG-2026-001
 # Require latexdiff >= 1.1.0 to run properly
 REVDIFF=6254
 
@@ -28,10 +28,18 @@ clean:
 
 distclean: clean
 	@$(LATEXMK) -C
+	@rm -f $(MAIN)-ai.md
+
+markdown: $(TEXFILES)
+	@latexpand $(MAIN).tex | \
+	  sed '/\\renewcommand{\\texttt}/d; /\\let\\oldtextunderscore/d; /\\renewcommand{\\_}/d' | \
+	  pandoc -f latex -t gfm --wrap=none -o $(MAIN)-ai.md
+	@echo "AI-friendly Markdown written to $(MAIN)-ai.md"
 
 help:
 	@echo -e "Usage : make [target]\n\
 	all		produce the PDF (default)\n\
+	markdown	produce AI-friendly Markdown ($(MAIN)-ai.md)\n\
 	force		force compilation if possilbe\n\
 	clean		clean  unnecessary files\n\
 	distclean	clean deeper\n\
