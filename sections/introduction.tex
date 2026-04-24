@@ -83,21 +83,6 @@ the \texttt{cd\_values} array is meaningless without external documentation. The
 no standard way to recover the original intent of the configuration (e.g.,
 ``ZFP rate mode, rate=3.5'').
 
-\subsection{Precedent Within HDF5}
-
-HDF5 1.14 introduced string-based configuration for Virtual File Drivers:
-
-\begin{minted}{c}
-H5Pset_driver_by_name(fapl, "sec2", NULL)
-\end{minted}
-
-This API allows drivers to be selected and configured by name at runtime
-without requiring compiled-in constants. The VOL subsystem provides analogous
-by-name functionality through \texttt{H5VLregister\_connector\_by\_name()} and
-\texttt{H5VLget\_connector\_id\_by\_name()}, though it does not have a direct
-\texttt{H5Pset\_vol\_by\_name} equivalent. The proposed filter configuration API follows
-the VFD pattern most closely and extends it with structured parameter passing.
-
 \subsection{Goals}
 
 \begin{enumerate}
