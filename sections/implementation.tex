@@ -286,4 +286,154 @@ they implement \texttt{get\_config}.
 The format change is confined to the \texttt{FILTERS} block; all other
 \texttt{h5dump} output is unaffected.
 
+
+%% ======================================================================
+%%  Section 10 – Language Bindings
+%% ======================================================================
+\section{Language Bindings}
+\label{sec:bindings}
+
+\subsection{Fortran}
+\label{sec:fortran-bindings}
+
+Fortran does not support C unions, so \texttt{H5Z\_params\_t} cannot be
+expressed as a portable Fortran derived type.  Instead, the Fortran
+binding exposes a generic interface \texttt{h5pset\_filter\_params\_f} with
+two specific procedures, one for each parameter mode.  Fortran's
+\texttt{INTERFACE} block resolves the correct specific at the call site
+based on the type of the \texttt{params} argument.
+
+\begin{minted}{fortran}
+! In H5Pff.F90 -- generic interface
+INTERFACE h5pset_filter_params_f
+  MODULE PROCEDURE h5pset_filter_params_str_f   ! string form
+  MODULE PROCEDURE h5pset_filter_params_raw_f   ! cd_values form
+END INTERFACE
+
+! String form -- calls H5Pset_filter_params with H5Z_PARAMS_STRING
+SUBROUTINE h5pset_filter_params_str_f( &
+    prp_id, filter_id, flags, params, hdferr)
+  INTEGER(HID_T),   INTENT(IN)  :: prp_id
+  INTEGER,          INTENT(IN)  :: filter_id
+  INTEGER,          INTENT(IN)  :: flags
+  CHARACTER(LEN=*), INTENT(IN)  :: params
+  INTEGER,          INTENT(OUT) :: hdferr
+
+! Raw cd_values form -- calls H5Pset_filter_params with H5Z_PARAMS_CDVALUES
+SUBROUTINE h5pset_filter_params_raw_f( &
+    prp_id, filter_id, flags, cd_nelmts, cd_values, hdferr)
+  INTEGER(HID_T),   INTENT(IN)  :: prp_id
+  INTEGER,          INTENT(IN)  :: filter_id
+  INTEGER,          INTENT(IN)  :: flags
+  INTEGER(SIZE_T),  INTENT(IN)  :: cd_nelmts
+  INTEGER,          DIMENSION(*), INTENT(IN) :: cd_values
+  INTEGER,          INTENT(OUT) :: hdferr
+\end{minted}
+
+The JNI-side shim for each specific constructs the appropriate
+\texttt{H5Z\_params\_t} value (using \texttt{H5Z\_PARAMS\_STR} or
+\texttt{H5Z\_PARAMS\_RAW}) and calls \texttt{H5Pset\_filter\_params}.
+No new C entry point is required.
+
+The following additional subroutines are added to the Fortran binding:
+
+\begin{minted}{fortran}
+! Pipeline introspection -- wraps H5Pget_filter_params_by_idx
+SUBROUTINE h5pget_filter_params_by_idx_f( &
+    prp_id, filter_idx, params_buf, params_len, hdferr)
+  INTEGER(HID_T),   INTENT(IN)    :: prp_id
+  INTEGER,          INTENT(IN)    :: filter_idx
+  CHARACTER(LEN=*), INTENT(OUT)   :: params_buf
+  INTEGER(SIZE_T),  INTENT(OUT)   :: params_len
+  INTEGER,          INTENT(OUT)   :: hdferr
+
+! Parameter lookup helper -- wraps H5Zconfig_get_param
+FUNCTION h5zconfig_get_param_f( &
+    params, key, value_buf, buf_size) RESULT(found)
+  CHARACTER(LEN=*), INTENT(IN)    :: params
+  CHARACTER(LEN=*), INTENT(IN)    :: key
+  CHARACTER(LEN=*), INTENT(OUT)   :: value_buf
+  INTEGER(SIZE_T),  INTENT(INOUT) :: buf_size
+  INTEGER                         :: found   ! htri_t: >0 found, 0 absent, <0 error
+\end{minted}
+
+\verysubsection{Fortran usage example}
+
+\begin{minted}{fortran}
+USE HDF5
+IMPLICIT NONE
+INTEGER(HID_T) :: plist
+INTEGER        :: hdferr
+
+CALL h5pcreate_f(H5P_DATASET_CREATE_F, plist, hdferr)
+
+! String form (generic resolves to h5pset_filter_params_str_f)
+CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+                             H5Z_FLAG_MANDATORY_F,       &
+                             "level=6", hdferr)
+
+! Raw cd_values form (generic resolves to h5pset_filter_params_raw_f)
+INTEGER, DIMENSION(1) :: cd_vals = [6]
+CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+                             H5Z_FLAG_MANDATORY_F,       &
+                             1_SIZE_T, cd_vals, hdferr)
+\end{minted}
+
+
+\subsection{Java}
+\label{sec:java-bindings}
+
+Java does not support C unions, and method overloading is the idiomatic
+Java mechanism for variant inputs.  Two overloaded static methods are
+added to the existing \texttt{HDF5Library} class:
+
+\begin{minted}{java}
+// String form
+public static native int H5Pset_filter_params(
+    long   plist_id,
+    int    filter_id,
+    int    flags,
+    String params       // null means "no parameters"
+) throws HDF5LibraryException, NullPointerException;
+
+// Raw cd_values form (equivalent to existing H5Pset_filter)
+public static native int H5Pset_filter_params(
+    long   plist_id,
+    int    filter_id,
+    int    flags,
+    int[]  cd_values    // null or zero-length means "no parameters"
+) throws HDF5LibraryException;
+\end{minted}
+
+Each JNI implementation constructs the appropriate \texttt{H5Z\_params\_t}
+on the native side and calls \texttt{H5Pset\_filter\_params}.
+
+The following additional method is added for pipeline introspection:
+
+\begin{minted}{java}
+// Wraps H5Pget_filter_params_by_idx
+public static native String H5Pget_filter_params_by_idx(
+    long plist_id,
+    int  filter_idx
+) throws HDF5LibraryException;
+\end{minted}
+
+\verysubsection{Java usage example}
+
+\begin{minted}{java}
+import hdf.hdf5lib.H5;
+import hdf.hdf5lib.HDF5Constants;
+
+long plist = H5.H5Pcreate(HDF5Constants.H5P_DATASET_CREATE);
+
+// String form
+H5.H5Pset_filter_params(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
+                         HDF5Constants.H5Z_FLAG_MANDATORY, "level=6");
+
+// Raw cd_values form
+H5.H5Pset_filter_params(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
+                         HDF5Constants.H5Z_FLAG_MANDATORY,
+                         new int[]{ 6 });
+\end{minted}
+
 \end{document}

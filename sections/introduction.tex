@@ -24,8 +24,13 @@ This design covers:
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
-\item The Fortran and Java bindings that ship with HDF5 (3 \texttt{H5P} subroutines and
-  4 \texttt{H5Z} subroutines for Fortran; corresponding Java wrappers).
+\item The Fortran and Java bindings that ship with HDF5
+  (\SectionRef{sec:bindings}): a generic \texttt{h5pset\_filter\_params\_f}
+  with two specific procedures (string and raw), plus
+  \texttt{h5pget\_filter\_params\_by\_idx\_f} and
+  \texttt{h5zconfig\_get\_param\_f} for Fortran; two overloaded
+  \texttt{H5Pset\_filter\_params} methods and
+  \texttt{H5Pget\_filter\_params\_by\_idx} for Java.
 \end{itemize}
 
 This design does not cover:
