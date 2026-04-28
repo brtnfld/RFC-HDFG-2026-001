@@ -89,8 +89,8 @@ no standard way to recover the original intent of the configuration (e.g.,
 \item Users can configure any filter using human-readable named
    parameters.
 \item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter2}
-   (\SectionRef{sec:set-filter2}). Each v3 plugin self-registers a canonical
-   name in the library's internal name registry.
+   (\SectionRef{sec:set-filter2}). Integer IDs are assigned by the HDF Group
+   filter registry~\cite{hdf5registeredfilters}.
 \item The on-disk format is extended with \texttt{H5O\_PLINE\_VERSION\_3}
    (\SectionRef{sec:pline-v3}), which records per-slot type tags alongside
    \texttt{cd\_values}, making filter parameters self-describing without the

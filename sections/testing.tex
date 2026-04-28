@@ -8,21 +8,8 @@
 \section{Compatibility}
 \label{sec:compatibility}
 
-\subsection{Semantic Change in \texttt{H5Z\_class3\_t.name}}
+\subsection{Semantic Change in \texttt{H5Z\_class3\_t}}
 \label{sec:name-semantic-change}
-
-Upgrading a plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
-changes the role of the \texttt{name} field from a freeform debug comment
-to a canonical identifier.  The new \texttt{filter\_title} field provides
-a short human-readable label that is packed into \texttt{cd\_values} and
-persists in the file: \texttt{H5Pget\_filter2} extracts \texttt{filter\_title}
-from \texttt{cd\_values} when present, ensuring backward-compatible
-output for applications that read the \texttt{name[]} output parameter
-even when the plugin is not installed.
-Plugin authors should populate \texttt{filter\_title} when upgrading to
-maintain continuity for downstream consumers (see R31).
-
-\medskip
 
 Upgrading a filter plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
 introduces no source-level incompatibility at existing \emph{call sites}
@@ -31,9 +18,15 @@ modification). However, the plugin binary itself \emph{is} binary incompatible:
 the plugin shared library must be recompiled against the new struct definition,
 and any existing binary that exports an \texttt{H5Z\_class2\_t} cannot simply be
 reused as an \texttt{H5Z\_class3\_t} plugin without recompilation. Plugin
-distributors must ship updated binaries. In addition, the upgrade entails a
-\emph{semantic} shift in the role of the \texttt{name} field that plugin authors
-and application maintainers must understand.
+distributors must ship updated binaries.
+
+\texttt{H5Z\_class3\_t} drops the \texttt{name} field present in
+\texttt{H5Z\_class2\_t}. Filters are addressed solely by integer ID, which is
+assigned by the HDF Group filter registry~\cite{hdf5registeredfilters}.
+The new \texttt{filter\_title} field provides a short human-readable label
+(e.g., \texttt{"ZFP Compression"}) that is packed into \texttt{cd\_values} as a
+reserved key and therefore persists in the file, making it available to tools
+even when the plugin is not installed.
 
 \verysubsection{Before (v2): freeform debug comment}
 In \texttt{H5Z\_class2\_t}, the \texttt{name} field is documented as a ``Comment for
@@ -42,46 +35,30 @@ debugging'' and is also user-visible through the \texttt{name[]} output paramete
 human-readable prose such as \texttt{"HDF5 ZFP filter, version 1.0.0 (rate,
 precision, and accuracy modes)"} or \texttt{"My Compression Library v2.3"}.
 
-\verysubsection{After (v3): canonical identifier + filter title}
-In \texttt{H5Z\_class3\_t}, the \texttt{name} field serves as the canonical identifier
-used for registry lookup. It conforms to the naming rules in
-\SectionRef{sec:param-rules}: printable ASCII, no commas, semicolons, or equals
-signs, and ideally short and lowercase (e.g., \texttt{"zfp"}, \texttt{"blosc2"},
-\texttt{"bitshuffle"}). Descriptive prose is not appropriate and is not used.
-
-The new \texttt{filter\_title} field in \texttt{H5Z\_class3\_t} provides a short
-human-readable label (e.g., \texttt{"ZFP Compression"}). It must be printable
-ASCII with no leading or trailing whitespace and no equals signs. It is not used
-for registry lookup or any programmatic dispatch. When non-\texttt{NULL}, it is
-packed into \texttt{cd\_values} as a reserved key and therefore persists in the
-file, making it available to tools even when the plugin is not installed.
+\verysubsection{After (v3): filter title in \texttt{cd\_values}}
+\texttt{H5Z\_class3\_t} has no \texttt{name} field. The optional \texttt{filter\_title}
+field provides a short human-readable label. It must be printable ASCII with no
+leading or trailing whitespace and no equals signs. It is not used for any
+programmatic dispatch. When non-\texttt{NULL}, it is packed into \texttt{cd\_values}
+as a reserved key and persists in the file.
 
 \verysubsection{Impact on \texttt{H5Pget\_filter2}}
 For v3 plugins, \texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from
 \texttt{cd\_values} in its \texttt{name[]} output parameter when the key is present.
-If \texttt{filter\_title} is absent, it falls back to the \texttt{name} field (the
-canonical identifier). This means that plugin authors who populate
-\texttt{filter\_title} during the v2-to-v3 upgrade preserve full backward
-compatibility for applications that display the \texttt{H5Pget\_filter2} output,
-and the label remains visible even without the plugin loaded.
-Plugins that leave \texttt{filter\_title} as \texttt{NULL} will cause a
-user-visible change in the \texttt{H5Pget\_filter2} output (the shorter canonical
-name appearing where a longer label was previously shown). Applications
-that compare or display the \texttt{H5Pget\_filter2} string should be audited as
-part of any v2-to-v3 plugin migration.
+If \texttt{filter\_title} is absent, it falls back to the numeric filter ID
+formatted as a decimal string. Plugin authors who populate \texttt{filter\_title}
+preserve human-readable output for applications that display
+\texttt{H5Pget\_filter2}, and the label remains visible even without the plugin
+loaded.
 
 \verysubsection{Migration guidance}
 
 \begin{itemize}
-\item \textbf{Registry lookup:} Use \texttt{H5Z\_class3\_t.name} as the canonical
-  identifier for filter registration. The canonical name is stable and is used
-  by \texttt{h5repack} for name-to-ID resolution.
 \item \textbf{Human-readable display:} Provide a short label in
   \texttt{filter\_title} when upgrading to v3.
   For example, a v2 plugin with
   \texttt{name = "HDF5 ZFP filter, version 1.0.0 (rate mode)"} should become
-  a v3 plugin with \texttt{name = "zfp"} and
-  \texttt{filter\_title = "ZFP Compression"}.
+  a v3 plugin with \texttt{filter\_title = "ZFP Compression"}.
   This ensures that \texttt{H5Pget\_filter2} continues to return a human-readable
   label. Filters that need to expose additional metadata (e.g., version strings)
   can include those details as keys in the output of
@@ -132,32 +109,6 @@ parameter, or if they require no parameters. Plugin authors can upgrade to
 %% ======================================================================
 %%  Section 11 – Open Questions
 %% ======================================================================
-\section{Release Prerequisites}
-\label{sec:open-questions}
-
-The following process action is completed before this feature ships.
-
-\verysubsection{Filter names in the HDF Group registry}
-Canonical string names are added to the HDF Group's external filter
-registry as a normative field before the first release that includes
-this feature. Without an authoritative name registry, independently
-developed plugins may claim the same canonical name, and the
-first-registered-wins collision policy provides no recourse after the fact.
-\begin{itemize}
-\item The HDF Group publishes canonical names for all filters currently
-  listed in the integer-ID filter registry~\cite{hdf5registeredfilters}
-  alongside their numeric IDs.
-\item The registration process for new filter IDs is extended to
-  require a canonical name that conforms to the naming rules in
-  \SectionRef{sec:param-rules}.
-\item The published canonical name is the single source of truth. Plugin
-  authors use the published name as their \texttt{H5Z\_class3\_t.name}
-  field.
-\end{itemize}
-This is a process requirement, not a technical change to the library.
-Implementation may proceed in parallel, but the feature does not ship
-without the registry update.
-
 %% ======================================================================
 %%  Section 12 – Test Plan
 %% ======================================================================
@@ -343,18 +294,17 @@ These tests confirm that no existing behavior is broken.
 \item \texttt{reg-03}: \texttt{H5Pset\_filter2} with a non-NULL \texttt{params} for a v2 filter
   that does NOT implement \texttt{set\_config} returns \texttt{H5E\_UNSUPPORTED}.
 \item \texttt{reg-04a}: The existing \texttt{H5Pget\_filter2} continues to return the
-  \texttt{name} field from the class struct (the debug comment) for v2 plugins,
-  not the canonical registry name.  Verify that a v2 plugin with a verbose
-  name field (e.g., \texttt{"HDF5 deflate filter v1.0"}) returns that string,
-  not \texttt{"deflate"}.
+  \texttt{name} field from the class struct (the debug comment) for v2 plugins.
+  Verify that a v2 plugin with \texttt{name = "HDF5 deflate filter v1.0"} returns
+  that string.
 \item \texttt{reg-04b}: For a v3 plugin with a non-\texttt{NULL} \texttt{filter\_title}
   field, \texttt{H5Pget\_filter2} returns the \texttt{filter\_title} text extracted
-  from \texttt{cd\_values}, not the canonical \texttt{name}. For example, a plugin
-  with \texttt{name = "zfp"} and \texttt{filter\_title = "ZFP Compression"} returns
-  \texttt{"ZFP Compression"}, even when the plugin is not loaded.
+  from \texttt{cd\_values}. For example, a plugin with
+  \texttt{filter\_title = "ZFP Compression"} returns \texttt{"ZFP Compression"},
+  even when the plugin is not loaded.
 \item \texttt{reg-04c}: For a v3 plugin with \texttt{filter\_title = NULL},
-  \texttt{H5Pget\_filter2} falls back to returning the canonical \texttt{name}
-  field (e.g., \texttt{"zfp"}).
+  \texttt{H5Pget\_filter2} falls back to returning the numeric filter ID as a
+  decimal string.
 \item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
@@ -417,22 +367,6 @@ These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
 \end{itemize}
 
 
-\subsection{Name Registry Tests}
-\label{sec:test-registry}
-
-\begin{itemize}
-\item \texttt{nr-01}: A v3 plugin whose \texttt{name} field matches a name already in
-  the registry is silently ignored (first-registered-wins); the filter itself
-  is registered by ID, but no new name entry is created. Verify by attempting
-  an \texttt{h5repack} name-lookup for the colliding name: it resolves to the
-  first-registered filter ID, not the later one.
-\item \texttt{nr-02}: After \texttt{H5Zunregister}, all name registry entries for the
-  unregistered filter ID are removed. Verify with a memory checker that all
-  internally copied name strings are freed (no leak).
-\item \texttt{nr-03}: A v3 plugin whose \texttt{name} field violates the naming rules
-  (\SectionRef{sec:param-rules}) is rejected at \texttt{H5Zregister} time with
-  \texttt{H5E\_BADVALUE}; the filter itself is NOT added to the filter table.
-\end{itemize}
 
 
 %% ======================================================================
@@ -453,23 +387,6 @@ The value of the string API scales with the number of
 filters that implement \texttt{set\_config}. If adoption is slow, v2 plugins can only
 be used via the existing \texttt{H5Pset\_filter} API. Clear documentation and a low
 barrier to v3 adoption mitigate this.
-
-\verysubsection{Name collisions}
-Independently developed plugins could choose the same
-canonical name. The first-registered-wins collision policy prevents silent
-breakage at runtime. This risk is mitigated by the requirement that canonical
-names be published in the HDF Group's central filter
-registry~\cite{hdf5registeredfilters} before this feature ships (see Q2 in
-\SectionRef{sec:open-questions}). Plugins that register names not listed in the
-central registry are considered provisional and may collide with future
-registrations.
-
-\verysubsection{Plugin scan cost}
-Name-based plugin discovery scans all shared libraries
-in \texttt{HDF5\_PLUGIN\_PATH} until a match is found. This is not a new cost---it
-is identical to how the existing integer-ID plugin search already works for
-all plugin types (filters, VFDs, VOLs). The name registry caches the result
-so the scan occurs only on first reference to an unknown name.
 
 \verysubsection{Parsing overhead for small-data workloads}
 The string API adds parsing cost at \texttt{H5Pset\_filter2} call time:

@@ -330,7 +330,6 @@ typedef struct H5Z_class3_t {
     H5Z_filter_t               id;
     unsigned                   encoder_present;
     unsigned                   decoder_present;
-    const char                *name;
     const char                *filter_title;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
@@ -343,30 +342,25 @@ typedef struct H5Z_class3_t {
 \verysubsection{Field descriptions}
 
 \begin{itemize}
-\item \texttt{name}---The canonical identifier used for name registry
-  auto-registration and displayed by introspection functions. Conforms to
-  the naming rules in \SectionRef{sec:param-rules}: printable ASCII, no
-  commas, semicolons, or equals signs, and ideally short and lowercase
-  (e.g., \texttt{"zfp"}, \texttt{"blosc2"}, \texttt{"bitshuffle"}).
 \item \texttt{filter\_title}---An optional short human-readable label for the
-  filter (e.g., \texttt{"ZFP Compression"}, \texttt{"Blosc2"}). Unlike
-  \texttt{name}, this field is not used for registry lookup or any programmatic
-  dispatch---it is purely informational. When non-\texttt{NULL},
-  \texttt{H5Zregister()} packs the value directly into \texttt{cd\_values} as the
-  reserved key \texttt{filter\_title} after \texttt{set\_config} has populated the
-  filter's own \texttt{cd\_values}. The key is never passed to \texttt{set\_config}
-  or \texttt{get\_config}. Because it is packed into \texttt{cd\_values} alongside
-  the filter's own configuration, it persists in the file and is available to
-  tools such as \texttt{h5dump} even when the plugin is not installed. The value
-  must be printable ASCII with no leading or trailing whitespace and no equals
-  signs. It may be \texttt{NULL}. \texttt{H5Pget\_filter2} returns
-  \texttt{filter\_title} (extracted from \texttt{cd\_values}) when present, and
-  falls back to \texttt{name} otherwise.
+  filter (e.g., \texttt{"ZFP Compression"}, \texttt{"Blosc2"}). This field is
+  not used for registry lookup or any programmatic dispatch---it is purely
+  informational. When non-\texttt{NULL}, \texttt{H5Zregister()} packs the value
+  directly into \texttt{cd\_values} as the reserved key \texttt{filter\_title}
+  after \texttt{set\_config} has populated the filter's own \texttt{cd\_values}.
+  The key is never passed to \texttt{set\_config} or \texttt{get\_config}. Because
+  it is packed into \texttt{cd\_values} alongside the filter's own configuration,
+  it persists in the file and is available to tools such as \texttt{h5dump} even
+  when the plugin is not installed. The value must be printable ASCII with no
+  leading or trailing whitespace and no equals signs. It may be \texttt{NULL}.
+  \texttt{H5Pget\_filter2} returns \texttt{filter\_title} (extracted from
+  \texttt{cd\_values}) when present, and falls back to the numeric filter ID
+  formatted as a decimal string otherwise.
 
   A migration guide for plugin authors upgrading from v2 to v3 is produced
-  alongside this RFC, covering at minimum: the new
-  \texttt{name}/\texttt{filter\_title} field semantics, the version constant
-  change, and the locations in the library where v2/v3 branching is required.
+  alongside this RFC, covering at minimum: the new \texttt{filter\_title} field
+  semantics, the version constant change, and the locations in the library where
+  v2/v3 branching is required.
 \end{itemize}
 
 \subsection{Callback Specifications}
@@ -504,13 +498,8 @@ For v3 plugins, if \texttt{filter\_title} is non-\texttt{NULL}, after
 appends a \texttt{filter\_title=\textit{value}} slot directly into \texttt{cd\_values}.
 This key is never seen by \texttt{set\_config} or \texttt{get\_config}. When
 \texttt{H5Pget\_filter2} is called, it extracts \texttt{filter\_title} from
-\texttt{cd\_values} if present, and falls back to the \texttt{name} field otherwise.
-This preserves backward compatibility for applications that display the
-\texttt{H5Pget\_filter2} output (\SectionRef{sec:name-semantic-change}).
-
-If a v3 plugin's \texttt{name} field violates the naming rules of
-\SectionRef{sec:param-rules}, \texttt{H5Zregister} returns
-\texttt{H5E\_BADVALUE} and does not add the filter to the filter table.
+\texttt{cd\_values} if present, and falls back to the numeric filter ID formatted
+as a decimal string otherwise.
 
 
 %% ======================================================================
@@ -649,9 +638,10 @@ only.
 The existing \texttt{H5Pget\_filter2} function returns a filter name from the class
 struct's \texttt{name} field (the ``debug comment'' in v2 plugins). For v3 plugins,
 \texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from \texttt{cd\_values} if
-the key is present, and falls back to the \texttt{name} field otherwise. Because
-\texttt{filter\_title} is packed into \texttt{cd\_values} at registration time, this
-human-readable label is available even when the plugin is not loaded.
+the key is present, and falls back to the numeric filter ID formatted as a decimal
+string otherwise. Because \texttt{filter\_title} is packed into \texttt{cd\_values}
+at registration time, this human-readable label is available even when the plugin
+is not loaded.
 \texttt{H5Pget\_filter\_params\_by\_idx} complements \texttt{H5Pget\_filter2} by returning
 the parameter string rather than the filter title.
 
@@ -882,132 +872,6 @@ string grammar (\SectionRef{sec:param-rules}) for this purpose.
 \texttt{H5Pset\_filter2} (\SectionRef{sec:set-filter2}) is the primary API.
 
 
-%% ======================================================================
-%%  Section 6 – Filter Name Registry
-%% ======================================================================
-\section{Filter Name Registry}
-\label{sec:name-registry}
-
-\subsection{Overview}
-
-The library maintains an internal mapping from canonical names to filter IDs
-(\texttt{H5Z\_filter\_t}). This registry is populated automatically when v3 plugins
-are registered via \texttt{H5Zregister()}, and is pre-populated with built-in filter
-names at library initialization. It is used internally by \texttt{h5repack} to
-resolve a canonical name string to a filter ID for the new filter-specification
-syntax (\SectionRef{sec:cli-tools}).
-
-The registry has no public write path. Names enter the registry only through:
-\begin{itemize}
-\item Built-in registrations at library initialization (see
-  \SectionRef{sec:builtin-registrations}).
-\item Plugin self-registration: when \texttt{H5Zregister()} processes an
-  \texttt{H5Z\_class3\_t} whose \texttt{name} field is non-\texttt{NULL}, the name is
-  automatically inserted into the registry.
-\end{itemize}
-
-\subsection{Built-in Registrations}
-\label{sec:builtin-registrations}
-
-The following names are registered at library initialization:
-
-\begin{center}
-\begin{tabular}{ll}
-\toprule
-\textbf{Name} & \textbf{Filter ID} \\
-\midrule
-\texttt{"deflate"}     & \texttt{H5Z\_FILTER\_DEFLATE} \\
-\texttt{"shuffle"}     & \texttt{H5Z\_FILTER\_SHUFFLE} \\
-\texttt{"fletcher32"}  & \texttt{H5Z\_FILTER\_FLETCHER32} \\
-\texttt{"szip"}        & \texttt{H5Z\_FILTER\_SZIP} \\
-\texttt{"nbit"}        & \texttt{H5Z\_FILTER\_NBIT} \\
-\texttt{"scaleoffset"} & \texttt{H5Z\_FILTER\_SCALEOFFSET} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\subsection{Plugin Auto-Registration}
-\label{sec:plugin-auto-reg}
-
-When a filter plugin compiled against \texttt{H5Z\_class3\_t} is loaded by integer-ID
-search, the library reads the \texttt{name} field from the class structure and
-automatically registers it in the name registry. If the \texttt{name} field is
-\texttt{NULL}, the plugin is not registered by name and can only be addressed by
-numeric ID.
-
-The library makes an internal copy (\texttt{strdup}) of the name string when
-inserting it into the name registry. The \texttt{name} field in \texttt{H5Z\_class3\_t} points
-to memory inside the loaded shared library. If the plugin is later unloaded
-(e.g., via \texttt{H5Zunregister} or \texttt{H5close}), the registry would otherwise
-contain a dangling pointer.
-
-If a name is already present in the registry when a plugin attempts to
-auto-register (e.g., two v3 plugins share the same canonical name), the later
-registration is silently ignored---first registration wins. This prevents
-silent behavioral changes when plugins are loaded in different orders.
-
-The six built-in canonical names (\texttt{"deflate"}, \texttt{"szip"},
-\texttt{"shuffle"}, \texttt{"fletcher32"}, \texttt{"nbit"},
-\texttt{"scaleoffset"}) and the reserved token \texttt{"UD"} are permanently
-reserved.  Because built-in names are registered at library initialization
-(i.e., before any user plugin can be loaded), first-registered-wins
-guarantees that no plugin auto-registration can claim these names regardless
-of registration order.
-
-When \texttt{H5Zunregister()} removes a filter, all name registry entries pointing to
-that filter's ID are also removed. The cleanup routine frees all
-internally copied name strings (via \texttt{H5MM\_xfree} or equivalent) to prevent
-memory leaks in long-running processes or test suites that repeatedly register
-and unregister filters.
-
-\verysubsection{Note on the \texttt{name} and \texttt{filter\_title} fields}
-In \texttt{H5Z\_class2\_t}, the \texttt{name} field is
-documented as ``Comment for debugging'' but is also user-visible---it is the
-string returned by \texttt{H5Pget\_filter2} in its \texttt{name[]} output parameter.
-Existing plugins may contain freeform text (e.g., ``my cool zfp filter v2.1'').
-In \texttt{H5Z\_class3\_t}, the \texttt{name} field takes on a stronger role as a canonical
-identifier used for registry lookup, and follows the naming rules in
-\SectionRef{sec:param-rules} (printable ASCII, no commas/semicolons/equals
-signs). Plugin authors upgrading from v2 to v3 choose a suitable
-canonical name. This semantic shift is prominently documented in the
-migration guide.
-
-The new \texttt{filter\_title} field in \texttt{H5Z\_class3\_t} preserves the display
-role that the \texttt{name} field served in v2. Plugin authors upgrading from v2
-to v3 should provide a short human-readable label in \texttt{filter\_title} (e.g.,
-\texttt{"ZFP Compression"}), and assign a short canonical identifier to
-\texttt{name} (e.g., \texttt{"zfp"}). Unlike \texttt{name}, \texttt{filter\_title}
-is packed into \texttt{cd\_values} and therefore persists in the file, making it
-available to tools even when the plugin is not installed. This ensures continuity
-for applications that display the output of \texttt{H5Pget\_filter2}
-(\SectionRef{sec:name-semantic-change}).
-
-
-\subsection{Relationship to the HDF Group Filter Registry}
-
-The HDF Group maintains an external registry of filter
-IDs~\cite{hdf5registeredfilters}. Canonical names are added to this
-registry as a normative field before the first release that includes this
-feature (see \SectionRef{sec:open-questions}). This ensures global
-uniqueness of filter names and provides plugin authors with an authoritative
-source of truth for the \texttt{name} field in \texttt{H5Z\_class3\_t}.
-
-
-\subsection{Registry Implementation Requirements}
-\label{sec:registry-impl}
-
-The name registry must support the following operations efficiently:
-
-\begin{itemize}
-\item \textbf{Forward lookup:} canonical name $\rightarrow$ filter ID (used by
-  \texttt{h5repack} to resolve a name to an ID before calling
-  \texttt{H5Pset\_filter2}).
-\item \textbf{Reverse cleanup:} filter ID $\rightarrow$ all registered names (used by
-  \texttt{H5Zunregister}, \SectionRef{sec:plugin-auto-reg}).
-\end{itemize}
-
-A name $\rightarrow$ ID mapping satisfies all requirements. The exact data
-structure is an implementation choice.
 
 
 %% ======================================================================
@@ -1240,7 +1104,6 @@ typedef struct H5Z_class4_t {
     H5Z_filter_t              id;
     unsigned                  encoder_present;
     unsigned                  decoder_present;
-    const char               *name;
     const char               *filter_title;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;

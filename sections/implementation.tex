@@ -96,56 +96,38 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 \section{Thread Safety and Concurrency}
 \label{sec:thread-safety}
 
-\subsection{Global Registry Protection}
+\subsection{Plugin Loading Protection}
 
-The canonical name registry is a global mutable data structure. In
-thread-safe builds of HDF5 (configured with \texttt{--enable-threadsafe}), all
-access to the registry---including lookups by \texttt{h5repack} and
-mutations during plugin auto-registration---are serialized.
+The on-demand plugin scan triggered by \texttt{H5PL\_load} performs filesystem
+I/O (directory iteration and shared-library opens). In thread-safe builds of
+HDF5 (configured with \texttt{--enable-threadsafe}), this I/O is serialized
+under the global API lock.
 
 The existing HDF5 global API lock serializes all public API entry points.
-This is sufficient to prevent concurrent mutation of the registry from
-user-facing calls. Plugin auto-registration (\SectionRef{sec:plugin-auto-reg})
-occurs within the same API call scope and is therefore covered by the same
-lock. No new locking mechanisms are introduced.
+This is sufficient to prevent concurrent plugin loading races from user-facing
+calls. No new locking mechanisms are introduced.
 
 \verysubsection{Future-proofing note}
-Name registry lookups (used internally by \texttt{h5repack} to resolve a
-canonical name to a filter ID before calling \texttt{H5Pset\_filter2}, and by
-\texttt{h5dump} for filter display) are pure read operations with no I/O side
-effects. If the
-library moves toward finer-grained concurrency
-(as discussed in the context of VOLs and asynchronous I/O), the name registry
-should be protected by a dedicated readers-writer (RW) lock rather than the
-global API lock, allowing concurrent lookups without serialization. The
-internal data structure chosen for the registry should be compatible with this
-future migration.
-
-In addition to the registry lookup, the on-demand plugin scan triggered by
-\texttt{H5PL\_load} performs filesystem I/O (directory iteration and shared-library
-opens). In thread-safe builds, this I/O is also serialized under the global
-API lock. When many threads simultaneously encounter an unknown filter name at
-startup, all threads queue behind the first thread performing the scan,
-producing a convoy effect. Reducing lock granularity for the scan itself---for
-example by allowing concurrent read-only scans while only serializing the
-final registry insertion---would therefore benefit throughput independently of
-the registry RW-lock migration described above.
+When many threads simultaneously encounter an unknown filter ID at startup,
+all threads queue behind the first thread performing the plugin scan, producing
+a convoy effect. Reducing lock granularity for the scan itself---for example
+by allowing concurrent read-only scans while only serializing the final plugin
+table insertion---would benefit throughput if the library moves toward
+finer-grained concurrency.
 
 \subsection{Parallel HDF5 (MPI) Considerations}
 
 In Parallel HDF5, all MPI ranks participating in collective dataset creation
-present identical dataset creation property lists (DCPLs). Because filter
-name resolution depends on locally loaded plugins, non-deterministic plugin
-loading across ranks (e.g., due to filesystem latency or differing
-\texttt{HDF5\_PLUGIN\_PATH} settings) could cause Rank~0 to resolve \texttt{"zfp"}
-successfully while Rank~1 fails.
+present identical dataset creation property lists (DCPLs). Non-deterministic
+plugin loading across ranks (e.g., due to filesystem latency or differing
+\texttt{HDF5\_PLUGIN\_PATH} settings) could cause one rank to fail to load a
+required plugin while others succeed.
 
 This is not a new problem introduced by this design---the same class of
 issue exists today when any rank fails to load a required plugin, and there
 are already several runtime-specific mechanisms (environment variables,
 plugin path configuration, dynamic library search order) that can cause
-per-rank divergence independently of whether filters are identified by name
-or by ID.
+per-rank divergence.
 
 An additional parallel-specific concern is that parameter string parsing is
 performed independently on every rank, even though the resulting
@@ -218,40 +200,22 @@ constructed).
 existing syntax (\texttt{GZIP}, \texttt{SZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{NBIT},
 \texttt{SOFF}, and \texttt{UD=id,flags,n,v1,...}) continues to work unchanged.
 
-A new form is added that accepts a filter name and parameter string:
+A new form is added that accepts a filter ID and parameter string:
 
 \begin{Verbatim}[fontsize=\scriptsize]
-    h5repack -f 'deflate=level=6' input.h5 output.h5
-    h5repack -f 'zfp=mode=rate,rate=3.5' input.h5 output.h5
-    h5repack -f '/group/dataset:zfp=mode=rate,rate=3.5' input.h5 output.h5
+    h5repack -f 'UD=1,0,level=6' input.h5 output.h5
+    h5repack -f 'UD=32013,0,mode=rate,rate=3.5' input.h5 output.h5
+    h5repack -f '/group/dataset:UD=32013,0,mode=rate,rate=3.5' input.h5 output.h5
 \end{Verbatim}
 
-The equals sign is used as the delimiter between filter name and parameter
-string. A colon cannot be used because it is already the separator between the
-object path and filter specification in the existing \texttt{h5repack} syntax (e.g.,
-\texttt{/group/dataset:GZIP=6}). Using equals for both the name-to-params delimiter
-and within key=value pairs is unambiguous because the filter name is always
-the text before the first equals sign.
-
-The old filter name aliases used in \texttt{h5repack} (\texttt{GZIP}, \texttt{SHUF},
-\texttt{FLET}, \texttt{SOFF}) are unrelated to the canonical names introduced in this
-design. The old aliases continue to work unchanged. The new
-\textit{filtername}\texttt{=}\textit{params} form requires \texttt{h5repack} to
-resolve the canonical name to a filter ID (using the library-internal name
-registry populated during \texttt{H5Zregister}) before calling \texttt{H5Pset\_filter2}.
-
-\verysubsection{\texttt{UD=} disambiguation}
-\label{sec:ud-disambiguation}
-
-The legacy user-defined filter syntax \texttt{UD=id,flags,n,v1,...} uses
-\texttt{UD} as a reserved token.  To avoid ambiguity with the new
-\textit{filtername}\texttt{=}\textit{params} syntax, \texttt{UD} is a
-\emph{forbidden} canonical filter name and is rejected by the name
-registry.  The \texttt{h5repack} parser always treats \texttt{UD=} as the
-legacy syntax and handles disambiguation itself before resolving the filter
-name to an ID and calling \texttt{H5Pset\_filter2}---it is not the library's
-responsibility to resolve this ambiguity.  Any filter that previously relied on the name
-\texttt{UD} uses a different canonical name.
+The existing \texttt{UD=id,flags,...} syntax is extended to accept a parameter
+string in place of the raw \texttt{cd\_values} sequence when the filter is a v3
+plugin that implements \texttt{set\_config}. The \texttt{h5repack} parser detects
+whether the values following the flags field are a key=value string or a raw
+integer sequence and dispatches accordingly---calling \texttt{H5Pset\_filter2}
+for the string form and \texttt{H5Pset\_filter} for the raw integer form.
+The old built-in aliases (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{SOFF})
+continue to work unchanged.
 
 \subsection{h5dump}
 
