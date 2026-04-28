@@ -357,6 +357,14 @@ typedef struct H5Z_class3_t {
   \texttt{cd\_values}) when present, and falls back to the numeric filter ID
   formatted as a decimal string otherwise.
 
+  \textbf{Length limit:} \texttt{filter\_title} must not exceed 255 bytes
+  (excluding the NUL terminator). \texttt{H5Zregister()} rejects a v3
+  registration where \texttt{strlen(filter\_title) > 255} with
+  \texttt{H5E\_BADVALUE}.  This bound guarantees that the packed
+  \texttt{filter\_title} key consumes at most
+  $\lceil 255/4 \rceil + 1 = 65$ \texttt{cd\_values} slots, leaving the
+  remaining capacity exclusively for the filter's own parameters.
+
   A migration guide for plugin authors upgrading from v2 to v3 is produced
   alongside this RFC, covering at minimum: the new \texttt{filter\_title} field
   semantics, the version constant change, and the locations in the library where
@@ -531,16 +539,39 @@ typedef struct {
 } H5Z_params_t;
 \end{minted}
 
-Convenience initialiser macros are provided for the two common cases:
+Convenience initialiser macros are provided for the two common cases.
+Because C++ does not support C99 compound literals, the macros use
+conditional compilation to provide equivalent C++-compatible initialisers:
 
 \begin{minted}{c}
-/* Initialise an H5Z_params_t for a raw cd_values array */
+#ifdef __cplusplus
+/* C++: brace-init is valid for aggregates */
+#define H5Z_PARAMS_RAW(n, vals) \
+    (H5Z_params_t{ H5Z_PARAMS_CDVALUES, { { (n), (vals) } } })
+#define H5Z_PARAMS_STR(s) \
+    (H5Z_params_t{ H5Z_PARAMS_STRING,   { { 0,   nullptr } } })
+/* NOTE: H5Z_PARAMS_STR cannot use a C++ compound literal to carry 's'
+   portably across all C++ versions; C++ callers should use the named-
+   variable form shown in the lifetime note below. */
+#else
+/* C99: compound literals with designated initialisers */
 #define H5Z_PARAMS_RAW(n, vals) \
     ((H5Z_params_t){ H5Z_PARAMS_CDVALUES, { .raw = { (n), (vals) } } })
-
-/* Initialise an H5Z_params_t for a key=value string */
 #define H5Z_PARAMS_STR(s) \
-    ((H5Z_params_t){ H5Z_PARAMS_STRING, { .str = (s) } })
+    ((H5Z_params_t){ H5Z_PARAMS_STRING,   { .str  = (s)            } })
+#endif
+\end{minted}
+
+\noindent C++ callers should prefer the named-variable form for
+\texttt{H5Z\_PARAMS\_STRING} to avoid the C++ restriction on compound
+literals carrying a pointer to a runtime expression:
+
+\begin{minted}{cpp}
+// Recommended C++ usage
+H5Z_params_t p;
+p.type  = H5Z_PARAMS_STRING;
+p.u.str = "level=6";
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
 \end{minted}
 
 \verysubsection{Compound literal lifetime (C99)}
@@ -780,6 +811,14 @@ performs a size query only and does not write to \texttt{value\_buf}.  When the 
 is found and \texttt{value\_buf} is non-\texttt{NULL}, the processed value is written as a
 NUL-terminated string (quotes stripped, \texttt{""} unescaped).  The caller can use
 \texttt{strlen} on the result; no separate length output is provided.
+
+If the capacity supplied on entry is non-zero but insufficient to hold the
+processed value plus a NUL terminator, the function writes nothing to
+\texttt{value\_buf}, sets \texttt{*buf\_size} to the required byte count
+(excluding NUL), pushes \texttt{H5E\_OVERFLOW} onto the error stack, and
+returns negative.  The caller can then reallocate and retry.  This mirrors
+the overflow behaviour of \texttt{H5Iget\_name} and similar size-query
+functions in the HDF5 API.
 
 A bare key (\texttt{"fast\_mode"}, no equals sign) returns positive with
 \texttt{*buf\_size = 0} and an empty string in \texttt{value\_buf},

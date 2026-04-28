@@ -152,6 +152,19 @@ one rank and broadcast it to all others (e.g., via serialisation through
 \texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
 independently invoke \texttt{H5Pset\_filter\_params}.
 
+\verysubsection{Diagnosing rank-inconsistent DCPLs}
+A DCPL mismatch across MPI ranks at \texttt{H5Dcreate} time produces an
+\texttt{H5E\_CANTCREATE} error in debug builds but can manifest as a hang
+or silent data corruption in optimised builds depending on the MPI
+implementation.  To aid diagnosis, the environment variable
+\texttt{HDF5\_MPI\_CHECK\_DCPL} (proposed for a future release) would
+cause the library to perform an \texttt{MPI\_Allreduce} hash of the
+serialised DCPL before each collective \texttt{H5Dcreate} and emit a
+warning if any rank's hash differs.  In the interim, applications can
+replicate this check manually: serialise the DCPL with \texttt{H5Pencode}
+on every rank, hash the result, \texttt{MPI\_Allreduce} the hashes, and
+abort collectively before \texttt{H5Dcreate} if any hash differs.
+
 \verysubsection{Failure mode and plugin loading order}
 
 \noindent\textbf{Decision:} \texttt{H5Pset\_filter\_params} loads the plugin
@@ -187,6 +200,18 @@ interaction with SWMR (which governs I/O access patterns on open datasets) or
 with asynchronous VOL event sets (which are populated after the DCPL is fully
 constructed).
 
+\verysubsection{Note for pass-through and network VOL connectors}
+VOL connectors that proxy dataset creation to a remote server (e.g., REST~VOL,
+DAOS~VOL) receive a DCPL whose filter entries are already in \texttt{cd\_values}
+form.  A remote server that natively understands key=value filter strings cannot
+recover the original string from \texttt{cd\_values} without calling
+\texttt{get\_config}.  This is an intentional trade-off: resolution at the
+\texttt{H5Pset\_filter\_params} call site is the simplest design that keeps the
+VOL interface unchanged.  Remote VOLs that require string-form parameters for
+their own API can call \texttt{H5Pget\_filter\_params\_by\_idx} (which invokes
+\texttt{get\_config}) to reconstruct a best-effort string from the stored
+\texttt{cd\_values} before forwarding the request.
+
 
 %% ======================================================================
 %%  Section 9 – CLI Tool Integration
@@ -217,6 +242,16 @@ with \texttt{H5Z\_PARAMS\_STR} for the string form and \texttt{H5Z\_PARAMS\_RAW}
 for the raw integer form.
 The old built-in aliases (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{SOFF})
 continue to work unchanged.
+
+\verysubsection{Duplicate filter entries}
+HDF5 allows the same filter ID to appear more than once in a pipeline.
+When \texttt{h5repack} applies a \texttt{-f} specification that matches a
+filter already present in the source pipeline, it appends a new entry
+rather than replacing the existing one---this is the same behaviour as the
+existing \texttt{UD=} raw-integer form.  Pipeline ordering is fully
+preserved: entries are written to the output DCPL in the order they appear
+in the source pipeline, followed by any new entries added via \texttt{-f}.
+No new behaviour is introduced for this edge case.
 
 \subsection{h5dump}
 

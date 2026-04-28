@@ -362,6 +362,45 @@ These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
 \section{Risks}
 \label{sec:risks}
 
+\verysubsection{C++ compound literal incompatibility}
+The \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW} macros use C99
+compound literals, which are not valid in standard C++.  The macros use
+\texttt{\#ifdef \_\_cplusplus} guards to provide C++-compatible
+initialisers; C++ callers using \texttt{H5Z\_PARAMS\_STRING} should prefer
+the named-variable form documented in \SectionRef{sec:set-filter-params}.
+This is a documentation and testing obligation: the HDF5 test suite must
+compile the macro forms under both a C99 compiler and a C++11 (or later)
+compiler to confirm portability.
+
+\verysubsection{Two-pass \texttt{set\_config} developer error}
+The two-pass size-query protocol requires \texttt{set\_config} to report the
+same \texttt{cd\_nelmts} on both invocations.  A developer who uses stateful
+parsing (e.g., \texttt{strtok} on a modified copy of the string, or a
+scan-forward pointer that is not reset) may produce a different count on the
+second pass, triggering a library error or, in the worst case, a buffer
+overrun before the library's second-pass capacity check catches it.
+Mitigation: the library enforces the invariant by comparing first-pass and
+second-pass \texttt{cd\_nelmts} and rejecting mismatches; the
+\texttt{set\_config} template in \SectionRef{sec:set-config-template}
+demonstrates the safe pattern; and the callback contract tests
+(\texttt{cb-02}, \texttt{cb-03}) exercise mismatch detection.  Documentation
+in \texttt{H5Zdevelop.h} explicitly warns against stateful parsing.
+
+\verysubsection{Lossy round-trip user expectations}
+Users and test suites often expect strict string equality after a
+set-then-get round trip (\texttt{set\_config(s)} $\rightarrow$
+\texttt{get\_config()} $\rightarrow$ $s' = s$).  Because
+\texttt{cd\_values} is a lossy encoding for floating-point parameters
+(e.g., a \texttt{double} rate quantised through \texttt{unsigned int}
+slots), the reconstructed string $s'$ may differ from $s$ in decimal
+representation even when the configuration is semantically identical.
+The RFC addresses this in two places: the introspection note in
+\SectionRef{sec:introspection} states that reconstructed strings are
+informational only, and the round-trip tests (\SectionRef{sec:test-builtin-roundtrip})
+verify \texttt{cd\_values} equality rather than string equality.  The
+API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
+this caveat so that callers are not surprised.
+
 \verysubsection{Grammar maintenance}
 The key=value format with quoted-value support constitutes a specification
 the library must support indefinitely. Future grammar extensions are backward-compatible: any
