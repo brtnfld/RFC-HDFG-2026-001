@@ -181,6 +181,47 @@ any collective \texttt{H5Dcreate} is issued.  Applications that want to
 probe filter availability before committing to a DCPL configuration should
 call \texttt{H5Zfilter\_avail} first.
 
+\subsection{High-Level Language Binding Considerations (h5py, PyTables, etc.)}
+\label{sec:hll-bindings}
+
+High-level language bindings such as h5py, PyTables, and netCDF4-Python
+call \texttt{H5Pset\_filter} directly with raw \texttt{cd\_values} constructed
+on the Python/Cython side.  Because \texttt{H5Pset\_filter} is unchanged by
+this RFC, these bindings require \textbf{no changes and no recompilation}.
+
+Should h5py or another binding wish to expose the string form to Python
+callers, it would call \texttt{H5Pset\_filter\_params} from Cython by
+declaring \texttt{H5Z\_params\_t} as a Cython \texttt{cdef} struct and
+populating it by field assignment (the same named-variable pattern used
+for C++, since C99 compound literals are not available in Cython):
+
+\begin{minted}{python}
+# Hypothetical Cython fragment (not part of this RFC)
+cdef H5Z_params_t p
+p.type  = H5Z_PARAMS_STRING
+p.u.str = b"level=6"
+H5Pset_filter_params(plist_id, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p)
+\end{minted}
+
+\verysubsection{\texttt{filter\_title} round-trip hazard for h5py}
+A subtle issue arises when h5py reads a DCPL from a file that was written
+using a v3 plugin with a non-\texttt{NULL} \texttt{filter\_title}: the
+\texttt{cd\_values} array returned by \texttt{H5Pget\_filter} (or
+\texttt{H5Pget\_filter\_by\_id}) will include the appended
+\texttt{filter\_title} slots in addition to the filter's own parameters.
+If h5py then passes those \texttt{cd\_values} verbatim back to
+\texttt{H5Pset\_filter} to copy or repack a dataset, the larger
+\texttt{cd\_nelmts} is presented to the plugin's execution callback ---
+triggering the same legacy plugin \texttt{cd\_nelmts} validation hazard
+documented in \SectionRef{sec:class3-struct}.
+
+The mitigation is the same: plugins must validate \texttt{cd\_nelmts} as
+\emph{at least} the expected count rather than exactly equal.  h5py itself
+does not need to be aware of this distinction; it passes \texttt{cd\_values}
+through opaquely, and the hazard is entirely in the plugin's callback.
+h5py users who encounter read errors on datasets written with v3 plugins
+should update the plugin to the \texttt{>=} validation convention.
+
 \subsection{VOL Connector Interaction}
 
 Filters are applied to chunks by the native VOL connector during I/O.
