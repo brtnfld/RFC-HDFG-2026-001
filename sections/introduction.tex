@@ -7,19 +7,20 @@
 
 \subsection{Purpose}
 
-This document describes the high-level design for a new string-based interface
-for configuring HDF5 I/O filters. The feature adds a usability layer on top of
-the existing filter machinery, allowing users to specify filter names and
-parameters as human-readable strings rather than constructing raw \texttt{cd\_values}
-arrays of \texttt{unsigned int}.
+This document describes the high-level design for a new unified filter
+configuration interface for HDF5 I/O filters. The feature adds a usability
+layer on top of the existing filter machinery, allowing users to specify filter
+parameters as either raw \texttt{cd\_values} arrays or human-readable key=value
+strings through a single new API, \texttt{H5Pset\_filter\_params}.
 
 \subsection{Scope}
 
 This design covers:
 
 \begin{itemize}
-\item New public API functions in the \texttt{H5P} and \texttt{H5Z} modules for string-based
-  filter configuration.
+\item New public API functions in the \texttt{H5P} and \texttt{H5Z} modules for
+  filter configuration, including \texttt{H5Pset\_filter\_params} and the
+  \texttt{H5Z\_params\_t} tagged union type.
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
@@ -82,8 +83,8 @@ no standard way to recover the original intent of the configuration (e.g.,
 \begin{enumerate}
 \item Users can configure any filter using human-readable named
    parameters.
-\item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter2}
-   (\SectionRef{sec:set-filter2}). Integer IDs are assigned by the HDF Group
+\item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter\_params}
+   (\SectionRef{sec:set-filter-params}). Integer IDs are assigned by the HDF Group
    filter registry~\cite{hdf5registeredfilters}.
 \item All existing APIs, plugins, and call sites continue to work without
    modification.

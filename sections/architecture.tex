@@ -508,54 +508,104 @@ as a decimal string otherwise.
 \section{Public API}
 \label{sec:public-api}
 
-\subsection{Single-Filter String Configuration}
-\label{sec:set-filter2}
+\subsection{Single-Filter Configuration}
+\label{sec:set-filter-params}
+
+\verysubsection{Parameter type}
 
 \begin{minted}{c}
-herr_t H5Pset_filter2(
-    hid_t        plist_id,
-    H5Z_filter_t id,
-    unsigned     flags,
-    const char  *params
+typedef enum {
+    H5Z_PARAMS_CDVALUES = 0,  /* raw cd_values array (same as H5Pset_filter) */
+    H5Z_PARAMS_STRING   = 1,  /* human-readable key=value string              */
+} H5Z_params_type_t;
+
+typedef struct {
+    H5Z_params_type_t type;
+    union {
+        struct {
+            size_t          cd_nelmts;
+            const unsigned *cd_values;
+        } raw;
+        const char *str;
+    } u;
+} H5Z_params_t;
+\end{minted}
+
+Convenience initialiser macros are provided for the two common cases:
+
+\begin{minted}{c}
+/* Initialise an H5Z_params_t for a raw cd_values array */
+#define H5Z_PARAMS_RAW(n, vals) \
+    ((H5Z_params_t){ H5Z_PARAMS_CDVALUES, { .raw = { (n), (vals) } } })
+
+/* Initialise an H5Z_params_t for a key=value string */
+#define H5Z_PARAMS_STR(s) \
+    ((H5Z_params_t){ H5Z_PARAMS_STRING, { .str = (s) } })
+\end{minted}
+
+\verysubsection{Function signature}
+
+\begin{minted}{c}
+herr_t H5Pset_filter_params(
+    hid_t              plist_id,
+    H5Z_filter_t       id,
+    unsigned           flags,
+    const H5Z_params_t *params
 );
 \end{minted}
 
 \verysubsection{Description}
-Configures the filter identified by \texttt{id} using the key-value parameter
-string \texttt{params} and appends it to the existing filter pipeline on
-\texttt{plist\_id}. The pipeline is subject to the existing
-maximum of \texttt{H5Z\_MAX\_NFILTERS} (32) entries.
+Configures the filter identified by \texttt{id} and appends it to the
+existing filter pipeline on \texttt{plist\_id}.  The pipeline is subject to
+the existing maximum of \texttt{H5Z\_MAX\_NFILTERS} (32) entries.
 
-This function is modeled on \texttt{H5Pset\_filter}: it appends a single filter
-to the pipeline with explicit flag control. The difference is that parameters
-are passed as a human-readable key=value string rather than a
-\texttt{cd\_values} array.
+\texttt{H5Pset\_filter\_params} accepts either a raw \texttt{cd\_values} array
+(\texttt{H5Z\_PARAMS\_CDVALUES}) or a key=value parameter string
+(\texttt{H5Z\_PARAMS\_STRING}) through the tagged union \texttt{H5Z\_params\_t}.
+Passing \texttt{NULL} for \texttt{params} is equivalent to
+\texttt{H5Z\_PARAMS\_CDVALUES} with \texttt{cd\_nelmts = 0} and is valid for
+filters that take no parameters.
+
+When \texttt{type} is \texttt{H5Z\_PARAMS\_CDVALUES}, the function behaves
+identically to \texttt{H5Pset\_filter}: the \texttt{cd\_values} array is stored
+in the DCPL without invoking any plugin callback.
+
+When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
+loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
+translate the parameter string into \texttt{cd\_values}, and stores the result.
+The plugin must be available at call time; if it cannot be found,
+\texttt{H5Pset\_filter\_params} returns \texttt{H5E\_NOFILTER} immediately
+rather than deferring the failure to \texttt{H5Dcreate}.
 
 \verysubsection{Behavioral note on flags}
-Like \texttt{H5Pset\_filter}, the caller controls flags directly. However,
-\texttt{H5Pset\_filter2} passes the caller's flags through the filter's
-\texttt{set\_config} callback, which can modify them. This allows filters to
-enforce constraints (e.g., SZIP unconditionally forces
-\texttt{H5Z\_FLAG\_OPTIONAL}). Callers that need to detect a flag override can
-compare the flags they passed with the flags returned by
-\texttt{H5Pget\_filter2} after the call. See \SectionRef{sec:callback-specs}.
+The caller controls flags directly.  When \texttt{type} is
+\texttt{H5Z\_PARAMS\_STRING}, the flags value is passed through the filter's
+\texttt{set\_config} callback, which may modify it (e.g., SZIP unconditionally
+forces \texttt{H5Z\_FLAG\_OPTIONAL}).  Callers that need to detect a flag
+override can compare the value they passed with the flags returned by
+\texttt{H5Pget\_filter2} after the call.  See \SectionRef{sec:callback-specs}.
 
 \verysubsection{Parameters}
 
 \begin{itemize}
 \item \texttt{plist\_id}---A dataset creation property list identifier.
-\item \texttt{id}---The filter identifier (\texttt{H5Z\_filter\_t}), as used by
-  \texttt{H5Pset\_filter}. For built-in filters, use the predefined constants
-  (\texttt{H5Z\_FILTER\_DEFLATE}, etc.). For externally registered filters, use
-  the numeric ID assigned by the HDF Group filter registry.
+\item \texttt{id}---The filter identifier (\texttt{H5Z\_filter\_t}).  For
+  built-in filters, use the predefined constants
+  (\texttt{H5Z\_FILTER\_DEFLATE}, etc.).  For externally registered filters,
+  use the numeric ID assigned by the HDF Group filter registry.
 \item \texttt{flags}---A bit mask specifying filter behavior
   (\texttt{H5Z\_FLAG\_MANDATORY}, \texttt{H5Z\_FLAG\_OPTIONAL}).
-\item \texttt{params}---A comma-separated key=value parameter string, or
-  \texttt{NULL} for filters that take no parameters. If \texttt{params} is
-  non-\texttt{NULL} and non-empty for a filter that takes no parameters, the
-  filter's \texttt{set\_config} callback should reject it with
-  \texttt{H5E\_BADVALUE}. This is the expected pattern for parameterless
-  built-in filters (shuffle, fletcher32, nbit).
+\item \texttt{params}---A pointer to an \texttt{H5Z\_params\_t} describing the
+  filter configuration, or \texttt{NULL} for filters that take no parameters.
+  \begin{itemize}
+  \item \texttt{H5Z\_PARAMS\_CDVALUES}: \texttt{u.raw.cd\_nelmts} and
+    \texttt{u.raw.cd\_values} are used directly, identical to
+    \texttt{H5Pset\_filter}.
+  \item \texttt{H5Z\_PARAMS\_STRING}: \texttt{u.str} is a comma-separated
+    key=value parameter string.  \texttt{NULL} or an empty string means ``no
+    parameters'' and is valid for parameterless filters (shuffle, fletcher32,
+    nbit).
+  \end{itemize}
 \end{itemize}
 
 \verysubsection{Returns}
@@ -564,33 +614,46 @@ Non-negative on success; negative on failure.
 \verysubsection{Errors}
 
 \begin{itemize}
-\item \texttt{H5E\_UNSUPPORTED}---The filter was found but does not implement
-  \texttt{set\_config} and \texttt{params} is not \texttt{NULL}. The caller should
-  use \texttt{H5Pset\_filter} with raw \texttt{cd\_values} instead.
-\item \texttt{H5E\_BADVALUE}---The parameter string is malformed or rejected by
-  the filter's \texttt{set\_config} callback.
+\item \texttt{H5E\_NOFILTER}---(\texttt{H5Z\_PARAMS\_STRING} only) The filter
+  plugin could not be found or loaded.
+\item \texttt{H5E\_UNSUPPORTED}---(\texttt{H5Z\_PARAMS\_STRING} only) The filter
+  was found but does not implement \texttt{set\_config}.  Use
+  \texttt{H5Z\_PARAMS\_CDVALUES} instead.
+\item \texttt{H5E\_BADVALUE}---The parameter string is malformed, the
+  \texttt{params} type field is unrecognised, or \texttt{set\_config} rejected
+  the parameter string.
 \item \texttt{H5E\_CANTINIT}---The \texttt{set\_config} callback returned a
   \texttt{cd\_nelmts} value exceeding \texttt{UINT16\_MAX} or the library's
   internal filter-table limit.
 \end{itemize}
 
-\verysubsection{Usage example}
+\verysubsection{Usage examples}
 
 \begin{minted}{c}
-// Current approach:
-H5Pset_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, &level);
+/* --- String form (new) --- */
 
-// Equivalent using H5Pset_filter2:
-H5Pset_filter2(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, "level=6");
+/* Built-in deflate via key=value string */
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+                     &H5Z_PARAMS_STR("level=6"));
 
-// External plugin filter (H5Z_FILTER_ZFP defined in the plugin header):
-H5Pset_filter2(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
-               "mode=rate, rate=3.5");
+/* External plugin (ZFP) via key=value string */
+H5Pset_filter_params(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
+                     &H5Z_PARAMS_STR("mode=rate, rate=3.5"));
 
-// Building a pipeline with multiple calls:
-H5Pset_filter2(plist, H5Z_FILTER_SHUFFLE,    H5Z_FLAG_MANDATORY, NULL);
-H5Pset_filter2(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY, "level=9");
-H5Pset_filter2(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
+/* Parameterless filter */
+H5Pset_filter_params(plist, H5Z_FILTER_SHUFFLE, H5Z_FLAG_MANDATORY, NULL);
+
+/* --- Raw cd_values form (equivalent to H5Pset_filter) --- */
+
+unsigned level = 6;
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+                     &H5Z_PARAMS_RAW(1, &level));
+
+/* --- Building a mixed pipeline --- */
+H5Pset_filter_params(plist, H5Z_FILTER_SHUFFLE,    H5Z_FLAG_MANDATORY, NULL);
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY,
+                     &H5Z_PARAMS_STR("level=9"));
+H5Pset_filter_params(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
 \end{minted}
 
 
@@ -619,8 +682,8 @@ value contains colons, which is valid under the grammar.
 
 \verysubsection{Note on string reconstruction}
 The DCPL does not retain the original parameter string. After
-\texttt{H5Pset\_filter2} resolves the string into \texttt{cd\_values}, only the
-\texttt{cd\_values} are stored in the property list (identical to
+\texttt{H5Pset\_filter\_params} resolves the string into \texttt{cd\_values}, only
+the \texttt{cd\_values} are stored in the property list (identical to
 \texttt{H5Pset\_filter}). This function relies on the filter's \texttt{get\_config}
 callback to reconstruct a human-readable string from the stored \texttt{cd\_values}.
 
@@ -865,7 +928,7 @@ A convenience function that accepts a semicolon-delimited pipeline string
 (e.g., \texttt{"shuffle; deflate, level=9; fletcher32"}) is deferred to a
 future release.  The semicolon character is reserved in the parameter
 string grammar (\SectionRef{sec:param-rules}) for this purpose.
-\texttt{H5Pset\_filter2} (\SectionRef{sec:set-filter2}) is the primary API.
+\texttt{H5Pset\_filter\_params} (\SectionRef{sec:set-filter-params}) is the primary API.
 
 
 

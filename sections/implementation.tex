@@ -17,7 +17,7 @@ callback delegates to the existing internal validation code rather than
 reimplementing it independently. This prevents divergence between the two
 configuration paths and ensures that validation constraints are applied
 consistently regardless of whether the filter was configured via
-\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter2}.
+\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter\_params}.
 
 \verysubsection{Implementation note}
 Built-in filters are currently registered internally as \texttt{H5Z\_class2\_t}
@@ -65,7 +65,7 @@ No parameters. \texttt{params} should be \texttt{NULL}.
   \texttt{H5\_SZIP\_MSB\_OPTION\_MASK}; and forces \texttt{H5Z\_FLAG\_OPTIONAL} regardless
   of the caller's flag choice. The \texttt{set\_config} callback replicates all
   of this behavior. Consequently, the \texttt{flags} argument to
-  \texttt{H5Pset\_filter2} is overridden for SZIP---the filter is always
+  \texttt{H5Pset\_filter\_params} is overridden for SZIP---the filter is always
   optional. This is existing behavior of \texttt{H5Pset\_szip} and should be
   documented but is not changed by this feature. Callers that need to
   detect the flag override can compare the flags they passed with the
@@ -150,19 +150,19 @@ per-rank difference in the string-to-double conversion step propagates into
 with floating-point filter parameters should obtain a single parsed DCPL on
 one rank and broadcast it to all others (e.g., via serialisation through
 \texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
-independently invoke \texttt{H5Pset\_filter2}.
+independently invoke \texttt{H5Pset\_filter\_params}.
 
 \verysubsection{Failure mode and plugin loading order}
 
-\noindent\textbf{Decision:} \texttt{H5Pset\_filter2} loads the plugin
+\noindent\textbf{Decision:} \texttt{H5Pset\_filter\_params} loads the plugin
 eagerly at call time and invokes \texttt{set\_config} immediately.  Unlike
 \texttt{H5Pset\_filter}, which stores raw \texttt{cd\_values} and defers
-all plugin interaction, \texttt{H5Pset\_filter2} must run the filter's
+all plugin interaction, \texttt{H5Pset\_filter\_params} must run the filter's
 \texttt{set\_config} callback to translate the parameter string into
 \texttt{cd\_values}; this requires the plugin to be registered.  If the
-plugin is unavailable, \texttt{H5Pset\_filter2} returns \texttt{H5E\_NOFILTER}
+plugin is unavailable, \texttt{H5Pset\_filter\_params} returns \texttt{H5E\_NOFILTER}
 at the call site rather than deferring failure to \texttt{H5Dcreate} or
-I/O time.  For Parallel HDF5, all ranks call \texttt{H5Pset\_filter2}
+I/O time.  For Parallel HDF5, all ranks call \texttt{H5Pset\_filter\_params}
 with identical arguments; a failure on any rank is handled locally before
 any collective \texttt{H5Dcreate} is issued.  Applications that want to
 probe filter availability before committing to a DCPL configuration should
@@ -180,7 +180,7 @@ Therefore, no changes to the VOL connector interface are required. Third-party
 VOL connectors that intercept DCPLs will see standard filter configurations
 regardless of whether they were set via the string API or the traditional API.
 
-String-based filter configuration is resolved at \texttt{H5Pset\_filter2}
+String-based filter configuration is resolved at \texttt{H5Pset\_filter\_params}
 call time, before any dataset is opened or created. It therefore has no
 interaction with SWMR (which governs I/O access patterns on open datasets) or
 with asynchronous VOL event sets (which are populated after the DCPL is fully
@@ -211,8 +211,9 @@ The existing \texttt{UD=id,flags,...} syntax is extended to accept a parameter
 string in place of the raw \texttt{cd\_values} sequence when the filter is a v3
 plugin that implements \texttt{set\_config}. The \texttt{h5repack} parser detects
 whether the values following the flags field are a key=value string or a raw
-integer sequence and dispatches accordingly---calling \texttt{H5Pset\_filter2}
-for the string form and \texttt{H5Pset\_filter} for the raw integer form.
+integer sequence and dispatches accordingly---calling \texttt{H5Pset\_filter\_params}
+with \texttt{H5Z\_PARAMS\_STR} for the string form and \texttt{H5Z\_PARAMS\_RAW}
+for the raw integer form.
 The old built-in aliases (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{SOFF})
 continue to work unchanged.
 
