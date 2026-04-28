@@ -296,12 +296,37 @@ The format change is confined to the \texttt{FILTERS} block; all other
 \subsection{Fortran}
 \label{sec:fortran-bindings}
 
-Fortran does not support C unions, so \texttt{H5Z\_params\_t} cannot be
-expressed as a portable Fortran derived type.  Instead, the Fortran
-binding exposes a generic interface \texttt{h5pset\_filter\_params\_f} with
-two specific procedures, one for each parameter mode.  Fortran's
-\texttt{INTERFACE} block resolves the correct specific at the call site
-based on the type of the \texttt{params} argument.
+Fortran's ISO\_C\_BINDING interop cannot represent a C union, so
+\texttt{H5Z\_params\_t} cannot be expressed as a \texttt{BIND(C)} derived
+type.  Two thin C helper functions are therefore added to
+\texttt{H5Zf.c} --- one per calling mode --- each of which constructs the
+appropriate \texttt{H5Z\_params\_t} value and calls
+\texttt{H5Pset\_filter\_params}:
+
+\begin{minted}{c}
+/* In H5Zf.c -- C-side entry points for Fortran BIND(C) */
+
+herr_t H5Pset_filter_params_str_c(hid_t plist, H5Z_filter_t id,
+                                   unsigned flags, const char *params)
+{
+    H5Z_params_t p = H5Z_PARAMS_STR(params);
+    return H5Pset_filter_params(plist, id, flags, &p);
+}
+
+herr_t H5Pset_filter_params_raw_c(hid_t plist, H5Z_filter_t id,
+                                   unsigned flags, size_t cd_nelmts,
+                                   const unsigned *cd_values)
+{
+    H5Z_params_t p = H5Z_PARAMS_RAW(cd_nelmts, cd_values);
+    return H5Pset_filter_params(plist, id, flags, &p);
+}
+\end{minted}
+
+The Fortran binding then exposes a generic interface
+\texttt{h5pset\_filter\_params\_f} with two specific procedures that bind
+directly to these C entry points via \texttt{BIND(C)}.  Fortran's generic
+resolution selects the correct specific at the call site based on the type
+of the actual argument (\texttt{CHARACTER} vs.\ \texttt{INTEGER} array).
 
 \begin{minted}{fortran}
 ! In H5Pff.F90 -- generic interface
@@ -310,72 +335,93 @@ INTERFACE h5pset_filter_params_f
   MODULE PROCEDURE h5pset_filter_params_raw_f   ! cd_values form
 END INTERFACE
 
-! String form -- calls H5Pset_filter_params with H5Z_PARAMS_STRING
+! String form -- binds directly to H5Pset_filter_params_str_c
 SUBROUTINE h5pset_filter_params_str_f( &
-    prp_id, filter_id, flags, params, hdferr)
-  INTEGER(HID_T),   INTENT(IN)  :: prp_id
-  INTEGER,          INTENT(IN)  :: filter_id
-  INTEGER,          INTENT(IN)  :: flags
-  CHARACTER(LEN=*), INTENT(IN)  :: params
-  INTEGER,          INTENT(OUT) :: hdferr
+    prp_id, filter_id, flags, params, hdferr) &
+    BIND(C, NAME='H5Pset_filter_params_str_c')
+  USE ISO_C_BINDING
+  INTEGER(HID_T),        INTENT(IN)  :: prp_id
+  INTEGER,               INTENT(IN)  :: filter_id
+  INTEGER,               INTENT(IN)  :: flags
+  CHARACTER(KIND=C_CHAR),INTENT(IN)  :: params(*)
+  INTEGER,               INTENT(OUT) :: hdferr
 
-! Raw cd_values form -- calls H5Pset_filter_params with H5Z_PARAMS_CDVALUES
+! Raw cd_values form -- binds directly to H5Pset_filter_params_raw_c
 SUBROUTINE h5pset_filter_params_raw_f( &
-    prp_id, filter_id, flags, cd_nelmts, cd_values, hdferr)
-  INTEGER(HID_T),   INTENT(IN)  :: prp_id
-  INTEGER,          INTENT(IN)  :: filter_id
-  INTEGER,          INTENT(IN)  :: flags
-  INTEGER(SIZE_T),  INTENT(IN)  :: cd_nelmts
-  INTEGER,          DIMENSION(*), INTENT(IN) :: cd_values
-  INTEGER,          INTENT(OUT) :: hdferr
+    prp_id, filter_id, flags, cd_nelmts, cd_values, hdferr) &
+    BIND(C, NAME='H5Pset_filter_params_raw_c')
+  USE ISO_C_BINDING
+  INTEGER(HID_T),        INTENT(IN)  :: prp_id
+  INTEGER,               INTENT(IN)  :: filter_id
+  INTEGER,               INTENT(IN)  :: flags
+  INTEGER(SIZE_T),       INTENT(IN)  :: cd_nelmts
+  INTEGER,               DIMENSION(*), INTENT(IN) :: cd_values
+  INTEGER,               INTENT(OUT) :: hdferr
 \end{minted}
 
-The JNI-side shim for each specific constructs the appropriate
-\texttt{H5Z\_params\_t} value (using \texttt{H5Z\_PARAMS\_STR} or
-\texttt{H5Z\_PARAMS\_RAW}) and calls \texttt{H5Pset\_filter\_params}.
-No new C entry point is required.
-
-The following additional subroutines are added to the Fortran binding:
+\verysubsection{Fortran string passing convention}
+Fortran \texttt{CHARACTER(LEN=*)} strings are not NUL-terminated.  The
+C helper \texttt{H5Pset\_filter\_params\_str\_c} receives
+\texttt{CHARACTER(KIND=C\_CHAR)} and therefore expects a NUL-terminated
+string.  The caller is responsible for appending \texttt{C\_NULL\_CHAR}
+when constructing the actual argument, following the same convention used
+throughout the existing HDF5 Fortran binding:
 
 \begin{minted}{fortran}
-! Pipeline introspection -- wraps H5Pget_filter_params_by_idx
-SUBROUTINE h5pget_filter_params_by_idx_f( &
-    prp_id, filter_idx, params_buf, params_len, hdferr)
-  INTEGER(HID_T),   INTENT(IN)    :: prp_id
-  INTEGER,          INTENT(IN)    :: filter_idx
-  CHARACTER(LEN=*), INTENT(OUT)   :: params_buf
-  INTEGER(SIZE_T),  INTENT(OUT)   :: params_len
-  INTEGER,          INTENT(OUT)   :: hdferr
+CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+                             H5Z_FLAG_MANDATORY_F,        &
+                             "level=6"//C_NULL_CHAR, hdferr)
+\end{minted}
 
-! Parameter lookup helper -- wraps H5Zconfig_get_param
+The following additional subroutines are added to the Fortran binding.
+Each binds directly to a corresponding thin C helper in \texttt{H5Zf.c}
+that handles any \texttt{CHARACTER} $\leftrightarrow$ \texttt{char~*}
+translation, following the same pattern as above.
+
+\begin{minted}{fortran}
+! Pipeline introspection -- binds to H5Pget_filter_params_by_idx_c
+SUBROUTINE h5pget_filter_params_by_idx_f( &
+    prp_id, filter_idx, params_buf, params_len, hdferr) &
+    BIND(C, NAME='H5Pget_filter_params_by_idx_c')
+  USE ISO_C_BINDING
+  INTEGER(HID_T),        INTENT(IN)    :: prp_id
+  INTEGER,               INTENT(IN)    :: filter_idx
+  CHARACTER(KIND=C_CHAR),INTENT(OUT)   :: params_buf(*)
+  INTEGER(SIZE_T),       INTENT(INOUT) :: params_len
+  INTEGER,               INTENT(OUT)   :: hdferr
+
+! Parameter lookup helper -- binds to H5Zconfig_get_param_c
 FUNCTION h5zconfig_get_param_f( &
-    params, key, value_buf, buf_size) RESULT(found)
-  CHARACTER(LEN=*), INTENT(IN)    :: params
-  CHARACTER(LEN=*), INTENT(IN)    :: key
-  CHARACTER(LEN=*), INTENT(OUT)   :: value_buf
-  INTEGER(SIZE_T),  INTENT(INOUT) :: buf_size
-  INTEGER                         :: found   ! htri_t: >0 found, 0 absent, <0 error
+    params, key, value_buf, buf_size) RESULT(found) &
+    BIND(C, NAME='H5Zconfig_get_param_c')
+  USE ISO_C_BINDING
+  CHARACTER(KIND=C_CHAR),INTENT(IN)    :: params(*)
+  CHARACTER(KIND=C_CHAR),INTENT(IN)    :: key(*)
+  CHARACTER(KIND=C_CHAR),INTENT(OUT)   :: value_buf(*)
+  INTEGER(SIZE_T),       INTENT(INOUT) :: buf_size
+  INTEGER(C_INT)                       :: found   ! htri_t: >0 found, 0 absent, <0 error
 \end{minted}
 
 \verysubsection{Fortran usage example}
 
 \begin{minted}{fortran}
 USE HDF5
+USE ISO_C_BINDING
 IMPLICIT NONE
-INTEGER(HID_T) :: plist
-INTEGER        :: hdferr
+INTEGER(HID_T)        :: plist
+INTEGER               :: hdferr
+INTEGER, DIMENSION(1) :: cd_vals = [6]
 
 CALL h5pcreate_f(H5P_DATASET_CREATE_F, plist, hdferr)
 
 ! String form (generic resolves to h5pset_filter_params_str_f)
 CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
-                             H5Z_FLAG_MANDATORY_F,       &
-                             "level=6", hdferr)
+                             H5Z_FLAG_MANDATORY_F,        &
+                             "level=6"//C_NULL_CHAR, hdferr)
 
 ! Raw cd_values form (generic resolves to h5pset_filter_params_raw_f)
-INTEGER, DIMENSION(1) :: cd_vals = [6]
 CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
-                             H5Z_FLAG_MANDATORY_F,       &
+                             H5Z_FLAG_MANDATORY_F,        &
                              1_SIZE_T, cd_vals, hdferr)
 \end{minted}
 
@@ -405,8 +451,12 @@ public static native int H5Pset_filter_params(
 ) throws HDF5LibraryException;
 \end{minted}
 
-Each JNI implementation constructs the appropriate \texttt{H5Z\_params\_t}
-on the native side and calls \texttt{H5Pset\_filter\_params}.
+Each JNI implementation (in \texttt{H5P.c} on the native side) constructs
+the appropriate \texttt{H5Z\_params\_t} value using \texttt{H5Z\_PARAMS\_STR}
+or \texttt{H5Z\_PARAMS\_RAW} and calls \texttt{H5Pset\_filter\_params}.
+The \texttt{String} overload converts the Java string to a NUL-terminated
+\texttt{const char~*} via \texttt{GetStringUTFChars} before constructing
+the \texttt{H5Z\_params\_t}.
 
 The following additional method is added for pipeline introspection:
 
