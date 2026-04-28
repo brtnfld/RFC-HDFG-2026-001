@@ -1,0 +1,27 @@
+sections/architecture.tex
+  f5d1af5e78bbcf19 368-385,522-529,574-578,582-585,595-599,602,875-878,909,916-917
+sections/testing.tex
+  f5d1af5e78bbcf19 404-416
+sections/implementation.tex
+  f5d1af5e78bbcf19 215-227
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "23c4166e63c62a80403f3e15d47a4b2e6c6c159b",
+  "prompts": {
+    "f5d1af5e78bbcf19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c7736ed-120d-4964-9c6b-943081adcad3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld",
+      "messages": [],
+      "total_additions": 1267,
+      "total_deletions": 11,
+      "accepted_lines": 1898,
+      "overriden_lines": 0
+    }
+  }
+}
