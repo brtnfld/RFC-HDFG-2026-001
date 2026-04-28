@@ -264,12 +264,14 @@ filter \texttt{set\_config} callbacks follow this structure. See
 \SectionRef{sec:set-config-template}.
 
 \verysubsection{R31}
-\texttt{description} field in \texttt{H5Z\_class3\_t}. A new optional
-\texttt{description} field preserves the display role of the v2 \texttt{name}
-field. For v3 plugins, \texttt{H5Pget\_filter2} returns \texttt{description}
-when non-\texttt{NULL}, falling back to \texttt{name} otherwise. This mitigates
-the semantic change in the \texttt{name} field by allowing plugin authors to
-provide backward-compatible human-readable text. See
+\texttt{filter\_title} field in \texttt{H5Z\_class3\_t}. A new optional
+\texttt{filter\_title} field provides a short human-readable label for the
+filter. When non-\texttt{NULL}, the library packs it into \texttt{cd\_values}
+as a reserved key so it persists in the file. \texttt{H5Pget\_filter2} extracts
+\texttt{filter\_title} from \texttt{cd\_values} when present, falling back to
+\texttt{name} otherwise. This mitigates the semantic change in the \texttt{name}
+field and allows tools to display a human-readable label even when the plugin
+is not installed. See
 \SectionRef{sec:class3-struct} and \SectionRef{sec:name-semantic-change}.
 
 \verysubsection{R35}
@@ -288,10 +290,12 @@ See \SectionRef{sec:introspection}.
 
 \verysubsection{R36}
 \texttt{H5Pget\_filter2} semantics for v3 plugins.  For v3 plugins,
-\texttt{H5Pget\_filter2} returns \texttt{description} when non-\texttt{NULL},
-falling back to \texttt{name}.  This preserves backward-compatible
-human-readable output provided plugin authors populate \texttt{description}
-on migration.  \texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
+\texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from \texttt{cd\_values}
+when the key is present, falling back to \texttt{name}.  This preserves
+backward-compatible human-readable output provided plugin authors populate
+\texttt{filter\_title} on migration, and works even when the plugin is not
+loaded since the title is persisted in the file.
+\texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
 \texttt{get\_config}) is the new introspection function.
 See \SectionRef{sec:introspection}.
 

@@ -16,7 +16,10 @@ introduces \texttt{H5Pset\_filter2}, which accepts a filter ID and a
 human-readable key=value parameter string, resolving them into standard
 \texttt{cd\_values} at configuration time. Filters
 opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
-optional \texttt{set\_config}/\texttt{get\_config} callbacks.
+optional \texttt{set\_config}/\texttt{get\_config} callbacks and an optional
+\texttt{filter\_title} field that is packed into \texttt{cd\_values} at
+registration time, providing a persistent human-readable label for the filter
+that is available even when the plugin is not installed.
 All existing APIs, plugins, and files remain fully compatible.
 \end{abstract}
 

@@ -63,16 +63,10 @@ introduces no build or runtime dependency.
   equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
   value $\rightarrow$ apply quote processing to the value if it begins with a
   double quote.
-\end{itemize}
-
-\begin{itemize}
 \item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
   string, the parser rejects the string with \texttt{H5E\_BADVALUE}. The parser
   can detect duplicates cheaply during a single pass by checking each key
   against those already seen.
-\end{itemize}
-
-\begin{itemize}
 \item \textbf{Empty keys:} A token whose key is empty after whitespace stripping causes
   the parser to return \texttt{H5E\_BADVALUE}. This constraint is implicit in
   the grammar (\SectionRef{sec:param-grammar}), where \textit{key} requires
@@ -87,14 +81,16 @@ introduces no build or runtime dependency.
   \texttt{"key="} (equals sign present but no value after it) is rejected
   with \texttt{H5E\_BADVALUE}. Boolean flags use bare-key syntax
   (\texttt{"fast\_mode"}), not \texttt{"fast\_mode="}.
-\end{itemize}
-
-A quoted empty string (\texttt{key=""}) is also rejected with
-\texttt{H5E\_BADVALUE}.
-
-
-\begin{itemize}
-\item The semicolon restriction (outside of quoted values) is reserved for a
+  A quoted empty string (\texttt{key=""}) is likewise rejected with
+  \texttt{H5E\_BADVALUE}.
+\item \textbf{Reserved keys:} The key \texttt{filter\_title} is reserved by the
+  library and may not be used as a user-defined parameter key. It is injected
+  into \texttt{cd\_values} by the library when \texttt{H5Zregister()} processes a
+  v3 plugin with a non-\texttt{NULL} \texttt{filter\_title} field, and is never
+  passed to the filter's \texttt{set\_config} callback. A parameter string
+  containing \texttt{filter\_title} as a key is rejected with
+  \texttt{H5E\_BADVALUE} by the library before \texttt{set\_config} is invoked.
+\item The semicolon character (outside of quoted values) is reserved for a
   possible future pipeline-string API extension.
 \item A \texttt{NULL} or empty string means ``no parameters'' (valid for filters like
   shuffle and fletcher32).
@@ -126,6 +122,29 @@ A quoted empty string (\texttt{key=""}) is also rejected with
   Documentation notes that parameter strings always use the period as the
   decimal separator regardless of locale.
 \end{itemize}
+
+\subsection{Character Summary}
+\label{sec:param-char-summary}
+
+The table below summarises which characters are permitted in each position of
+a parameter string.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{>{\ttfamily}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\toprule
+\textbf{Character} & \textbf{In key} & \textbf{In unquoted value} & \textbf{In quoted value} \\
+\midrule
+Printable ASCII (not special) & allowed & allowed & allowed \\
+Space (U+0020) & stripped (leading/trailing only) & stripped (leading/trailing only) & preserved as-is \\
+Comma \texttt{,} & forbidden & forbidden (param delimiter) & allowed \\
+Equals \texttt{=} & forbidden & forbidden (key/value delimiter) & allowed \\
+Semicolon \texttt{;} & forbidden & forbidden (reserved) & allowed \\
+Double quote \texttt{"} & forbidden & forbidden (starts quoted value) & use \texttt{""} to embed \\
+Non-ASCII / multi-byte & forbidden & forbidden & accepted verbatim (caller's risk) \\
+\bottomrule
+\end{tabularx}
+\end{center}
 
 \subsection{Examples}
 
@@ -312,7 +331,7 @@ typedef struct H5Z_class3_t {
     unsigned                   encoder_present;
     unsigned                   decoder_present;
     const char                *name;
-    const char                *description;
+    const char                *filter_title;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
     H5Z_func_t                filter;
@@ -329,22 +348,24 @@ typedef struct H5Z_class3_t {
   the naming rules in \SectionRef{sec:param-rules}: printable ASCII, no
   commas, semicolons, or equals signs, and ideally short and lowercase
   (e.g., \texttt{"zfp"}, \texttt{"blosc2"}, \texttt{"bitshuffle"}).
-\item \texttt{description}---An optional human-readable string describing the
-  filter (e.g., \texttt{"HDF5 ZFP filter, version 1.0.0 (rate, precision, and
-  accuracy modes)"}). This field preserves the role that the \texttt{name} field
-  served in \texttt{H5Z\_class2\_t}, where it was documented as a ``Comment for
-  debugging'' and was returned by \texttt{H5Pget\_filter2}. For v3 plugins,
-  \texttt{H5Pget\_filter2} returns the \texttt{description} field if it is
-  non-\texttt{NULL}, and falls back to the \texttt{name} field otherwise. This
-  ensures that applications which display the \texttt{H5Pget\_filter2} output
-  continue to receive informative text after a plugin upgrades from v2 to v3.
-  The \texttt{description} field may be \texttt{NULL}; no validation rules apply
-  beyond requiring printable text. It is not used for registry lookup or
-  any programmatic dispatch---it is purely informational.
+\item \texttt{filter\_title}---An optional short human-readable label for the
+  filter (e.g., \texttt{"ZFP Compression"}, \texttt{"Blosc2"}). Unlike
+  \texttt{name}, this field is not used for registry lookup or any programmatic
+  dispatch---it is purely informational. When non-\texttt{NULL},
+  \texttt{H5Zregister()} packs the value directly into \texttt{cd\_values} as the
+  reserved key \texttt{filter\_title} after \texttt{set\_config} has populated the
+  filter's own \texttt{cd\_values}. The key is never passed to \texttt{set\_config}
+  or \texttt{get\_config}. Because it is packed into \texttt{cd\_values} alongside
+  the filter's own configuration, it persists in the file and is available to
+  tools such as \texttt{h5dump} even when the plugin is not installed. The value
+  must be printable ASCII with no leading or trailing whitespace and no equals
+  signs. It may be \texttt{NULL}. \texttt{H5Pget\_filter2} returns
+  \texttt{filter\_title} (extracted from \texttt{cd\_values}) when present, and
+  falls back to \texttt{name} otherwise.
 
   A migration guide for plugin authors upgrading from v2 to v3 is produced
   alongside this RFC, covering at minimum: the new
-  \texttt{name}/\texttt{description} field semantics, the version constant
+  \texttt{name}/\texttt{filter\_title} field semantics, the version constant
   change, and the locations in the library where v2/v3 branching is required.
 \end{itemize}
 
@@ -471,19 +492,21 @@ round-trip correctness. Document this requirement in
 \texttt{H5Zregister()} inspects the \texttt{version} field to determine whether the
 structure is \texttt{H5Z\_class1\_t} (legacy), \texttt{H5Z\_class2\_t}, or
 \texttt{H5Z\_class3\_t}. Existing v1 and v2 plugins continue to function without
-modification. The new callbacks and the \texttt{description} field are never
+modification. The new callbacks and the \texttt{filter\_title} field are never
 accessed for v1/v2 registrations.
 \texttt{H5Z\_class3\_t} is a new type, not a modification of \texttt{H5Z\_class2\_t}.
 
 A v3 plugin remains fully usable through the traditional \texttt{H5Pset\_filter} API.
 Upgrading to v3 is optional and additive.
 
-For v3 plugins, the library internally stores both the \texttt{name} and
-\texttt{description} fields. When \texttt{H5Pget\_filter2} is called, it returns
-the \texttt{description} field in its \texttt{name[]} output parameter if
-\texttt{description} is non-\texttt{NULL}, and falls back to the \texttt{name} field
-otherwise. This preserves backward compatibility for applications that display
-the \texttt{H5Pget\_filter2} output (\SectionRef{sec:name-semantic-change}).
+For v3 plugins, if \texttt{filter\_title} is non-\texttt{NULL}, after
+\texttt{set\_config} has populated the filter's \texttt{cd\_values}, the library
+appends a \texttt{filter\_title=\textit{value}} slot directly into \texttt{cd\_values}.
+This key is never seen by \texttt{set\_config} or \texttt{get\_config}. When
+\texttt{H5Pget\_filter2} is called, it extracts \texttt{filter\_title} from
+\texttt{cd\_values} if present, and falls back to the \texttt{name} field otherwise.
+This preserves backward compatibility for applications that display the
+\texttt{H5Pget\_filter2} output (\SectionRef{sec:name-semantic-change}).
 
 If a v3 plugin's \texttt{name} field violates the naming rules of
 \SectionRef{sec:param-rules}, \texttt{H5Zregister} returns
@@ -625,11 +648,12 @@ only.
 \verysubsection{Note on \texttt{H5Pget\_filter2}}
 The existing \texttt{H5Pget\_filter2} function returns a filter name from the class
 struct's \texttt{name} field (the ``debug comment'' in v2 plugins). For v3 plugins,
-\texttt{H5Pget\_filter2} returns the \texttt{description} field if it is non-\texttt{NULL},
-and falls back to the \texttt{name} field otherwise. This preserves the existing
-behavior of returning human-readable descriptive text.
+\texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from \texttt{cd\_values} if
+the key is present, and falls back to the \texttt{name} field otherwise. Because
+\texttt{filter\_title} is packed into \texttt{cd\_values} at registration time, this
+human-readable label is available even when the plugin is not loaded.
 \texttt{H5Pget\_filter\_params\_by\_idx} complements \texttt{H5Pget\_filter2} by returning
-the parameter string rather than the filter description.
+the parameter string rather than the filter title.
 
 \verysubsection{Parameters}
 
@@ -730,7 +754,7 @@ will record on disk.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{llll}
+\begin{tabularx}{\textwidth}{llXl}
 \toprule
 \textbf{C type} & \textbf{Slots} & \textbf{Encoding} & \textbf{Future tag} \\
 \midrule
@@ -739,8 +763,7 @@ will record on disk.
 \texttt{float}        & 1 & IEEE\,754 \texttt{memcpy} into one slot & \texttt{H5Z\_SLOT\_FLOAT} \\
 \texttt{double}       & 2 & IEEE\,754 \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits & \texttt{H5Z\_SLOT\_DBL\_LO/HI} \\
 \texttt{char[]}       & $1{+}\lceil\text{len}/4\rceil$ &
-                          slot[0]\,=\,byte length; remaining slots hold 4-byte
-                          null-padded chunks & \texttt{H5Z\_SLOT\_STR\_LEN/DATA} \\
+                          slot[0]\,=\,byte length; remaining slots hold 4-byte null-padded chunks & \texttt{H5Z\_SLOT\_STR\_LEN/DATA} \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -937,7 +960,7 @@ internally copied name strings (via \texttt{H5MM\_xfree} or equivalent) to preve
 memory leaks in long-running processes or test suites that repeatedly register
 and unregister filters.
 
-\verysubsection{Note on the \texttt{name} and \texttt{description} fields}
+\verysubsection{Note on the \texttt{name} and \texttt{filter\_title} fields}
 In \texttt{H5Z\_class2\_t}, the \texttt{name} field is
 documented as ``Comment for debugging'' but is also user-visible---it is the
 string returned by \texttt{H5Pget\_filter2} in its \texttt{name[]} output parameter.
@@ -949,13 +972,14 @@ signs). Plugin authors upgrading from v2 to v3 choose a suitable
 canonical name. This semantic shift is prominently documented in the
 migration guide.
 
-The new \texttt{description} field in \texttt{H5Z\_class3\_t} preserves the display
+The new \texttt{filter\_title} field in \texttt{H5Z\_class3\_t} preserves the display
 role that the \texttt{name} field served in v2. Plugin authors upgrading from v2
-to v3 should move their existing freeform \texttt{name} text (e.g.,
-\texttt{"HDF5 ZFP filter, version 1.0.0 (rate mode)"}) into the
-\texttt{description} field, and assign a short canonical identifier to
-\texttt{name} (e.g., \texttt{"zfp"}). This ensures continuity for applications
-that display the output of \texttt{H5Pget\_filter2}
+to v3 should provide a short human-readable label in \texttt{filter\_title} (e.g.,
+\texttt{"ZFP Compression"}), and assign a short canonical identifier to
+\texttt{name} (e.g., \texttt{"zfp"}). Unlike \texttt{name}, \texttt{filter\_title}
+is packed into \texttt{cd\_values} and therefore persists in the file, making it
+available to tools even when the plugin is not installed. This ensures continuity
+for applications that display the output of \texttt{H5Pget\_filter2}
 (\SectionRef{sec:name-semantic-change}).
 
 
@@ -1067,7 +1091,7 @@ version~2.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabular}{lll}
+\begin{tabularx}{\textwidth}{llX}
 \toprule
 \textbf{Field} & \textbf{Size (bytes)} & \textbf{Description} \\
 \midrule
@@ -1075,7 +1099,7 @@ version~2.
 \texttt{slot\_types[cd\_nelmts]} & \texttt{cd\_nelmts} $\times 1$ &
   One \texttt{uint8\_t} \texttt{H5Z\_slot\_type\_t} per slot \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{center}
 
 If \texttt{cd\_nelmts} is zero the type-tag block is absent (zero bytes).
@@ -1217,7 +1241,7 @@ typedef struct H5Z_class4_t {
     unsigned                  encoder_present;
     unsigned                  decoder_present;
     const char               *name;
-    const char               *description;
+    const char               *filter_title;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
     H5Z_func_t                filter;

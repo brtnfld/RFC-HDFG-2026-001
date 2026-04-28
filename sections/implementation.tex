@@ -100,8 +100,8 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 
 The canonical name registry is a global mutable data structure. In
 thread-safe builds of HDF5 (configured with \texttt{--enable-threadsafe}), all
-access to the registry---including lookups during \texttt{H5Pget\_filter\_name\_by\_idx}
-and mutations during plugin auto-registration---are serialized.
+access to the registry---including lookups by \texttt{h5repack} and
+mutations during plugin auto-registration---are serialized.
 
 The existing HDF5 global API lock serializes all public API entry points.
 This is sufficient to prevent concurrent mutation of the registry from
@@ -110,9 +110,10 @@ occurs within the same API call scope and is therefore covered by the same
 lock. No new locking mechanisms are introduced.
 
 \verysubsection{Future-proofing note}
-Name registry lookups (used internally by \texttt{h5repack} for
-name-to-ID resolution and by \texttt{h5dump} for filter display) are pure
-read operations with no I/O side effects. If the
+Name registry lookups (used internally by \texttt{h5repack} to resolve a
+canonical name to a filter ID before calling \texttt{H5Pset\_filter2}, and by
+\texttt{h5dump} for filter display) are pure read operations with no I/O side
+effects. If the
 library moves toward finer-grained concurrency
 (as discussed in the context of VOLs and asynchronous I/O), the name registry
 should be protected by a dedicated readers-writer (RW) lock rather than the

@@ -13,11 +13,13 @@
 
 Upgrading a plugin from \texttt{H5Z\_class2\_t} to \texttt{H5Z\_class3\_t}
 changes the role of the \texttt{name} field from a freeform debug comment
-to a canonical identifier.  The new \texttt{description} field preserves
-the display role: \texttt{H5Pget\_filter2} returns \texttt{description}
-for v3 plugins when it is non-\texttt{NULL}, ensuring backward-compatible
-output for applications that read the \texttt{name[]} output parameter.
-Plugin authors should populate \texttt{description} when upgrading to
+to a canonical identifier.  The new \texttt{filter\_title} field provides
+a short human-readable label that is packed into \texttt{cd\_values} and
+persists in the file: \texttt{H5Pget\_filter2} extracts \texttt{filter\_title}
+from \texttt{cd\_values} when present, ensuring backward-compatible
+output for applications that read the \texttt{name[]} output parameter
+even when the plugin is not installed.
+Plugin authors should populate \texttt{filter\_title} when upgrading to
 maintain continuity for downstream consumers (see R31).
 
 \medskip
@@ -40,31 +42,31 @@ debugging'' and is also user-visible through the \texttt{name[]} output paramete
 human-readable prose such as \texttt{"HDF5 ZFP filter, version 1.0.0 (rate,
 precision, and accuracy modes)"} or \texttt{"My Compression Library v2.3"}.
 
-\verysubsection{After (v3): canonical identifier + description}
+\verysubsection{After (v3): canonical identifier + filter title}
 In \texttt{H5Z\_class3\_t}, the \texttt{name} field serves as the canonical identifier
 used for registry lookup. It conforms to the naming rules in
 \SectionRef{sec:param-rules}: printable ASCII, no commas, semicolons, or equals
 signs, and ideally short and lowercase (e.g., \texttt{"zfp"}, \texttt{"blosc2"},
 \texttt{"bitshuffle"}). Descriptive prose is not appropriate and is not used.
 
-The new \texttt{description} field in \texttt{H5Z\_class3\_t} preserves the display role
-that the \texttt{name} field served in v2. It is an optional, human-readable string
-(e.g., \texttt{"HDF5 ZFP filter, version 1.0.0 (rate, precision, and accuracy
-modes)"}). No naming rules apply beyond requiring printable text. It is not
-used for registry lookup or any programmatic dispatch.
+The new \texttt{filter\_title} field in \texttt{H5Z\_class3\_t} provides a short
+human-readable label (e.g., \texttt{"ZFP Compression"}). It must be printable
+ASCII with no leading or trailing whitespace and no equals signs. It is not used
+for registry lookup or any programmatic dispatch. When non-\texttt{NULL}, it is
+packed into \texttt{cd\_values} as a reserved key and therefore persists in the
+file, making it available to tools even when the plugin is not installed.
 
 \verysubsection{Impact on \texttt{H5Pget\_filter2}}
-For v3 plugins, \texttt{H5Pget\_filter2} returns the \texttt{description} field in
-its \texttt{name[]} output parameter when \texttt{description} is non-\texttt{NULL}.
-If \texttt{description} is \texttt{NULL}, it falls back to the \texttt{name} field (the
+For v3 plugins, \texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from
+\texttt{cd\_values} in its \texttt{name[]} output parameter when the key is present.
+If \texttt{filter\_title} is absent, it falls back to the \texttt{name} field (the
 canonical identifier). This means that plugin authors who populate
-\texttt{description} during the v2-to-v3 upgrade preserve full backward
-compatibility for applications that display the \texttt{H5Pget\_filter2} output.
-Plugins that leave \texttt{description} as \texttt{NULL} will cause a
+\texttt{filter\_title} during the v2-to-v3 upgrade preserve full backward
+compatibility for applications that display the \texttt{H5Pget\_filter2} output,
+and the label remains visible even without the plugin loaded.
+Plugins that leave \texttt{filter\_title} as \texttt{NULL} will cause a
 user-visible change in the \texttt{H5Pget\_filter2} output (the shorter canonical
-name appearing where a longer description was previously shown). Depending on
-what callers expect from \texttt{H5Pget\_filter2}, this may constitute an API
-behavioral change even if the function signature is unchanged. Applications
+name appearing where a longer label was previously shown). Applications
 that compare or display the \texttt{H5Pget\_filter2} string should be audited as
 part of any v2-to-v3 plugin migration.
 
@@ -74,23 +76,19 @@ part of any v2-to-v3 plugin migration.
 \item \textbf{Registry lookup:} Use \texttt{H5Z\_class3\_t.name} as the canonical
   identifier for filter registration. The canonical name is stable and is used
   by \texttt{h5repack} for name-to-ID resolution.
-\item \textbf{Human-readable display:} Move the existing freeform v2
-  \texttt{name} text into the \texttt{description} field when upgrading to v3.
+\item \textbf{Human-readable display:} Provide a short label in
+  \texttt{filter\_title} when upgrading to v3.
   For example, a v2 plugin with
   \texttt{name = "HDF5 ZFP filter, version 1.0.0 (rate mode)"} should become
   a v3 plugin with \texttt{name = "zfp"} and
-  \texttt{description = "HDF5 ZFP filter, version 1.0.0 (rate mode)"}.
-  This ensures that \texttt{H5Pget\_filter2} continues to return the descriptive
-  text. Filters that need to expose additional metadata (e.g., version strings)
-  can also include those details as keys in the output of
+  \texttt{filter\_title = "ZFP Compression"}.
+  This ensures that \texttt{H5Pget\_filter2} continues to return a human-readable
+  label. Filters that need to expose additional metadata (e.g., version strings)
+  can include those details as keys in the output of
   \texttt{H5Z\_get\_config\_func\_t}.
 \item \textbf{No action required for consumers of \texttt{H5Pget\_filter2} that
   display the string verbatim:} These applications continue to function
-  correctly, provided the plugin author populates the \texttt{description} field.
-  Only applications that parse the freeform string to extract version metadata
-  or descriptive information may need to adjust their display logic if the
-  plugin author's choice of \texttt{description} text differs from the original
-  v2 \texttt{name} text.
+  correctly, provided the plugin author populates the \texttt{filter\_title} field.
 \end{itemize}
 
 \subsection{On-Disk Format}
@@ -298,7 +296,7 @@ resulting \texttt{cd\_values} must be identical.
 \begin{center}
 \small
 \renewcommand{\arraystretch}{1.25}
-\begin{tabular}{lll}
+\begin{tabularx}{\textwidth}{llX}
 \toprule
 \textbf{Test ID} & \textbf{Filter} & \textbf{Representative parameter string} \\
 \midrule
@@ -314,7 +312,7 @@ resulting \texttt{cd\_values} must be identical.
 \texttt{rt-10} & fletcher32 & \texttt{NULL} (parameterless) \\
 \texttt{rt-11} & nbit       & \texttt{NULL} (parameterless) \\
 \bottomrule
-\end{tabular}
+\end{tabularx}
 \end{center}
 
 \noindent Additional round-trip tests verify that:
@@ -349,12 +347,12 @@ These tests confirm that no existing behavior is broken.
   not the canonical registry name.  Verify that a v2 plugin with a verbose
   name field (e.g., \texttt{"HDF5 deflate filter v1.0"}) returns that string,
   not \texttt{"deflate"}.
-\item \texttt{reg-04b}: For a v3 plugin with a non-\texttt{NULL} \texttt{description}
-  field, \texttt{H5Pget\_filter2} returns the \texttt{description} text, not the
-  canonical \texttt{name}. For example, a plugin with \texttt{name = "zfp"} and
-  \texttt{description = "HDF5 ZFP filter v1.0"} returns
-  \texttt{"HDF5 ZFP filter v1.0"}.
-\item \texttt{reg-04c}: For a v3 plugin with \texttt{description = NULL},
+\item \texttt{reg-04b}: For a v3 plugin with a non-\texttt{NULL} \texttt{filter\_title}
+  field, \texttt{H5Pget\_filter2} returns the \texttt{filter\_title} text extracted
+  from \texttt{cd\_values}, not the canonical \texttt{name}. For example, a plugin
+  with \texttt{name = "zfp"} and \texttt{filter\_title = "ZFP Compression"} returns
+  \texttt{"ZFP Compression"}, even when the plugin is not loaded.
+\item \texttt{reg-04c}: For a v3 plugin with \texttt{filter\_title = NULL},
   \texttt{H5Pget\_filter2} falls back to returning the canonical \texttt{name}
   field (e.g., \texttt{"zfp"}).
 \item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
