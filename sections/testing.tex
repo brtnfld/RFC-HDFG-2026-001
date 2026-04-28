@@ -401,6 +401,19 @@ verify \texttt{cd\_values} equality rather than string equality.  The
 API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
 this caveat so that callers are not surprised.
 
+\verysubsection{Legacy plugin \texttt{cd\_nelmts} validation hazard}
+When a file written with a v3-registered filter (which appends a
+\texttt{filter\_title} key to \texttt{cd\_values}) is opened by an older
+HDF5 library through a v2 plugin, the plugin's execution callback receives
+a \texttt{cd\_nelmts} larger than it was written to expect.  Plugins that
+assert exact \texttt{cd\_nelmts} equality will fail the read.  Mitigation
+is documented in the field description (\SectionRef{sec:class3-struct}) and
+in the plugin migration guide: plugins must check that \texttt{cd\_nelmts}
+is \emph{at least} the expected count, not exactly equal.  The test suite
+must include a cross-version read test: write a dataset with a v3 plugin,
+then read it using a build of the library that presents only a v2 version
+of the same plugin.
+
 \verysubsection{Grammar maintenance}
 The key=value format with quoted-value support constitutes a specification
 the library must support indefinitely. Future grammar extensions are backward-compatible: any

@@ -212,6 +212,19 @@ their own API can call \texttt{H5Pget\_filter\_params\_by\_idx} (which invokes
 \texttt{get\_config}) to reconstruct a best-effort string from the stored
 \texttt{cd\_values} before forwarding the request.
 
+\textbf{Known limitation for thin-client architectures:}
+The reconstruction path above requires the filter plugin to be installed on the
+\emph{client} machine so that \texttt{get\_config} can be invoked.  For true
+thin-client REST deployments where the client has no local copy of the plugin,
+neither the original string nor a reconstructed equivalent is available after
+\texttt{H5Pset\_filter\_params} returns.  This is a direct consequence of the
+eager-parsing design and is the primary trade-off of resolving strings at
+property-list configuration time rather than at dataset creation time on the
+server.  Applications targeting thin-client REST VOLs that need to forward
+filter parameters as strings should use \texttt{H5Pset\_filter} directly with
+raw \texttt{cd\_values} constructed offline, or negotiate a separate
+out-of-band configuration channel with the server.
+
 
 %% ======================================================================
 %%  Section 9 – CLI Tool Integration

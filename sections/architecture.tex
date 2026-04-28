@@ -365,6 +365,24 @@ typedef struct H5Z_class3_t {
   $\lceil 255/4 \rceil + 1 = 65$ \texttt{cd\_values} slots, leaving the
   remaining capacity exclusively for the filter's own parameters.
 
+  \textbf{Legacy plugin hazard:} Because \texttt{filter\_title} is appended
+  to \texttt{cd\_values}, a file written by a v3-aware library and then
+  opened by an older library (e.g., HDF5~1.14.x) with a v2 plugin will
+  present the older plugin's execution callback with a \texttt{cd\_nelmts}
+  value larger than the plugin expects.  Plugins that strictly validate
+  \texttt{cd\_nelmts} will return an error, breaking read-compatibility for
+  those datasets.
+
+  \textbf{Mitigation:} Plugin authors are strongly encouraged \emph{not} to
+  validate \texttt{cd\_nelmts} as an exact equality check; the HDF5
+  developer documentation already advises treating unknown trailing
+  \texttt{cd\_values} slots as reserved.  New built-in filter callbacks
+  upgraded to v3 explicitly tolerate extra trailing slots.  Plugin authors
+  who need strict validation should check only that \texttt{cd\_nelmts}
+  is \emph{at least} the expected count.  This guidance is documented in
+  \texttt{H5Zdevelop.h} and in the plugin migration guide produced
+  alongside this RFC.
+
   A migration guide for plugin authors upgrading from v2 to v3 is produced
   alongside this RFC, covering at minimum: the new \texttt{filter\_title} field
   semantics, the version constant change, and the locations in the library where
@@ -501,6 +519,14 @@ accessed for v1/v2 registrations.
 A v3 plugin remains fully usable through the traditional \texttt{H5Pset\_filter} API.
 Upgrading to v3 is optional and additive.
 
+Files written with a \texttt{filter\_title} key in \texttt{cd\_values} are
+readable by older HDF5 libraries through \emph{existing} v2 plugins, provided
+those plugins tolerate a \texttt{cd\_nelmts} value larger than their baseline
+expectation (see the legacy plugin hazard note in \SectionRef{sec:class3-struct}).
+Plugin authors who perform exact \texttt{cd\_nelmts} validation must update their
+callbacks to accept trailing slots before their plugin is used with a v3-aware
+library.
+
 For v3 plugins, if \texttt{filter\_title} is non-\texttt{NULL}, after
 \texttt{set\_config} has populated the filter's \texttt{cd\_values}, the library
 appends a \texttt{filter\_title=\textit{value}} slot directly into \texttt{cd\_values}.
@@ -545,14 +571,18 @@ conditional compilation to provide equivalent C++-compatible initialisers:
 
 \begin{minted}{c}
 #ifdef __cplusplus
-/* C++: brace-init is valid for aggregates */
+/* C++ does not support C99 compound literals.
+   H5Z_PARAMS_RAW can be expressed as a brace-initialised aggregate.
+   H5Z_PARAMS_STR cannot: a C++ aggregate initialiser cannot carry a
+   runtime pointer argument without risking silent argument loss.
+   C++ callers MUST use the named-variable form instead (see below). */
 #define H5Z_PARAMS_RAW(n, vals) \
     (H5Z_params_t{ H5Z_PARAMS_CDVALUES, { { (n), (vals) } } })
 #define H5Z_PARAMS_STR(s) \
-    (H5Z_params_t{ H5Z_PARAMS_STRING,   { { 0,   nullptr } } })
-/* NOTE: H5Z_PARAMS_STR cannot use a C++ compound literal to carry 's'
-   portably across all C++ versions; C++ callers should use the named-
-   variable form shown in the lifetime note below. */
+    static_assert(false, \
+        "H5Z_PARAMS_STR is not available in C++. " \
+        "Use the named-variable form: " \
+        "H5Z_params_t p; p.type = H5Z_PARAMS_STRING; p.u.str = (s);")
 #else
 /* C99: compound literals with designated initialisers */
 #define H5Z_PARAMS_RAW(n, vals) \
@@ -562,12 +592,14 @@ conditional compilation to provide equivalent C++-compatible initialisers:
 #endif
 \end{minted}
 
-\noindent C++ callers should prefer the named-variable form for
-\texttt{H5Z\_PARAMS\_STRING} to avoid the C++ restriction on compound
-literals carrying a pointer to a runtime expression:
+\noindent In C++, \texttt{H5Z\_PARAMS\_STR} is intentionally disabled via
+\texttt{static\_assert} to prevent silent argument loss (a macro that
+accepts an argument but cannot embed a runtime pointer in a brace-init
+would compile successfully while ignoring its payload).  C++ callers use
+the named-variable form:
 
 \begin{minted}{cpp}
-// Recommended C++ usage
+// Required C++ usage for string parameters
 H5Z_params_t p;
 p.type  = H5Z_PARAMS_STRING;
 p.u.str = "level=6";
@@ -840,6 +872,10 @@ herr_t H5Z_cd_pack_float   (float val,
                             unsigned *slots, size_t cap, size_t *n_used);
 herr_t H5Z_cd_unpack_float (const unsigned *slots, size_t n_slots, float *val);
 
+herr_t H5Z_cd_pack_int64   (int64_t val,
+                            unsigned *slots, size_t cap, size_t *n_used);
+herr_t H5Z_cd_unpack_int64 (const unsigned *slots, size_t n_slots, int64_t *val);
+
 herr_t H5Z_cd_pack_string  (const char *str,
                             unsigned *slots, size_t cap, size_t *n_used);
 herr_t H5Z_cd_unpack_string(const unsigned *slots, size_t n_slots,
@@ -870,14 +906,15 @@ The following encoding is normative.
 \texttt{int32\_t}     & 1 & two's-complement bitcast to \texttt{uint32} \\
 \texttt{float}        & 1 & IEEE\,754 \texttt{memcpy} into one slot \\
 \texttt{double}       & 2 & IEEE\,754 \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits \\
+\texttt{int64\_t}     & 2 & two's-complement \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits \\
 \texttt{char[]}       & $1{+}\lceil\text{len}/4\rceil$ &
                           slot[0]\,=\,byte length; remaining slots hold 4-byte null-padded chunks \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-For \texttt{double} (and \texttt{int64\_t}) packing the two-slot layout is
-always little-endian regardless of the host platform.  The pack/unpack helpers
+For \texttt{double} and \texttt{int64\_t} the two-slot layout is always
+little-endian regardless of the host platform.  The pack/unpack helpers
 perform the necessary byte swap on big-endian hosts, matching the existing
 HDF5 convention that all \texttt{cd\_values} are stored in little-endian order.
 
