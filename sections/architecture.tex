@@ -241,12 +241,12 @@ No assumption is made about what that value will be.
 The dispatch logic is extended to also recognise \texttt{H5Z\_CLASS3\_T\_VERS} within the
 \texttt{version != H5Z\_CLASS\_T\_VERS} branch, before falling back to the legacy path:
 
-\begin{verbatim}
+\begin{minted}{c}
     if (version != H5Z_CLASS_T_VERS) {
-        if (version == H5Z_CLASS3_T_VERS) -> H5Z_class3_t
-        else                              -> legacy H5Z_class1_t
-    } else -> H5Z_class2_t
-\end{verbatim}
+        if (version == H5Z_CLASS3_T_VERS) /* -> H5Z_class3_t       */
+        else                              /* -> legacy H5Z_class1_t */
+    } else                                /* -> H5Z_class2_t        */
+\end{minted}
 
 Note: When \texttt{H5\_NO\_DEPRECATED\_SYMBOLS} is defined, the legacy
 \texttt{H5Z\_class1\_t} path is compiled out entirely and any
