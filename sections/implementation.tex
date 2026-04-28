@@ -200,7 +200,7 @@ for C++, since C99 compound literals are not available in Cython):
 cdef H5Z_params_t p
 p.type  = H5Z_PARAMS_STRING
 p.u.str = b"level=6"
-H5Pset_filter_params(plist_id, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p)
+H5Pappend_filter(plist_id, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p)
 \end{minted}
 
 \verysubsection{\texttt{filter\_title} round-trip hazard for h5py}
@@ -360,19 +360,19 @@ appropriate \texttt{H5Z\_params\_t} value and calls
 \begin{minted}{c}
 /* In H5Zf.c -- C-side entry points for Fortran BIND(C) */
 
-herr_t H5Pset_filter_params_str_c(hid_t plist, H5Z_filter_t id,
+herr_t H5Pappend_filter_str_c(hid_t plist, H5Z_filter_t id,
                                    unsigned flags, const char *params)
 {
     H5Z_params_t p = H5Z_PARAMS_STR(params);
-    return H5Pset_filter_params(plist, id, flags, &p);
+    return H5Pappend_filter(plist, id, flags, &p);
 }
 
-herr_t H5Pset_filter_params_raw_c(hid_t plist, H5Z_filter_t id,
+herr_t H5Pappend_filter_raw_c(hid_t plist, H5Z_filter_t id,
                                    unsigned flags, size_t cd_nelmts,
                                    const unsigned *cd_values)
 {
     H5Z_params_t p = H5Z_PARAMS_RAW(cd_nelmts, cd_values);
-    return H5Pset_filter_params(plist, id, flags, &p);
+    return H5Pappend_filter(plist, id, flags, &p);
 }
 \end{minted}
 
@@ -384,15 +384,15 @@ of the actual argument (\texttt{CHARACTER} vs.\ \texttt{INTEGER} array).
 
 \begin{minted}{fortran}
 ! In H5Pff.F90 -- generic interface
-INTERFACE h5pset_filter_params_f
-  MODULE PROCEDURE h5pset_filter_params_str_f   ! string form
-  MODULE PROCEDURE h5pset_filter_params_raw_f   ! cd_values form
+INTERFACE h5pappend_filter_f
+  MODULE PROCEDURE h5pappend_filter_str_f   ! string form
+  MODULE PROCEDURE h5pappend_filter_raw_f   ! cd_values form
 END INTERFACE
 
-! String form -- binds directly to H5Pset_filter_params_str_c
-SUBROUTINE h5pset_filter_params_str_f( &
+! String form -- binds directly to H5Pappend_filter_str_c
+SUBROUTINE h5pappend_filter_str_f( &
     prp_id, filter_id, flags, params, hdferr) &
-    BIND(C, NAME='H5Pset_filter_params_str_c')
+    BIND(C, NAME='H5Pappend_filter_str_c')
   USE ISO_C_BINDING
   INTEGER(HID_T),        INTENT(IN)  :: prp_id
   INTEGER,               INTENT(IN)  :: filter_id
@@ -400,10 +400,10 @@ SUBROUTINE h5pset_filter_params_str_f( &
   CHARACTER(KIND=C_CHAR),INTENT(IN)  :: params(*)
   INTEGER,               INTENT(OUT) :: hdferr
 
-! Raw cd_values form -- binds directly to H5Pset_filter_params_raw_c
-SUBROUTINE h5pset_filter_params_raw_f( &
+! Raw cd_values form -- binds directly to H5Pappend_filter_raw_c
+SUBROUTINE h5pappend_filter_raw_f( &
     prp_id, filter_id, flags, cd_nelmts, cd_values, hdferr) &
-    BIND(C, NAME='H5Pset_filter_params_raw_c')
+    BIND(C, NAME='H5Pappend_filter_raw_c')
   USE ISO_C_BINDING
   INTEGER(HID_T),        INTENT(IN)  :: prp_id
   INTEGER,               INTENT(IN)  :: filter_id
@@ -433,9 +433,9 @@ string literal assigned to them, e.g.:
 
 \begin{minted}{fortran}
 ! Padded to 32 chars; C helper must strip trailing spaces before
-! passing to H5Pset_filter_params
+! passing to H5Pappend_filter
 CHARACTER(LEN=32) :: param_str = "level=6"
-CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
                              TRIM(param_str)//C_NULL_CHAR, hdferr)
 \end{minted}
@@ -445,7 +445,7 @@ concatenating \texttt{C\_NULL\_CHAR}, as shown above.  The C helper
 performs a defensive strip as a second line of defence.
 
 \begin{minted}{fortran}
-CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
                              "level=6"//C_NULL_CHAR, hdferr)
 \end{minted}
@@ -491,13 +491,13 @@ INTEGER, DIMENSION(1) :: cd_vals = [6]
 
 CALL h5pcreate_f(H5P_DATASET_CREATE_F, plist, hdferr)
 
-! String form (generic resolves to h5pset_filter_params_str_f)
-CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+! String form (generic resolves to h5pappend_filter_str_f)
+CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
                              "level=6"//C_NULL_CHAR, hdferr)
 
-! Raw cd_values form (generic resolves to h5pset_filter_params_raw_f)
-CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+! Raw cd_values form (generic resolves to h5pappend_filter_raw_f)
+CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
                              1_SIZE_T, cd_vals, hdferr)
 \end{minted}
@@ -512,7 +512,7 @@ added to the existing \texttt{HDF5Library} class:
 
 \begin{minted}{java}
 // String form
-public static native int H5Pset_filter_params(
+public static native int H5Pappend_filter(
     long   plist_id,
     int    filter_id,
     int    flags,
@@ -520,7 +520,7 @@ public static native int H5Pset_filter_params(
 ) throws HDF5LibraryException, NullPointerException;
 
 // Raw cd_values form (equivalent to existing H5Pset_filter)
-public static native int H5Pset_filter_params(
+public static native int H5Pappend_filter(
     long   plist_id,
     int    filter_id,
     int    flags,
@@ -554,11 +554,11 @@ import hdf.hdf5lib.HDF5Constants;
 long plist = H5.H5Pcreate(HDF5Constants.H5P_DATASET_CREATE);
 
 // String form
-H5.H5Pset_filter_params(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
+H5.H5Pappend_filter(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
                          HDF5Constants.H5Z_FLAG_MANDATORY, "level=6");
 
 // Raw cd_values form
-H5.H5Pset_filter_params(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
+H5.H5Pappend_filter(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
                          HDF5Constants.H5Z_FLAG_MANDATORY,
                          new int[]{ 6 });
 \end{minted}
@@ -572,7 +572,7 @@ The HDF5 C++ wrapper library (\texttt{H5Cpp}) uses overloaded methods on
 and Java overloads.  C++ callers never interact with \texttt{H5Z\_params\_t}
 or \texttt{H5Z\_PARAMS\_STR} directly; the overloads hide the union entirely.
 
-Two overloaded \texttt{setFilterParams} methods are added to
+Two overloaded \texttt{setFilter} methods are added to
 \texttt{DSetCreatPropList}:
 
 \begin{minted}{cpp}
@@ -580,18 +580,18 @@ Two overloaded \texttt{setFilterParams} methods are added to
 class DSetCreatPropList : public PropList {
 public:
     // String form -- resolves to H5Z_PARAMS_STRING
-    void setFilterParams(H5Z_filter_t filter_id, unsigned flags,
+    void setFilter(H5Z_filter_t filter_id, unsigned flags,
                          const std::string &params);
 
     // Raw cd_values form -- resolves to H5Z_PARAMS_CDVALUES
-    void setFilterParams(H5Z_filter_t filter_id, unsigned flags,
+    void setFilter(H5Z_filter_t filter_id, unsigned flags,
                          size_t cd_nelmts, const unsigned cd_values[]);
 };
 \end{minted}
 
 Each overload constructs the appropriate \texttt{H5Z\_params\_t} on the
 stack (using the named-variable form, since \texttt{H5Z\_PARAMS\_STR} is
-disabled in C++) and calls \texttt{H5Pset\_filter\_params}.  No new C
+disabled in C++) and calls \texttt{H5Pappend\_filter}.  No new C
 entry point is required.  A matching overloaded \texttt{getFilterParams}
 method wraps \texttt{H5Pget\_filter\_params\_by\_idx}:
 
@@ -606,11 +606,11 @@ method wraps \texttt{H5Pget\_filter\_params\_by\_idx}:
 DSetCreatPropList dcpl;
 
 // String form (compiler selects const std::string& overload)
-dcpl.setFilterParams(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, "level=6");
+dcpl.setFilter(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, "level=6");
 
 // Raw cd_values form (compiler selects size_t + const unsigned[] overload)
 unsigned cd[] = { 6 };
-dcpl.setFilterParams(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, cd);
+dcpl.setFilter(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, cd);
 
 // Introspection
 std::string p = dcpl.getFilterParams(0);  // e.g. "level=6"

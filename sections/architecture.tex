@@ -543,7 +543,7 @@ as a decimal string otherwise.
 \label{sec:public-api}
 
 \subsection{Single-Filter Configuration}
-\label{sec:set-filter-params}
+\label{sec:append-filter}
 
 \verysubsection{Parameter type}
 
@@ -614,7 +614,7 @@ the named-variable form:
 H5Z_params_t p;
 p.type  = H5Z_PARAMS_STRING;
 p.u.str = "level=6";
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
 \end{minted}
 
 \verysubsection{Compound literal lifetime (C99)}
@@ -629,18 +629,18 @@ single call should declare a named variable instead:
 
 \begin{minted}{c}
 /* Safe: compound literal address taken for the duration of one call */
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE,
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE,
                      H5Z_FLAG_MANDATORY, &H5Z_PARAMS_STR("level=6"));
 
 /* Also safe: named variable with explicit lifetime */
 H5Z_params_t p = H5Z_PARAMS_STR("level=6");
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
 \end{minted}
 
 \verysubsection{Function signature}
 
 \begin{minted}{c}
-herr_t H5Pset_filter_params(
+herr_t H5Pappend_filter(
     hid_t              plist_id,
     H5Z_filter_t       id,
     unsigned           flags,
@@ -727,27 +727,27 @@ Non-negative on success; negative on failure.
 /* --- String form (new) --- */
 
 /* Built-in deflate via key=value string */
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
                      &H5Z_PARAMS_STR("level=6"));
 
 /* External plugin (ZFP) via key=value string */
-H5Pset_filter_params(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
+H5Pappend_filter(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
                      &H5Z_PARAMS_STR("mode=rate, rate=3.5"));
 
 /* Parameterless filter */
-H5Pset_filter_params(plist, H5Z_FILTER_SHUFFLE, H5Z_FLAG_MANDATORY, NULL);
+H5Pappend_filter(plist, H5Z_FILTER_SHUFFLE, H5Z_FLAG_MANDATORY, NULL);
 
 /* --- Raw cd_values form (equivalent to H5Pset_filter) --- */
 
 unsigned level = 6;
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
                      &H5Z_PARAMS_RAW(1, &level));
 
 /* --- Building a mixed pipeline --- */
-H5Pset_filter_params(plist, H5Z_FILTER_SHUFFLE,    H5Z_FLAG_MANDATORY, NULL);
-H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY,
+H5Pappend_filter(plist, H5Z_FILTER_SHUFFLE,    H5Z_FLAG_MANDATORY, NULL);
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY,
                      &H5Z_PARAMS_STR("level=9"));
-H5Pset_filter_params(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
+H5Pappend_filter(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
 \end{minted}
 
 
@@ -1035,7 +1035,7 @@ A convenience function that accepts a semicolon-delimited pipeline string
 (e.g., \texttt{"shuffle; deflate, level=9; fletcher32"}) is deferred to a
 future release.  The semicolon character is reserved in the parameter
 string grammar (\SectionRef{sec:param-rules}) for this purpose.
-\texttt{H5Pset\_filter\_params} (\SectionRef{sec:set-filter-params}) is the primary API.
+\texttt{H5Pset\_filter\_params} (\SectionRef{sec:append-filter}) is the primary API.
 
 
 

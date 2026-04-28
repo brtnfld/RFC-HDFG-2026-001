@@ -25,7 +25,7 @@ This design covers:
   string-configuration callbacks.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The C++, Fortran, and Java bindings that ship with HDF5
-  (\SectionRef{sec:bindings}): two overloaded \texttt{setFilterParams}
+  (\SectionRef{sec:bindings}): two overloaded \texttt{setFilter}
   methods on \texttt{DSetCreatPropList} for C++; a generic
   \texttt{h5pset\_filter\_params\_f} with two specific procedures plus
   \texttt{h5pget\_filter\_params\_by\_idx\_f} and
@@ -90,7 +90,7 @@ no standard way to recover the original intent of the configuration (e.g.,
 \item Users can configure any filter using human-readable named
    parameters.
 \item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter\_params}
-   (\SectionRef{sec:set-filter-params}). Integer IDs are assigned by the HDF Group
+   (\SectionRef{sec:append-filter}). Integer IDs are assigned by the HDF Group
    filter registry~\cite{hdf5registeredfilters}.
 \item All existing APIs, plugins, and call sites continue to work without
    modification.

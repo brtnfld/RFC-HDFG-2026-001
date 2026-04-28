@@ -367,7 +367,7 @@ The \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW} macros use C99
 compound literals, which are not valid in standard C++.  The macros use
 \texttt{\#ifdef \_\_cplusplus} guards to provide C++-compatible
 initialisers; C++ callers using \texttt{H5Z\_PARAMS\_STRING} should prefer
-the named-variable form documented in \SectionRef{sec:set-filter-params}.
+the named-variable form documented in \SectionRef{sec:append-filter}.
 This is a documentation and testing obligation: the HDF5 test suite must
 compile the macro forms under both a C99 compiler and a C++11 (or later)
 compiler to confirm portability.
