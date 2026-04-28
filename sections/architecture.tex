@@ -373,7 +373,7 @@ typedef struct H5Z_class3_t {
   \texttt{"mode=rate, rate=3.5"}). \texttt{NULL} if no parameters were provided.
 \item \texttt{flags}---On input, contains the flags value from the API call. The
   callback can modify this value; the modified value is what
-  \texttt{H5Pset\_filter2} writes into the DCPL. This gives the filter the
+  \texttt{H5Pset\_filter\_params} writes into the DCPL. This gives the filter the
   final say on properties like \texttt{H5Z\_FLAG\_MANDATORY} vs.\
   \texttt{H5Z\_FLAG\_OPTIONAL}. Callers that need to detect a flag override can
   compare the value they passed with the flags returned by

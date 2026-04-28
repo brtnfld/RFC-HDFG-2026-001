@@ -170,17 +170,18 @@ call \texttt{H5Zfilter\_avail} first.
 
 \subsection{VOL Connector Interaction}
 
-Filters are applied to chunks by the native VOL connector during I/O. The new
-string-based API resolves filter names and parameter strings into standard
+Filters are applied to chunks by the native VOL connector during I/O.
+\texttt{H5Pset\_filter\_params} resolves any parameter string into standard
 \texttt{cd\_values} before modifying the DCPL. From the VOL connector's perspective,
 the DCPL contains the same filter ID, flags, and \texttt{cd\_values} as if
 \texttt{H5Pset\_filter} had been called directly.
 
 Therefore, no changes to the VOL connector interface are required. Third-party
 VOL connectors that intercept DCPLs will see standard filter configurations
-regardless of whether they were set via the string API or the traditional API.
+regardless of whether they were set via \texttt{H5Pset\_filter\_params} or
+\texttt{H5Pset\_filter}.
 
-String-based filter configuration is resolved at \texttt{H5Pset\_filter\_params}
+Parameter string resolution occurs at \texttt{H5Pset\_filter\_params}
 call time, before any dataset is opened or created. It therefore has no
 interaction with SWMR (which governs I/O access patterns on open datasets) or
 with asynchronous VOL event sets (which are populated after the DCPL is fully
