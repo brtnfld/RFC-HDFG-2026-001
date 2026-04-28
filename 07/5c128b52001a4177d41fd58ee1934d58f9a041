@@ -1,0 +1,23 @@
+sections/architecture.tex
+  f5d1af5e78bbcf19 546-565
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "075c128b52001a4177d41fd58ee1934d58f9a041",
+  "prompts": {
+    "f5d1af5e78bbcf19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c7736ed-120d-4964-9c6b-943081adcad3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld",
+      "messages": [],
+      "total_additions": 29,
+      "total_deletions": 0,
+      "accepted_lines": 395,
+      "overriden_lines": 0
+    }
+  }
+}
