@@ -373,12 +373,35 @@ SUBROUTINE h5pset_filter_params_raw_f( &
 \end{minted}
 
 \verysubsection{Fortran string passing convention}
-Fortran \texttt{CHARACTER(LEN=*)} strings are not NUL-terminated.  The
-C helper \texttt{H5Pset\_filter\_params\_str\_c} receives
-\texttt{CHARACTER(KIND=C\_CHAR)} and therefore expects a NUL-terminated
-string.  The caller is responsible for appending \texttt{C\_NULL\_CHAR}
-when constructing the actual argument, following the same convention used
-throughout the existing HDF5 Fortran binding:
+Fortran \texttt{CHARACTER(LEN=*)} strings are not NUL-terminated; the
+compiler right-pads them with spaces to their declared length.  The C
+helper \texttt{H5Pset\_filter\_params\_str\_c} expects a NUL-terminated
+\texttt{const char~*}.  The caller is responsible for appending
+\texttt{C\_NULL\_CHAR}, following the same convention used throughout the
+existing HDF5 Fortran binding:
+
+Critically, the C helpers that receive \texttt{CHARACTER(KIND=C\_CHAR)}
+string arguments (\texttt{H5Pset\_filter\_params\_str\_c},
+\texttt{H5Zconfig\_get\_param\_c}) must strip any trailing Fortran space
+padding before passing the string to the underlying C functions.  The
+implementation should scan backward from the NUL terminator and remove
+trailing spaces, consistent with \texttt{H5\_verify\_signature} and
+similar helpers already in the library.  The test suite must exercise
+this with \texttt{CHARACTER} variables that are \emph{wider} than the
+string literal assigned to them, e.g.:
+
+\begin{minted}{fortran}
+! Padded to 32 chars; C helper must strip trailing spaces before
+! passing to H5Pset_filter_params
+CHARACTER(LEN=32) :: param_str = "level=6"
+CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &
+                             H5Z_FLAG_MANDATORY_F,        &
+                             TRIM(param_str)//C_NULL_CHAR, hdferr)
+\end{minted}
+
+Callers should prefer \texttt{TRIM()} to remove padding before
+concatenating \texttt{C\_NULL\_CHAR}, as shown above.  The C helper
+performs a defensive strip as a second line of defence.
 
 \begin{minted}{fortran}
 CALL h5pset_filter_params_f(plist, H5Z_FILTER_DEFLATE_F, &

@@ -578,6 +578,17 @@ conditional compilation to provide equivalent C++-compatible initialisers:
    C++ callers MUST use the named-variable form instead (see below). */
 #define H5Z_PARAMS_RAW(n, vals) \
     (H5Z_params_t{ H5Z_PARAMS_CDVALUES, { { (n), (vals) } } })
+/* H5Z_PARAMS_STR expands to a declaration (static_assert), so
+   &H5Z_PARAMS_STR(...) is syntactically invalid -- the compiler error
+   may be a syntax error rather than a clean assertion message.
+   If the resulting diagnostics are too noisy, implementors may
+   substitute the undefined-function form below, which produces a
+   clear linker/compiler error that includes the argument:
+     extern H5Z_params_t
+     H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(const char*);
+     #define H5Z_PARAMS_STR(s) \
+         H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(s)
+   Both forms meet the safety goal: the macro is unusable in C++. */
 #define H5Z_PARAMS_STR(s) \
     static_assert(false, \
         "H5Z_PARAMS_STR is not available in C++. " \
