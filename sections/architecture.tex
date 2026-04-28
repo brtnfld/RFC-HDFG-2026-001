@@ -543,6 +543,26 @@ Convenience initialiser macros are provided for the two common cases:
     ((H5Z_params_t){ H5Z_PARAMS_STRING, { .str = (s) } })
 \end{minted}
 
+\verysubsection{Compound literal lifetime (C99)}
+Both macros expand to C99 compound literals.  A compound literal has
+automatic storage duration within its enclosing block---it is not a
+temporary that expires at the semicolon.  Passing \texttt{\&H5Z\_PARAMS\_STR("level=6")}
+to \texttt{H5Pset\_filter\_params} is therefore valid C99: the literal's
+address is well-defined for the duration of the call.  However, storing
+that address in a pointer that outlives the enclosing block is undefined
+behaviour; callers who need to store an \texttt{H5Z\_params\_t} beyond a
+single call should declare a named variable instead:
+
+\begin{minted}{c}
+/* Safe: compound literal address taken for the duration of one call */
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE,
+                     H5Z_FLAG_MANDATORY, &H5Z_PARAMS_STR("level=6"));
+
+/* Also safe: named variable with explicit lifetime */
+H5Z_params_t p = H5Z_PARAMS_STR("level=6");
+H5Pset_filter_params(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
+\end{minted}
+
 \verysubsection{Function signature}
 
 \begin{minted}{c}
