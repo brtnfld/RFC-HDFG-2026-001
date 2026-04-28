@@ -1,0 +1,25 @@
+sections/introduction.tex
+  f5d1af5e78bbcf19 28-31,34
+sections/implementation.tex
+  f5d1af5e78bbcf19 570-574,580-586,588-590,594-598,611,615
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.3.4",
+  "base_commit_sha": "75cf539fc1388538e310bf5f60bd4e715c9e63f3",
+  "prompts": {
+    "f5d1af5e78bbcf19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c7736ed-120d-4964-9c6b-943081adcad3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld",
+      "messages": [],
+      "total_additions": 30,
+      "total_deletions": 27,
+      "accepted_lines": 1934,
+      "overriden_lines": 0
+    }
+  }
+}
