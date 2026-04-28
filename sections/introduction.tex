@@ -25,12 +25,6 @@ This design covers:
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The Fortran and Java bindings that ship with HDF5 (3 \texttt{H5P} subroutines and
   4 \texttt{H5Z} subroutines for Fortran; corresponding Java wrappers).
-\item An on-disk format extension, \texttt{H5O\_PLINE\_VERSION\_3}
-  (\SectionRef{sec:pline-v3}), that appends per-slot type tags to
-  \texttt{cd\_values} entries.  The extension is gated by the file's
-  \texttt{H5Pset\_libver\_bounds} upper bound; files whose bound requires
-  an earlier format continue to use version~2 (byte-identical to
-  \texttt{H5Pset\_filter} output).
 \end{itemize}
 
 This design does not cover:
@@ -91,14 +85,6 @@ no standard way to recover the original intent of the configuration (e.g.,
 \item Filter plugins are addressed by integer ID via \texttt{H5Pset\_filter2}
    (\SectionRef{sec:set-filter2}). Integer IDs are assigned by the HDF Group
    filter registry~\cite{hdf5registeredfilters}.
-\item The on-disk format is extended with \texttt{H5O\_PLINE\_VERSION\_3}
-   (\SectionRef{sec:pline-v3}), which records per-slot type tags alongside
-   \texttt{cd\_values}, making filter parameters self-describing without the
-   plugin.  The extension is gated by \texttt{H5Pset\_libver\_bounds}: users
-   who need files readable by an earlier library version constrain the upper
-   bound and receive version-2 output that is byte-identical to
-   \texttt{H5Pset\_filter}.  HDF5 does not guarantee forward compatibility;
-   this gate is the standard mechanism for user-controlled format selection.
 \item All existing APIs, plugins, and call sites continue to work without
    modification.
 \item The design supports both built-in and dynamically loaded plugin

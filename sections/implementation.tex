@@ -148,8 +148,7 @@ per-rank difference in the string-to-double conversion step propagates into
 \texttt{cd\_values} and causes a DCPL mismatch at the collective
 \texttt{H5Dcreate} call.  Applications running on heterogeneous clusters
 with floating-point filter parameters should obtain a single parsed DCPL on
-one rank and broadcast it to all others (e.g., via
-\texttt{H5Pset\_libver\_bounds} followed by serialisation through
+one rank and broadcast it to all others (e.g., via serialisation through
 \texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
 independently invoke \texttt{H5Pset\_filter2}.
 

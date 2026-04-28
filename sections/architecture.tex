@@ -731,29 +731,25 @@ convention below.  They enable \texttt{set\_config} and \texttt{get\_config}
 callbacks to achieve exact round-trips for types wider than 32~bits---in
 particular \texttt{double}---without ad hoc bit manipulation.  All built-in
 filter callbacks that handle floating-point or string parameters use these
-helpers.  Third-party filters are strongly encouraged to do the same: adherence
-now ensures automatic compatibility with the planned typed on-disk storage
-extension (\SectionRef{sec:pline-v3}).
+helpers.  Third-party filters are strongly encouraged to do the same.
 
 \verysubsection{Normative packing convention}
 \label{sec:cd-packing-convention}
 
-The following encoding is normative and is the basis for the per-slot type tags
-that a future \texttt{H5O\_PLINE\_VERSION\_3} (\SectionRef{sec:pline-v3})
-will record on disk.
+The following encoding is normative.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{llXl}
+\begin{tabularx}{\textwidth}{llX}
 \toprule
-\textbf{C type} & \textbf{Slots} & \textbf{Encoding} & \textbf{Future tag} \\
+\textbf{C type} & \textbf{Slots} & \textbf{Encoding} \\
 \midrule
-\texttt{unsigned int} & 1 & direct store & \texttt{H5Z\_SLOT\_UINT32} \\
-\texttt{int32\_t}     & 1 & two's-complement bitcast to \texttt{uint32} & \texttt{H5Z\_SLOT\_INT32} \\
-\texttt{float}        & 1 & IEEE\,754 \texttt{memcpy} into one slot & \texttt{H5Z\_SLOT\_FLOAT} \\
-\texttt{double}       & 2 & IEEE\,754 \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits & \texttt{H5Z\_SLOT\_DBL\_LO/HI} \\
+\texttt{unsigned int} & 1 & direct store \\
+\texttt{int32\_t}     & 1 & two's-complement bitcast to \texttt{uint32} \\
+\texttt{float}        & 1 & IEEE\,754 \texttt{memcpy} into one slot \\
+\texttt{double}       & 2 & IEEE\,754 \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits \\
 \texttt{char[]}       & $1{+}\lceil\text{len}/4\rceil$ &
-                          slot[0]\,=\,byte length; remaining slots hold 4-byte null-padded chunks & \texttt{H5Z\_SLOT\_STR\_LEN/DATA} \\
+                          slot[0]\,=\,byte length; remaining slots hold 4-byte null-padded chunks \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -872,253 +868,5 @@ string grammar (\SectionRef{sec:param-rules}) for this purpose.
 \texttt{H5Pset\_filter2} (\SectionRef{sec:set-filter2}) is the primary API.
 
 
-
-
-%% ======================================================================
-%%  Section – Typed On-Disk Parameter Storage: H5O_PLINE_VERSION_3
-%% ======================================================================
-\section{Typed On-Disk Parameter Storage: \texttt{H5O\_PLINE\_VERSION\_3}}
-\label{sec:pline-v3}
-
-\texttt{H5O\_PLINE\_VERSION\_3} extends the filter pipeline object-header
-message to record per-slot type tags alongside \texttt{cd\_values}.  With
-type tags on disk, any reader can reconstruct typed values from
-\texttt{cd\_values} without loading the filter plugin, restoring HDF5's
-self-describing property for filter parameters.
-
-HDF5 does not guarantee forward compatibility.  The extension is gated by
-the file's \texttt{H5Pset\_libver\_bounds} upper bound.  Users who require
-files readable by an earlier library version constrain the upper bound and
-receive version-2 output; this is the standard mechanism by which
-applications control format selection across HDF5 releases.
-
-\subsection{Motivation}
-
-Without type metadata on disk, two problems arise:
-
-\begin{enumerate}
-\item \textbf{Plugin-dependent reconstruction.}  Tools such as
-  \texttt{h5dump} and \texttt{h5repack} must load the filter plugin and
-  call \texttt{get\_config} to produce a human-readable representation of
-  \texttt{cd\_values}.  When the plugin is unavailable---retired, not
-  installed, different platform---the stored array is opaque integers.
-\item \textbf{Implicit packing convention.}  A \texttt{get\_config}
-  callback must independently know how \texttt{set\_config} packed typed
-  values.  A convention mismatch between plugin versions silently corrupts
-  the reconstructed configuration.
-\end{enumerate}
-
-Per-slot type tags make the \texttt{cd\_values} array self-describing:
-any reader reconstructs typed values from the tags alone, without the
-plugin and without knowledge of filter-specific conventions.
-
-\subsection{Slot Type Enumeration}
-\label{sec:slot-types}
-
-The slot types are declared in \texttt{H5Zdevelop.h} and are exposed
-as a public type.  The semantics are identical to the normative packing
-convention in \SectionRef{sec:cd-packing-convention}.
-
-\begin{minted}{c}
-typedef enum {
-    H5Z_SLOT_UINT32   = 0, /* unsigned int -- default; v2-compatible        */
-    H5Z_SLOT_INT32    = 1, /* int32_t two's-complement bitcast               */
-    H5Z_SLOT_FLOAT    = 2, /* float IEEE 754 memcpy                          */
-    H5Z_SLOT_DBL_LO   = 3, /* double: lower 32 bits (little-endian memcpy)   */
-    H5Z_SLOT_DBL_HI   = 4, /* double: upper 32 bits; MUST follow DBL_LO      */
-    H5Z_SLOT_STR_LEN  = 5, /* uint32 = byte length; followed by STR_DATA     */
-    H5Z_SLOT_STR_DATA = 6, /* 4 bytes null-padded string data                */
-} H5Z_slot_type_t;
-\end{minted}
-
-\verysubsection{Invariants}
-\begin{itemize}
-\item \texttt{H5Z\_SLOT\_DBL\_HI} appears in the slot immediately
-  following \texttt{H5Z\_SLOT\_DBL\_LO}.  A tag sequence that violates
-  this pairing is rejected by the decoder with \texttt{H5E\_BADVALUE}.
-\item The number of \texttt{H5Z\_SLOT\_STR\_DATA} slots following an
-  \texttt{H5Z\_SLOT\_STR\_LEN} slot equals
-  $\lceil \mathtt{cd\_values[i]} / 4 \rceil$, where
-  \texttt{cd\_values[i]} is the length slot value.  A mismatch is
-  rejected with \texttt{H5E\_BADVALUE}.
-\item Tags with value~0 (\texttt{H5Z\_SLOT\_UINT32}) are the default;
-  a tag-block composed entirely of zeros is valid and denotes a
-  semantically version-2-equivalent entry.
-\end{itemize}
-
-\subsection{On-Disk Layout}
-\label{sec:pline-v3-layout}
-
-A version-3 filter entry appends a type-tag block immediately after the
-\texttt{cd\_values} array.  The rest of the filter entry is unchanged from
-version~2.
-
-\begin{center}
-\renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{llX}
-\toprule
-\textbf{Field} & \textbf{Size (bytes)} & \textbf{Description} \\
-\midrule
-\emph{(version-2 fields)} & \emph{as v2} & filter ID, name, flags, cd\_nelmts, cd\_values \\
-\texttt{slot\_types[cd\_nelmts]} & \texttt{cd\_nelmts} $\times 1$ &
-  One \texttt{uint8\_t} \texttt{H5Z\_slot\_type\_t} per slot \\
-\bottomrule
-\end{tabularx}
-\end{center}
-
-If \texttt{cd\_nelmts} is zero the type-tag block is absent (zero bytes).
-The block is not padded; alignment is the encoder's responsibility
-consistent with existing version-2 alignment rules.
-
-\subsection{Write Conditions}
-\label{sec:pline-v3-write}
-
-The library writes \texttt{H5O\_PLINE\_VERSION\_3} for a filter entry
-when \textbf{both} of the following hold:
-
-\begin{enumerate}
-\item The file's \texttt{H5Pset\_libver\_bounds} upper bound is at least
-  \texttt{H5F\_LIBVER\_V300} (the version constant introduced by this
-  feature; see \SectionRef{sec:libver-integration} for the definition).
-\item At least one element of \texttt{cd\_types[]} for that filter entry
-  is not \texttt{H5Z\_SLOT\_UINT32}.
-\end{enumerate}
-
-When condition~(1) holds but condition~(2) does not (all slots are
-\texttt{UINT32}), the library emits a version-2 entry, preserving
-byte-identical output for all-integer pipelines regardless of libver bound.
-
-When condition~(1) does not hold (libver upper bound below
-\texttt{H5F\_LIBVER\_V300}), the library emits a version-2 entry
-regardless of slot types; see \SectionRef{sec:pline-v3-fallback} for
-filter author requirements in this case.
-
-\subsection{Fallback Behavior}
-\label{sec:pline-v3-fallback}
-
-When the file's libver upper bound prevents version-3 output, filters that
-use typed slots (float, double, string) via the packing helpers
-(\SectionRef{sec:cd-packing}) still produce valid \texttt{cd\_values}
-output from \texttt{set\_config}.  The packing helpers are designed for
-this: they write the same bit patterns into \texttt{unsigned int} slots
-regardless of whether type tags will be emitted.  In this mode
-reconstruction via \texttt{get\_config} is best-effort (the library cannot
-verify type-correctness), identical to the behavior described in
-\SectionRef{sec:introspection}.
-
-The library should issue a warning via \texttt{H5Epush} when a filter
-entry with non-UINT32 slots is silently downgraded to version~2, so that
-authors of long-running archival pipelines are aware of the fidelity
-reduction.
-
-\subsection{\texttt{H5Z\_filter\_info\_t} Extension}
-\label{sec:filter-info-extension}
-
-The internal filter information structure is extended to carry slot
-type metadata:
-
-\begin{minted}{c}
-/* In H5Zprivate.h */
-struct H5Z_filter_info_t {
-    H5Z_filter_t     id;
-    unsigned         flags;
-    char             _name[H5Z_COMMON_NAME_LEN];
-    char            *name;
-    size_t           cd_nelmts;
-    unsigned         _cd_values[H5Z_COMMON_CD_VALUES];
-    unsigned        *cd_values;
-    /* New */
-    H5Z_slot_type_t  _cd_types[H5Z_COMMON_CD_VALUES]; /* inline for small filters */
-    H5Z_slot_type_t *cd_types;                         /* NULL == all UINT32       */
-};
-\end{minted}
-
-\texttt{cd\_types == NULL} is semantically equivalent to all slots being
-\texttt{H5Z\_SLOT\_UINT32}.  Code that allocates or copies
-\texttt{H5Z\_filter\_info\_t} without populating \texttt{cd\_types} (including
-all existing v1/v2 code paths) naturally produces this default.
-
-The library deep-copies \texttt{cd\_types} in all operations that copy
-\texttt{H5Z\_filter\_info\_t}: property-list copy, \texttt{H5Ocopy}, and
-the internal pipeline copy routine (\texttt{H5O\_\_pline\_copy}).  When
-\texttt{cd\_types} points to the inline array \texttt{\_cd\_types}, the
-copy updates the pointer to the new inline array, not the source.
-
-\subsection{\texttt{H5Pset\_libver\_bounds} Integration}
-\label{sec:libver-integration}
-
-The version constant introduced by this feature is:
-
-\begin{minted}{c}
-/* In H5Fpublic.h */
-#define H5F_LIBVER_V300  6   /* HDF5 3.0 -- introduces H5O_PLINE_VERSION_3 */
-\end{minted}
-
-The existing libver-bounds enforcement in \texttt{H5O\_\_pline\_encode} is
-extended: before writing a filter entry with non-UINT32 slot types, the
-encoder queries the file's upper bound.  If the bound is below
-\texttt{H5F\_LIBVER\_V300}, the encoder falls back to version~2 and issues
-the warning described in \SectionRef{sec:pline-v3-fallback}.
-
-Applications that need plugin-free typed reconstruction and do not require
-backward compatibility should use:
-
-\begin{minted}{c}
-H5Pset_libver_bounds(fapl, H5F_LIBVER_V300, H5F_LIBVER_LATEST);
-\end{minted}
-
-Applications that must remain compatible with earlier libraries should use a
-lower upper bound and accept best-effort \texttt{get\_config} reconstruction.
-
-\subsection{\texttt{H5Pget\_filter\_params\_by\_idx} with Version-3 Files}
-
-When \texttt{H5Pget\_filter\_params\_by\_idx} is called and the pipeline
-message is version~3, the library reconstructs the parameter string
-directly from \texttt{cd\_values} and \texttt{cd\_types} using the packing
-convention (\SectionRef{sec:cd-packing-convention}), without requiring the
-filter plugin to be loaded.  If the plugin is also loaded and provides
-\texttt{get\_config}, the plugin output takes precedence; the tag-based
-reconstruction is the fallback.
-
-This makes filter parameters legible in \texttt{h5dump~-p} output even
-when the plugin is absent, which is a primary motivation for this section.
-
-\subsection{Future: \texttt{H5Z\_class4\_t} Parameter Schema (Informative)}
-\label{sec:class4}
-
-\emph{This subsection is informative.}  A future version-4 plugin class
-will add a declarative parameter schema that allows the library to
-auto-generate slot-type tags without filter-specific \texttt{set\_config}
-or \texttt{get\_config} implementations.
-
-\begin{minted}{c}
-typedef struct {
-    const char       *key;
-    H5Z_slot_type_t   lead_type;
-    size_t            n_slots;
-    const char       *default_val;
-} H5Z_param_desc_t;
-
-typedef struct H5Z_class4_t {
-    int                       version;   /* H5Z_CLASS4_T_VERS */
-    H5Z_filter_t              id;
-    unsigned                  encoder_present;
-    unsigned                  decoder_present;
-    const char               *filter_title;
-    H5Z_can_apply_func_t      can_apply;
-    H5Z_set_local_func_t      set_local;
-    H5Z_func_t                filter;
-    H5Z_set_config_func_t     set_config;
-    H5Z_get_config_func_t     get_config;
-    const H5Z_param_desc_t   *param_schema;
-    size_t                    param_schema_len;
-} H5Z_class4_t;
-\end{minted}
-
-With \texttt{param\_schema} the library can auto-validate \texttt{set\_config}
-output, auto-generate \texttt{get\_config} for simple filters, and emit
-correct slot-type tags for version-3 output without per-filter custom code.
-The flat \texttt{H5Z\_class3\_t} layout adopted by this RFC is the prerequisite
-for adding these fields cleanly.
 
 \end{document}

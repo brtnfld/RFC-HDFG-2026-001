@@ -70,22 +70,11 @@ loaded.
 
 \subsection{On-Disk Format}
 
-The string configuration is resolved at configuration time into
-\texttt{cd\_values}.  When the file's \texttt{H5Pset\_libver\_bounds} upper bound
-is below \texttt{H5F\_LIBVER\_V300}, the library writes a standard
-\texttt{H5O\_PLINE\_VERSION\_2} entry that is byte-identical to
-\texttt{H5Pset\_filter} output---no format change for such files.
-
-When the upper bound is at least \texttt{H5F\_LIBVER\_V300} and the filter
-uses typed slots (float, double, or string parameters packed via the
-\texttt{H5Z\_cd\_pack\_*} helpers), the library writes
-\texttt{H5O\_PLINE\_VERSION\_3}, which appends a per-slot type-tag block after
-the \texttt{cd\_values} array.  Files containing a version-3 pipeline message
-require a reader that recognises this version; earlier readers return an error
-for such files (standard HDF5 object-header versioning behavior).
-
-All-integer pipelines (all slots \texttt{H5Z\_SLOT\_UINT32}) always produce
-version-2 output regardless of the libver bound.
+This RFC introduces no on-disk format changes.  The string configuration
+is resolved at configuration time into \texttt{cd\_values} using the
+existing \texttt{H5O\_PLINE\_VERSION\_2} format---output is byte-identical
+to an equivalent \texttt{H5Pset\_filter} call.  Typed on-disk parameter
+storage (per-slot type tags) is deferred to a follow-on RFC.
 
 \subsection{Source Compatibility}
 
@@ -308,10 +297,7 @@ These tests confirm that no existing behavior is broken.
 \item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
-  \texttt{h5repack}, provided the libver upper bound remains below
-  \texttt{H5F\_LIBVER\_V300}.  With a V300 upper bound and typed slots, the
-  output file contains \texttt{H5O\_PLINE\_VERSION\_3} entries and is not
-  byte-for-byte identical to pre-feature output.
+  \texttt{h5repack}.
 \end{itemize}
 
 
