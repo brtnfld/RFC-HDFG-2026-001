@@ -486,4 +486,55 @@ H5.H5Pset_filter_params(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
                          new int[]{ 6 });
 \end{minted}
 
+
+\subsection{C++}
+\label{sec:cpp-bindings}
+
+The HDF5 C++ wrapper library (\texttt{H5Cpp}) wraps C functions as methods
+on \texttt{DSetCreatPropList} and related classes.  C++ does not support C99
+compound literals, so \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW}
+expand to C++-compatible brace-initialisers under \texttt{\#ifdef \_\_cplusplus}
+(\SectionRef{sec:set-filter-params}).  The named-variable form is preferred
+for clarity:
+
+\begin{minted}{cpp}
+// Preferred named-variable form in C++
+H5Z_params_t p;
+p.type  = H5Z_PARAMS_STRING;
+p.u.str = "level=6";
+H5Pset_filter_params(plist.getId(), H5Z_FILTER_DEFLATE,
+                     H5Z_FLAG_MANDATORY, &p);
+\end{minted}
+
+A thin C++ wrapper method is added to \texttt{DSetCreatPropList}:
+
+\begin{minted}{cpp}
+// In DSetCreatPropList.h
+class DSetCreatPropList : public PropList {
+public:
+    // String form
+    void setFilterParams(H5Z_filter_t filter_id, unsigned flags,
+                         const std::string &params);
+
+    // Raw cd_values form (equivalent to existing setFilter)
+    void setFilterParams(H5Z_filter_t filter_id, unsigned flags,
+                         size_t cd_nelmts, const unsigned cd_values[]);
+};
+\end{minted}
+
+Each overload constructs an \texttt{H5Z\_params\_t} on the stack and calls
+\texttt{H5Pset\_filter\_params}.  No new C entry point is required.
+
+\begin{minted}{cpp}
+// C++ usage example
+DSetCreatPropList dcpl;
+
+// String form
+dcpl.setFilterParams(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, "level=6");
+
+// Raw cd_values form
+unsigned cd[] = { 6 };
+dcpl.setFilterParams(H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, 1, cd);
+\end{minted}
+
 \end{document}
