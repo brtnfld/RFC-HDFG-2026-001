@@ -48,21 +48,30 @@ introduces no build or runtime dependency.
   parameter string.
 \item Keys and values consist of printable ASCII characters (excluding comma,
   semicolon, and equals sign), unless quoted.
-\item \textbf{Quoted values:} If a value begins with a double quote (\texttt{"}) after
-  leading whitespace has been stripped, the value extends until the next
-  unescaped double quote. Within a quoted value, commas, semicolons, and
-  equals signs are literal and do not act as delimiters. Whitespace inside a
-  quoted value is preserved exactly as written (whitespace stripping applies
-  only outside of quotes). A literal double quote within a quoted value is
-  represented as two consecutive double quotes (\texttt{""}), following the
-  quoted-field escaping convention of RFC~4180~\cite{rfc4180}. An unbalanced quote
-  (opening \texttt{"} with no closing \texttt{"}) causes the parser to return
-  \texttt{H5E\_BADVALUE} rather than silently consuming the rest of the string.
+\item \textbf{Quoted values:} A value may be enclosed in either double quotes
+  (\texttt{"\ldots"}) or single quotes (\texttt{'\ldots'}), determined by the first
+  character of the value after leading whitespace is stripped.
+  Within any quoted value, commas, semicolons, and equals signs are literal and
+  do not act as delimiters. Whitespace inside a quoted value is preserved exactly
+  as written (stripping applies only outside quotes). An unbalanced opening quote
+  causes the parser to return \texttt{H5E\_BADVALUE}.
+
+  \textbf{Double-quoted values} (\texttt{"}\ldots\texttt{"}) embed a literal
+  double-quote character by doubling it (\texttt{""}), following the quoted-field
+  convention of RFC~4180~\cite{rfc4180}.
+
+  \textbf{Single-quoted values} (\texttt{'}\ldots\texttt{'}) do not support any
+  escape mechanism; a single-quote character cannot appear inside a single-quoted
+  value. Single-quoted values are particularly convenient when the parameter string
+  is set via a shell double-quoted environment variable assignment:
+  \begin{quote}\ttfamily
+    export HDF5\_FILTER\_PARAMS="desc='fast compression',level=6"
+  \end{quote}
 \item \textbf{Order of operations for parsing:} split the parameter string on commas
   (respecting quoted regions) $\rightarrow$ split each token on the first
   equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
-  value $\rightarrow$ apply quote processing to the value if it begins with a
-  double quote.
+  value $\rightarrow$ apply quote processing to the value if it begins with
+  \texttt{"} (double-quoted) or \texttt{'} (single-quoted).
 \item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
   string, the parser rejects the string with \texttt{H5E\_BADVALUE}. The parser
   can detect duplicates cheaply during a single pass by checking each key
@@ -81,8 +90,8 @@ introduces no build or runtime dependency.
   \texttt{"key="} (equals sign present but no value after it) is rejected
   with \texttt{H5E\_BADVALUE}. Boolean flags use bare-key syntax
   (\texttt{"fast\_mode"}), not \texttt{"fast\_mode="}.
-  A quoted empty string (\texttt{key=""}) is likewise rejected with
-  \texttt{H5E\_BADVALUE}.
+  A quoted empty string (\texttt{key=""} or \texttt{key=''}) is likewise rejected
+  with \texttt{H5E\_BADVALUE}.
 \item \textbf{Reserved keys:} The key \texttt{filter\_title} is reserved by the
   library and may not be used as a user-defined parameter key. It is injected
   into \texttt{cd\_values} by the library when \texttt{H5Zregister()} processes a
@@ -131,17 +140,18 @@ a parameter string.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{>{\ttfamily}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
+\begin{tabularx}{\textwidth}{>{\ttfamily}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
 \toprule
-\textbf{Character} & \textbf{In key} & \textbf{In unquoted value} & \textbf{In quoted value} \\
+\textbf{Character} & \textbf{In key} & \textbf{In unquoted value} & \textbf{In dquoted value} & \textbf{In squoted value} \\
 \midrule
-Printable ASCII (not special) & allowed & allowed & allowed \\
-Space (U+0020) & stripped (leading/trailing only) & stripped (leading/trailing only) & preserved as-is \\
-Comma \texttt{,} & forbidden & forbidden (param delimiter) & allowed \\
-Equals \texttt{=} & forbidden & forbidden (key/value delimiter) & allowed \\
-Semicolon \texttt{;} & forbidden & forbidden (reserved) & allowed \\
-Double quote \texttt{"} & forbidden & forbidden (starts quoted value) & use \texttt{""} to embed \\
-Non-ASCII / multi-byte & forbidden & forbidden & accepted verbatim (caller's risk) \\
+Printable ASCII (not special) & allowed & allowed & allowed & allowed \\
+Space (U+0020) & stripped & stripped & preserved as-is & preserved as-is \\
+Comma \texttt{,} & forbidden & forbidden (param delimiter) & allowed & allowed \\
+Equals \texttt{=} & forbidden & forbidden (key/value delimiter) & allowed & allowed \\
+Semicolon \texttt{;} & forbidden & forbidden (reserved) & allowed & allowed \\
+Double quote \texttt{"} & forbidden & forbidden (starts dquoted) & use \texttt{""} to embed & allowed as-is \\
+Single quote \texttt{'} & forbidden & allowed & allowed & forbidden (ends squoted) \\
+Non-ASCII / multi-byte & forbidden & forbidden & accepted verbatim (caller's risk) & accepted verbatim (caller's risk) \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -183,10 +193,11 @@ font and enclosed in single quotation marks.  Standard EBNF operators are used:
 \textit{param-list}    & \textit{param} $\;(\,\text{\texttt{`,'}}\;\textit{param}\,)^{*}$ \\
 \textit{param}         & \textit{key} \texttt{`='} \textit{value} $\mid$ \textit{key} \\
 \textit{key}           & \textit{printable-ascii-no-special}$^{+}$ \\
-\textit{value}         & \textit{bare-value} $\mid$ \textit{quoted-value} \\
+\textit{value}         & \textit{bare-value} $\mid$ \textit{dquoted-value} $\mid$ \textit{squoted-value} \\
 \textit{bare-value}    & \textit{printable-ascii-no-special}$^{+}$ \\
-\textit{quoted-value}  & \texttt{`\textquotedbl'}\,$(\,\textit{non-quote}
+\textit{dquoted-value} & \texttt{`\textquotedbl'}\,$(\,\textit{non-dquote}
                          \mid \text{\texttt{`\textquotedbl\textquotedbl'}}\,)^{*}$\,\texttt{`\textquotedbl'} \\
+\textit{squoted-value} & \texttt{'}\,\textit{non-squote}$^{*}$\,\texttt{'} \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -195,7 +206,8 @@ font and enclosed in single quotation marks.  Standard EBNF operators are used:
 where \textit{printable-ascii-no-special} is any printable ASCII character
 (U+0021--U+007E) except comma~(\texttt{,}), equals~sign~(\texttt{=}),
 double~quote~(\texttt{\textquotedbl}), and semicolon~(\texttt{;});
-and \textit{non-quote} is any character except double~quote~(\texttt{\textquotedbl}).
+\textit{non-dquote} is any character except double~quote~(\texttt{\textquotedbl});
+and \textit{non-squote} is any character except single~quote~(\texttt{'}).
 An empty \textit{param-string} (the first alternative) corresponds to a
 \texttt{NULL} or zero-length input, which is valid and means ``no parameters''.
 Whitespace stripping (leading/trailing spaces around keys and bare values)

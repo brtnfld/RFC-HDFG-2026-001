@@ -147,6 +147,10 @@ directly with hand-crafted strings.
   & key=\texttt{level}; value=\texttt{\ value\ } (leading/trailing spaces preserved inside quoted value) \\
 \texttt{parse-11} & \texttt{"LEVEL=6"}
   & key normalized to lowercase \texttt{level}; value preserved as \texttt{"6"} \\
+\texttt{parse-12} & \texttt{"name='hello world'"}
+  & single-quoted value; value=\texttt{hello world} \\
+\texttt{parse-13} & \texttt{"desc='say \textquotedbl hello\textquotedbl'"}
+  & double-quote inside single-quoted value is literal; value=\texttt{say "hello"} \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -168,6 +172,8 @@ directly with hand-crafted strings.
 \texttt{parse-E06} & String longer than \texttt{H5Z\_CONFIG\_STRING\_MAX} (4096) bytes --- exceeds maximum \\
 \texttt{parse-E07} & String with more than \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) comma-separated tokens --- exceeds maximum parameter count \\
 \texttt{parse-E08} & \texttt{"level="} --- \texttt{key=} with no value after the equals sign \\
+\texttt{parse-E09} & \texttt{"path='/no/closing"} --- unbalanced opening single-quote \\
+\texttt{parse-E10} & \texttt{"key=''"} --- single-quoted empty string value \\
 \bottomrule
 \end{tabularx}
 \end{center}
