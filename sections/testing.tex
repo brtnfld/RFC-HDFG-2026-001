@@ -220,6 +220,18 @@ These tests verify the two-pass \texttt{set\_config} contract
   length without writing any bytes.
 \item \texttt{cb-07}: \texttt{get\_config} output is a valid \texttt{set\_config} input (round-trip
   grammar check: parse the output and confirm it tokenizes without error).
+\item \texttt{cb-08} (\textbf{modify-filter pattern}): Since no \texttt{H5Pmodify\_filter2}
+  exists, users who need to update parameters of an existing filter in a copied
+  DCPL must retrieve the current \texttt{cd\_values} via \texttt{H5Pget\_filter\_by\_id2}
+  and call \texttt{H5Pmodify\_filter} directly.  Verify the pattern:
+  \begin{enumerate}
+    \item Create a DCPL and append deflate with \texttt{level=6} via
+          \texttt{H5Pappend\_filter}.
+    \item Copy the DCPL (\texttt{H5Pcopy}) to simulate a caller who received it.
+    \item Call \texttt{H5Pget\_filter\_by\_id2} and confirm \texttt{cd\_values[0] == 6}.
+    \item Set \texttt{cd\_values[0] = 9} and call \texttt{H5Pmodify\_filter}.
+    \item Call \texttt{H5Pget\_filter\_by\_id2} again and confirm \texttt{cd\_values[0] == 9}.
+  \end{enumerate}
 \end{itemize}
 
 
