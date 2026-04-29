@@ -411,7 +411,7 @@ typedef struct H5Z_class3_t {
   \texttt{"mode=rate, rate=3.5"}). \texttt{NULL} if no parameters were provided.
 \item \texttt{flags}---On input, contains the flags value from the API call. The
   callback can modify this value; the modified value is what
-  \texttt{H5Pset\_filter\_params} writes into the DCPL. This gives the filter the
+  \texttt{H5Pappend\_filter} writes into the DCPL. This gives the filter the
   final say on properties like \texttt{H5Z\_FLAG\_MANDATORY} vs.\
   \texttt{H5Z\_FLAG\_OPTIONAL}. Callers that need to detect a flag override can
   compare the value they passed with the flags returned by
@@ -788,7 +788,7 @@ value contains colons, which is valid under the grammar.
 
 \verysubsection{Note on string reconstruction}
 The DCPL does not retain the original parameter string. After
-\texttt{H5Pset\_filter\_params} resolves the string into \texttt{cd\_values}, only
+\texttt{H5Pappend\_filter} resolves the string into \texttt{cd\_values}, only
 the \texttt{cd\_values} are stored in the property list (identical to
 \texttt{H5Pset\_filter}). This function relies on the filter's \texttt{get\_config}
 callback to reconstruct a human-readable string from the stored \texttt{cd\_values}.

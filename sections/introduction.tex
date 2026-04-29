@@ -44,6 +44,10 @@ This design does not cover:
 \item Data-attribute-dependent compression strategies (e.g., choosing different
   filters based on dimensionality or datatype), which could be layered on top
   of this feature in the future.
+\item A string-based equivalent of \texttt{H5Pmodify\_filter}. Users who need
+  to update the parameters of an existing filter entry in a copied DCPL should
+  retrieve the current \texttt{cd\_values} via \texttt{H5Pget\_filter\_by\_id2}
+  and call \texttt{H5Pmodify\_filter} directly.
 \end{itemize}
 
 
