@@ -17,7 +17,7 @@ callback delegates to the existing internal validation code rather than
 reimplementing it independently. This prevents divergence between the two
 configuration paths and ensures that validation constraints are applied
 consistently regardless of whether the filter was configured via
-\texttt{H5Pset\_szip} or \texttt{H5Pset\_filter\_params}.
+\texttt{H5Pset\_szip} or \texttt{H5Pappend\_filter}.
 
 \verysubsection{Implementation note}
 Built-in filters are currently registered internally as \texttt{H5Z\_class2\_t}
@@ -65,7 +65,7 @@ No parameters. \texttt{params} should be \texttt{NULL}.
   \texttt{H5\_SZIP\_MSB\_OPTION\_MASK}; and forces \texttt{H5Z\_FLAG\_OPTIONAL} regardless
   of the caller's flag choice. The \texttt{set\_config} callback replicates all
   of this behavior. Consequently, the \texttt{flags} argument to
-  \texttt{H5Pset\_filter\_params} is overridden for SZIP---the filter is always
+  \texttt{H5Pappend\_filter} is overridden for SZIP---the filter is always
   optional. This is existing behavior of \texttt{H5Pset\_szip} and should be
   documented but is not changed by this feature. Callers that need to
   detect the flag override can compare the flags they passed with the
@@ -150,7 +150,7 @@ per-rank difference in the string-to-double conversion step propagates into
 with floating-point filter parameters should obtain a single parsed DCPL on
 one rank and broadcast it to all others (e.g., via serialisation through
 \texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
-independently invoke \texttt{H5Pset\_filter\_params}.
+independently invoke \texttt{H5Pappend\_filter}.
 
 \verysubsection{Diagnosing rank-inconsistent DCPLs}
 A DCPL mismatch across MPI ranks at \texttt{H5Dcreate} time produces an
@@ -167,15 +167,15 @@ abort collectively before \texttt{H5Dcreate} if any hash differs.
 
 \verysubsection{Failure mode and plugin loading order}
 
-\noindent\textbf{Decision:} \texttt{H5Pset\_filter\_params} loads the plugin
+\noindent\textbf{Decision:} \texttt{H5Pappend\_filter} loads the plugin
 eagerly at call time and invokes \texttt{set\_config} immediately.  Unlike
 \texttt{H5Pset\_filter}, which stores raw \texttt{cd\_values} and defers
-all plugin interaction, \texttt{H5Pset\_filter\_params} must run the filter's
+all plugin interaction, \texttt{H5Pappend\_filter} must run the filter's
 \texttt{set\_config} callback to translate the parameter string into
 \texttt{cd\_values}; this requires the plugin to be registered.  If the
-plugin is unavailable, \texttt{H5Pset\_filter\_params} returns \texttt{H5E\_NOFILTER}
+plugin is unavailable, \texttt{H5Pappend\_filter} returns \texttt{H5E\_NOFILTER}
 at the call site rather than deferring failure to \texttt{H5Dcreate} or
-I/O time.  For Parallel HDF5, all ranks call \texttt{H5Pset\_filter\_params}
+I/O time.  For Parallel HDF5, all ranks call \texttt{H5Pappend\_filter}
 with identical arguments; a failure on any rank is handled locally before
 any collective \texttt{H5Dcreate} is issued.  Applications that want to
 probe filter availability before committing to a DCPL configuration should
@@ -190,7 +190,7 @@ on the Python/Cython side.  Because \texttt{H5Pset\_filter} is unchanged by
 this RFC, these bindings require \textbf{no changes and no recompilation}.
 
 Should h5py or another binding wish to expose the string form to Python
-callers, it would call \texttt{H5Pset\_filter\_params} from Cython by
+callers, it would call \texttt{H5Pappend\_filter} from Cython by
 declaring \texttt{H5Z\_params\_t} as a Cython \texttt{cdef} struct and
 populating it by field assignment (the same named-variable pattern used
 for C++, since C99 compound literals are not available in Cython):
@@ -225,17 +225,17 @@ should update the plugin to the \texttt{>=} validation convention.
 \subsection{VOL Connector Interaction}
 
 Filters are applied to chunks by the native VOL connector during I/O.
-\texttt{H5Pset\_filter\_params} resolves any parameter string into standard
+\texttt{H5Pappend\_filter} resolves any parameter string into standard
 \texttt{cd\_values} before modifying the DCPL. From the VOL connector's perspective,
 the DCPL contains the same filter ID, flags, and \texttt{cd\_values} as if
 \texttt{H5Pset\_filter} had been called directly.
 
 Therefore, no changes to the VOL connector interface are required. Third-party
 VOL connectors that intercept DCPLs will see standard filter configurations
-regardless of whether they were set via \texttt{H5Pset\_filter\_params} or
+regardless of whether they were set via \texttt{H5Pappend\_filter} or
 \texttt{H5Pset\_filter}.
 
-Parameter string resolution occurs at \texttt{H5Pset\_filter\_params}
+Parameter string resolution occurs at \texttt{H5Pappend\_filter}
 call time, before any dataset is opened or created. It therefore has no
 interaction with SWMR (which governs I/O access patterns on open datasets) or
 with asynchronous VOL event sets (which are populated after the DCPL is fully
@@ -247,7 +247,7 @@ DAOS~VOL) receive a DCPL whose filter entries are already in \texttt{cd\_values}
 form.  A remote server that natively understands key=value filter strings cannot
 recover the original string from \texttt{cd\_values} without calling
 \texttt{get\_config}.  This is an intentional trade-off: resolution at the
-\texttt{H5Pset\_filter\_params} call site is the simplest design that keeps the
+\texttt{H5Pappend\_filter} call site is the simplest design that keeps the
 VOL interface unchanged.  Remote VOLs that require string-form parameters for
 their own API can call \texttt{H5Pget\_filter\_params\_by\_idx} (which invokes
 \texttt{get\_config}) to reconstruct a best-effort string from the stored
@@ -258,7 +258,7 @@ The reconstruction path above requires the filter plugin to be installed on the
 \emph{client} machine so that \texttt{get\_config} can be invoked.  For true
 thin-client REST deployments where the client has no local copy of the plugin,
 neither the original string nor a reconstructed equivalent is available after
-\texttt{H5Pset\_filter\_params} returns.  This is a direct consequence of the
+\texttt{H5Pappend\_filter} returns.  This is a direct consequence of the
 eager-parsing design and is the primary trade-off of resolving strings at
 property-list configuration time rather than at dataset creation time on the
 server.  Applications targeting thin-client REST VOLs that need to forward
@@ -291,7 +291,7 @@ The existing \texttt{UD=id,flags,...} syntax is extended to accept a parameter
 string in place of the raw \texttt{cd\_values} sequence when the filter is a v3
 plugin that implements \texttt{set\_config}. The \texttt{h5repack} parser detects
 whether the values following the flags field are a key=value string or a raw
-integer sequence and dispatches accordingly---calling \texttt{H5Pset\_filter\_params}
+integer sequence and dispatches accordingly---calling \texttt{H5Pappend\_filter}
 with \texttt{H5Z\_PARAMS\_STR} for the string form and \texttt{H5Z\_PARAMS\_RAW}
 for the raw integer form.
 The old built-in aliases (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{SOFF})
@@ -510,7 +510,7 @@ public static native int H5Pappend_filter(
 
 Each JNI implementation (in \texttt{H5P.c} on the native side) constructs
 the appropriate \texttt{H5Z\_params\_t} value using \texttt{H5Z\_PARAMS\_STR}
-or \texttt{H5Z\_PARAMS\_RAW} and calls \texttt{H5Pset\_filter\_params}.
+or \texttt{H5Z\_PARAMS\_RAW} and calls \texttt{H5Pappend\_filter}.
 The \texttt{String} overload converts the Java string to a NUL-terminated
 \texttt{const char~*} via \texttt{GetStringUTFChars} before constructing
 the \texttt{H5Z\_params\_t}.

@@ -64,9 +64,9 @@ introduces no build or runtime dependency.
   escape mechanism; a single-quote character cannot appear inside a single-quoted
   value. Single-quoted values are particularly convenient when the parameter string
   is set via a shell double-quoted environment variable assignment:
-  \begin{quote}\ttfamily
-    export HDF5\_FILTER\_PARAMS="desc='fast compression',level=6"
-  \end{quote}
+  \begin{minted}{bash}
+export HDF5_FILTER_PARAMS="desc='fast compression',level=6"
+  \end{minted}
 \item \textbf{Order of operations for parsing:} split the parameter string on commas
   (respecting quoted regions) $\rightarrow$ split each token on the first
   equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
@@ -139,6 +139,8 @@ The table below summarises which characters are permitted in each position of
 a parameter string.
 
 \begin{center}
+\small
+\setlength{\tabcolsep}{4pt}
 \renewcommand{\arraystretch}{1.2}
 \begin{tabularx}{\textwidth}{>{\ttfamily}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
 \toprule

@@ -284,10 +284,10 @@ These tests confirm that no existing behavior is broken.
   \texttt{H5Pset\_filter} with the same integer ID and \texttt{cd\_values} as before.
   Data written and read through such a filter before and after the feature
   introduction is byte-identical.
-\item \texttt{reg-02}: \texttt{H5Pset\_filter\_params} with \texttt{params=NULL} for a v2 filter
+\item \texttt{reg-02}: \texttt{H5Pappend\_filter} with \texttt{params=NULL} for a v2 filter
   succeeds (\texttt{NULL} is treated as ``no parameters'', equivalent to
   \texttt{H5Z\_PARAMS\_RAW(0, NULL)}).
-\item \texttt{reg-03}: \texttt{H5Pset\_filter\_params} with \texttt{H5Z\_PARAMS\_STRING} for a
+\item \texttt{reg-03}: \texttt{H5Pappend\_filter} with \texttt{H5Z\_PARAMS\_STRING} for a
   v2 filter that does NOT implement \texttt{set\_config} returns \texttt{H5E\_UNSUPPORTED}.
 \item \texttt{reg-04a}: The existing \texttt{H5Pget\_filter2} continues to return the
   \texttt{name} field from the class struct (the debug comment) for v2 plugins.
@@ -315,12 +315,12 @@ These tests require a Parallel HDF5 build and at least two MPI ranks.
 
 \begin{itemize}
 \item \texttt{par-01} (\textbf{DCPL consistency}): All ranks call
-  \texttt{H5Pset\_filter\_params} with the same filter ID and parameter string; verify
+  \texttt{H5Pappend\_filter} with the same filter ID and parameter string; verify
   that the resulting \texttt{cd\_values} in the DCPL are byte-identical across ranks
   before \texttt{H5Dcreate}.
 \item \texttt{par-02} (\textbf{rank failure propagation}): Simulate a missing plugin
   on one rank (e.g., by unsetting \texttt{HDF5\_PLUGIN\_PATH} on rank~1 only).
-  Verify that the failing rank returns an error from \texttt{H5Pset\_filter\_params} (or from
+  Verify that the failing rank returns an error from \texttt{H5Pappend\_filter} (or from
   \texttt{H5Dcreate}, depending on when plugin loading occurs) and that the
   application can detect this and abort collectively without an MPI deadlock.
 \item \texttt{par-03} (\textbf{debug-build consistency check}): In a debug build
@@ -349,8 +349,8 @@ These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
   call \texttt{H5Pget\_filter\_params\_by\_idx} on pipeline entries that may include that
   filter.  Lookups see a consistent state (plugin absent or present);
   no partial or corrupt state.
-\item \texttt{ts-03} (\textbf{concurrent \texttt{H5Pset\_filter\_params}}): Threads each create
-  their own DCPL and call \texttt{H5Pset\_filter\_params} concurrently for the same built-in
+\item \texttt{ts-03} (\textbf{concurrent \texttt{H5Pappend\_filter}}): Threads each create
+  their own DCPL and call \texttt{H5Pappend\_filter} concurrently for the same built-in
   filter ID.  All calls succeed without error or data corruption (property
   lists are per-object and not shared).
 \item \texttt{ts-04} (\textbf{on-demand plugin scan under contention}): Arrange for a
@@ -434,7 +434,7 @@ be used via the existing \texttt{H5Pset\_filter} API. Clear documentation and a 
 barrier to v3 adoption mitigate this.
 
 \verysubsection{Parsing overhead for small-data workloads}
-The string API adds parsing cost at \texttt{H5Pset\_filter\_params} call time:
+The string API adds parsing cost at \texttt{H5Pappend\_filter} call time:
 one linear pass over the parameter string (bounded by
 \texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096~bytes) per filter, followed by two
 invocations of the \texttt{set\_config} callback (the two-pass size-query
@@ -448,7 +448,7 @@ creation.
 
 Applications that are sensitive to dataset-creation latency and configure the
 same filter pipeline repeatedly should construct the DCPL once using
-\texttt{H5Pset\_filter\_params} and reuse it across multiple \texttt{H5Dcreate}
+\texttt{H5Pappend\_filter} and reuse it across multiple \texttt{H5Dcreate}
 calls, avoiding repeated parsing. This is already the recommended practice for
 \texttt{H5Pset\_filter} and does not change with the new API.
 
