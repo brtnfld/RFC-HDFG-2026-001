@@ -12,7 +12,7 @@ floating-point parameters and producing opaque configurations that are
 hostile to CLI tools and high-level language bindings.
 
 The proposed design
-introduces \texttt{H5Pset\_filter\_params}, which accepts a filter ID and
+introduces \texttt{H5Pappend\_filter}, which accepts a filter ID and
 either a raw \texttt{cd\_values} array or a human-readable key=value parameter
 string via a tagged union \texttt{H5Z\_params\_t}, resolving string parameters
 into standard \texttt{cd\_values} at configuration time. Filters
