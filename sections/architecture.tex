@@ -875,22 +875,22 @@ This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
 \label{sec:cd-packing}
 
 \begin{minted}{c}
-herr_t H5Z_cd_pack_double  (double val,
-                            unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Z_cd_unpack_double(const unsigned *slots, size_t n_slots, double *val);
+herr_t H5Zcd_pack_double  (double val,
+                           unsigned *slots, size_t cap, size_t *n_used);
+herr_t H5Zcd_unpack_double(const unsigned *slots, size_t n_slots, double *val);
 
-herr_t H5Z_cd_pack_float   (float val,
-                            unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Z_cd_unpack_float (const unsigned *slots, size_t n_slots, float *val);
+herr_t H5Zcd_pack_float   (float val,
+                           unsigned *slots, size_t cap, size_t *n_used);
+herr_t H5Zcd_unpack_float (const unsigned *slots, size_t n_slots, float *val);
 
-herr_t H5Z_cd_pack_int64   (int64_t val,
-                            unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Z_cd_unpack_int64 (const unsigned *slots, size_t n_slots, int64_t *val);
+herr_t H5Zcd_pack_int64   (int64_t val,
+                           unsigned *slots, size_t cap, size_t *n_used);
+herr_t H5Zcd_unpack_int64 (const unsigned *slots, size_t n_slots, int64_t *val);
 
-herr_t H5Z_cd_pack_string  (const char *str,
-                            unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Z_cd_unpack_string(const unsigned *slots, size_t n_slots,
-                            char *buf, size_t bufsz);
+herr_t H5Zcd_pack_string  (const char *str,
+                           unsigned *slots, size_t cap, size_t *n_used);
+herr_t H5Zcd_unpack_string(const unsigned *slots, size_t n_slots,
+                           char *buf, size_t bufsz);
 \end{minted}
 
 \verysubsection{Description}
