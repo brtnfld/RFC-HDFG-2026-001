@@ -74,7 +74,9 @@ This RFC introduces no on-disk format changes.  The string configuration
 is resolved at configuration time into \texttt{cd\_values} using the
 existing \texttt{H5O\_PLINE\_VERSION\_2} format---output is byte-identical
 to an equivalent \texttt{H5Pset\_filter} call.  Typed on-disk parameter
-storage (per-slot type tags) is deferred to a follow-on RFC.
+storage (per-slot type tags, which would enable exact round-trip of
+floating-point parameters) is deferred to a follow-on RFC that would
+extend \texttt{H5O\_PLINE\_VERSION}.
 
 \subsection{Source Compatibility}
 
@@ -96,8 +98,107 @@ parameter, or if they require no parameters. Plugin authors can upgrade to
 
 
 %% ======================================================================
-%%  Section 11 – Open Questions
+%%  Section 11 – Risks
 %% ======================================================================
+\section{Risks}
+\label{sec:risks}
+
+\verysubsection{C++ compound literal incompatibility}
+The \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW} macros use C99
+compound literals, which are not valid in standard C++.  The macros use
+\texttt{\#ifdef \_\_cplusplus} guards to provide C++-compatible
+initialisers; C++ callers using \texttt{H5Z\_PARAMS\_STRING} should prefer
+the named-variable form documented in \SectionRef{sec:append-filter}.
+This is a documentation and testing obligation: the HDF5 test suite must
+compile the macro forms under both a C99 compiler and a C++11 (or later)
+compiler to confirm portability.
+
+\verysubsection{Two-pass \texttt{set\_config} developer error}
+The two-pass size-query protocol requires \texttt{set\_config} to report the
+same \texttt{cd\_nelmts} on both invocations.  A developer who uses stateful
+parsing (e.g., \texttt{strtok} on a modified copy of the string, or a
+scan-forward pointer that is not reset) may produce a different count on the
+second pass, triggering a library error or, in the worst case, a buffer
+overrun before the library's second-pass capacity check catches it.
+Mitigation: the library enforces the invariant by comparing first-pass and
+second-pass \texttt{cd\_nelmts} and rejecting mismatches; the
+\texttt{set\_config} template in \SectionRef{sec:set-config-template}
+demonstrates the safe pattern; and the callback contract tests
+(\texttt{cb-02}, \texttt{cb-03}) exercise mismatch detection.  Documentation
+in \texttt{H5Zdevelop.h} explicitly warns against stateful parsing.
+
+\verysubsection{Lossy round-trip user expectations}
+Users and test suites often expect strict string equality after a
+set-then-get round trip (\texttt{set\_config(s)} $\rightarrow$
+\texttt{get\_config()} $\rightarrow$ $s' = s$).  Because
+\texttt{cd\_values} is a lossy encoding for floating-point parameters
+(e.g., a \texttt{double} rate quantised through \texttt{unsigned int}
+slots), the reconstructed string $s'$ may differ from $s$ in decimal
+representation even when the configuration is semantically identical.
+The RFC addresses this in two places: the introspection note in
+\SectionRef{sec:introspection} states that reconstructed strings are
+informational only, and the round-trip tests (\SectionRef{sec:test-builtin-roundtrip})
+verify \texttt{cd\_values} equality rather than string equality.  The
+API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
+this caveat so that callers are not surprised.
+
+\verysubsection{Legacy plugin \texttt{cd\_nelmts} validation hazard}
+When a file written with a v3-registered filter (which appends a
+\texttt{filter\_title} key to \texttt{cd\_values}) is opened by an older
+HDF5 library through a v2 plugin, the plugin's execution callback receives
+a \texttt{cd\_nelmts} larger than it was written to expect.  Plugins that
+assert exact \texttt{cd\_nelmts} equality will fail the read.  Mitigation
+is documented in the field description (\SectionRef{sec:class3-struct}); a
+plugin migration guide produced alongside this RFC will cover the
+\texttt{>=} validation convention and other v2$\rightarrow$v3 migration
+steps.  Plugins must check that \texttt{cd\_nelmts} is \emph{at least} the
+expected count, not exactly equal.  The test suite includes a cross-version
+read test (\texttt{reg-06}) to verify this behaviour.
+
+\verysubsection{Grammar maintenance}
+The key=value format with quoted-value support constitutes a specification
+the library must support indefinitely. Future grammar extensions are backward-compatible: any
+string valid under the current grammar remains valid with the same
+semantics under future grammars. The semicolon is reserved in anticipation of
+a possible pipeline-string extension.
+
+\verysubsection{Plugin adoption}
+The value of the string API scales with the number of
+filters that implement \texttt{set\_config}. If adoption is slow, v2 plugins can only
+be used via the existing \texttt{H5Pset\_filter} API. Clear documentation and a low
+barrier to v3 adoption mitigate this.
+
+\verysubsection{Parsing overhead for small-data workloads}
+The string API adds parsing cost at \texttt{H5Pappend\_filter} call time:
+one linear pass over the parameter string (bounded by
+\texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096~bytes) per filter, followed by two
+invocations of the \texttt{set\_config} callback (the two-pass size-query
+protocol). For typical scientific workloads where dataset creation is
+infrequent relative to I/O, this overhead is negligible.
+
+In ``small data'' workloads that create thousands of lightweight datasets in a
+tight loop, the per-dataset overhead of string parsing could become measurable,
+though the dominant cost is already property list manipulation and object header
+creation.
+
+Applications that are sensitive to dataset-creation latency and configure the
+same filter pipeline repeatedly should construct the DCPL once using
+\texttt{H5Pappend\_filter} and reuse it across multiple \texttt{H5Dcreate}
+calls, avoiding repeated parsing. This is already the recommended practice for
+\texttt{H5Pset\_filter} and does not change with the new API.
+
+\noindent\textbf{Decision:} The raw-string callback interface is retained.
+\texttt{set\_config} receives the parameter string as \texttt{const char
+*params} and uses \texttt{H5Zconfig\_get\_param} for key lookup.  Parsing
+overhead is negligible: a typical filter string is under 100~bytes with
+fewer than five keys, making two-pass parsing cost microseconds against a
+millisecond dataset-creation operation.  Switching to a tokenized interface
+would change the \texttt{H5Z\_set\_config\_func\_t} ABI, burden plugin
+authors with a new token-array API, and foreclose future flexibility.
+If parsing ever becomes measurable, token caching can be added inside the
+library transparently without changing the callback interface.
+
+
 %% ======================================================================
 %%  Section 12 – Test Plan
 %% ======================================================================
@@ -316,6 +417,18 @@ These tests confirm that no existing behavior is broken.
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
   \texttt{h5repack}.
+\item \texttt{reg-06} (\textbf{cross-version read}): Write a dataset using a v3-registered
+  plugin with a non-\texttt{NULL} \texttt{filter\_title} (so that extra \texttt{cd\_values}
+  slots are appended).  Read the file using a build of the library that presents only
+  a v2 version of the same plugin.  Verify that the dataset is read correctly---the
+  v2 plugin's execution callback must accept the larger \texttt{cd\_nelmts} and
+  return correct data.
+\item \texttt{reg-07} (\textbf{DCPL encode/decode round-trip}): Create a DCPL, append a
+  v3 filter via \texttt{H5Pappend\_filter} with a string parameter, then
+  \texttt{H5Pencode} the DCPL to a buffer.  \texttt{H5Pdecode} the buffer into a new
+  DCPL.  Verify that the decoded DCPL contains identical filter ID, flags, and
+  \texttt{cd\_values}---confirming that \texttt{set\_config} is not re-invoked on
+  decode.
 \end{itemize}
 
 
@@ -369,109 +482,5 @@ These tests require a thread-safe HDF5 build (\texttt{--enable-threadsafe}).
   simultaneously call \texttt{H5Zfilter\_avail} for that filter's ID.  Verify the
   plugin is registered exactly once and all threads receive a positive result.
 \end{itemize}
-
-
-
-
-%% ======================================================================
-%%  Section 13 – Risks
-%% ======================================================================
-\section{Risks}
-\label{sec:risks}
-
-\verysubsection{C++ compound literal incompatibility}
-The \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW} macros use C99
-compound literals, which are not valid in standard C++.  The macros use
-\texttt{\#ifdef \_\_cplusplus} guards to provide C++-compatible
-initialisers; C++ callers using \texttt{H5Z\_PARAMS\_STRING} should prefer
-the named-variable form documented in \SectionRef{sec:append-filter}.
-This is a documentation and testing obligation: the HDF5 test suite must
-compile the macro forms under both a C99 compiler and a C++11 (or later)
-compiler to confirm portability.
-
-\verysubsection{Two-pass \texttt{set\_config} developer error}
-The two-pass size-query protocol requires \texttt{set\_config} to report the
-same \texttt{cd\_nelmts} on both invocations.  A developer who uses stateful
-parsing (e.g., \texttt{strtok} on a modified copy of the string, or a
-scan-forward pointer that is not reset) may produce a different count on the
-second pass, triggering a library error or, in the worst case, a buffer
-overrun before the library's second-pass capacity check catches it.
-Mitigation: the library enforces the invariant by comparing first-pass and
-second-pass \texttt{cd\_nelmts} and rejecting mismatches; the
-\texttt{set\_config} template in \SectionRef{sec:set-config-template}
-demonstrates the safe pattern; and the callback contract tests
-(\texttt{cb-02}, \texttt{cb-03}) exercise mismatch detection.  Documentation
-in \texttt{H5Zdevelop.h} explicitly warns against stateful parsing.
-
-\verysubsection{Lossy round-trip user expectations}
-Users and test suites often expect strict string equality after a
-set-then-get round trip (\texttt{set\_config(s)} $\rightarrow$
-\texttt{get\_config()} $\rightarrow$ $s' = s$).  Because
-\texttt{cd\_values} is a lossy encoding for floating-point parameters
-(e.g., a \texttt{double} rate quantised through \texttt{unsigned int}
-slots), the reconstructed string $s'$ may differ from $s$ in decimal
-representation even when the configuration is semantically identical.
-The RFC addresses this in two places: the introspection note in
-\SectionRef{sec:introspection} states that reconstructed strings are
-informational only, and the round-trip tests (\SectionRef{sec:test-builtin-roundtrip})
-verify \texttt{cd\_values} equality rather than string equality.  The
-API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
-this caveat so that callers are not surprised.
-
-\verysubsection{Legacy plugin \texttt{cd\_nelmts} validation hazard}
-When a file written with a v3-registered filter (which appends a
-\texttt{filter\_title} key to \texttt{cd\_values}) is opened by an older
-HDF5 library through a v2 plugin, the plugin's execution callback receives
-a \texttt{cd\_nelmts} larger than it was written to expect.  Plugins that
-assert exact \texttt{cd\_nelmts} equality will fail the read.  Mitigation
-is documented in the field description (\SectionRef{sec:class3-struct}) and
-in the plugin migration guide: plugins must check that \texttt{cd\_nelmts}
-is \emph{at least} the expected count, not exactly equal.  The test suite
-must include a cross-version read test: write a dataset with a v3 plugin,
-then read it using a build of the library that presents only a v2 version
-of the same plugin.
-
-\verysubsection{Grammar maintenance}
-The key=value format with quoted-value support constitutes a specification
-the library must support indefinitely. Future grammar extensions are backward-compatible: any
-string valid under the current grammar remains valid with the same
-semantics under future grammars. The semicolon is reserved in anticipation of
-a possible pipeline-string extension.
-
-\verysubsection{Plugin adoption}
-The value of the string API scales with the number of
-filters that implement \texttt{set\_config}. If adoption is slow, v2 plugins can only
-be used via the existing \texttt{H5Pset\_filter} API. Clear documentation and a low
-barrier to v3 adoption mitigate this.
-
-\verysubsection{Parsing overhead for small-data workloads}
-The string API adds parsing cost at \texttt{H5Pappend\_filter} call time:
-one linear pass over the parameter string (bounded by
-\texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096~bytes) per filter, followed by two
-invocations of the \texttt{set\_config} callback (the two-pass size-query
-protocol). For typical scientific workloads where dataset creation is
-infrequent relative to I/O, this overhead is negligible.
-
-In ``small data'' workloads that create thousands of lightweight datasets in a
-tight loop, the per-dataset overhead of string parsing could become measurable,
-though the dominant cost is already property list manipulation and object header
-creation.
-
-Applications that are sensitive to dataset-creation latency and configure the
-same filter pipeline repeatedly should construct the DCPL once using
-\texttt{H5Pappend\_filter} and reuse it across multiple \texttt{H5Dcreate}
-calls, avoiding repeated parsing. This is already the recommended practice for
-\texttt{H5Pset\_filter} and does not change with the new API.
-
-\noindent\textbf{Decision:} The raw-string callback interface is retained.
-\texttt{set\_config} receives the parameter string as \texttt{const char
-*params} and uses \texttt{H5Zconfig\_get\_param} for key lookup.  Parsing
-overhead is negligible: a typical filter string is under 100~bytes with
-fewer than five keys, making two-pass parsing cost microseconds against a
-millisecond dataset-creation operation.  Switching to a tokenized interface
-would change the \texttt{H5Z\_set\_config\_func\_t} ABI, burden plugin
-authors with a new token-array API, and foreclose future flexibility.
-If parsing ever becomes measurable, token caching can be added inside the
-library transparently without changing the callback interface.
 
 \end{document}

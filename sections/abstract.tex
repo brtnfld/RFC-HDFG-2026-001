@@ -21,7 +21,7 @@ optional \texttt{set\_config}/\texttt{get\_config} callbacks and an optional
 \texttt{filter\_title} field that is packed into \texttt{cd\_values} at
 registration time, providing a persistent human-readable label for the filter
 that is available even when the plugin is not installed.
-All existing APIs, plugins, and files remain fully compatible.
+Existing call sites compile and function without modification; files written by a v3-aware library are readable by older libraries through v2 plugins that tolerate extra trailing \texttt{cd\_values} slots (see \S\ref{sec:class3-struct}).
 \end{abstract}
 
 \vfill

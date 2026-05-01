@@ -67,11 +67,12 @@ introduces no build or runtime dependency.
   \begin{minted}{bash}
 export HDF5_FILTER_PARAMS="desc='fast compression',level=6"
   \end{minted}
-\item \textbf{Order of operations for parsing:} split the parameter string on commas
-  (respecting quoted regions) $\rightarrow$ split each token on the first
-  equals sign $\rightarrow$ strip leading/trailing whitespace from both key and
-  value $\rightarrow$ apply quote processing to the value if it begins with
-  \texttt{"} (double-quoted) or \texttt{'} (single-quoted).
+\item \textbf{Order of operations for parsing:} Scan the parameter string
+  once, tracking quote state to identify token boundaries; emit a token at
+  each unquoted comma $\rightarrow$ split each token at the first unquoted
+  equals sign $\rightarrow$ strip leading/trailing whitespace from both key
+  and value $\rightarrow$ apply quote processing to the value if it begins
+  with \texttt{"} (double-quoted) or \texttt{'} (single-quoted).
 \item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
   string, the parser rejects the string with \texttt{H5E\_BADVALUE}. The parser
   can detect duplicates cheaply during a single pass by checking each key
@@ -107,12 +108,12 @@ export HDF5_FILTER_PARAMS="desc='fast compression',level=6"
   (= 4096) as the normative maximum parameter string length. Strings
   exceeding this limit are rejected with \texttt{H5E\_BADVALUE}
   (\SectionRef{sec:param-rules}).
-\item The maximum number of key-value parameters in a single parameter string
-  does not exceed the maximum number of \texttt{cd\_values} elements permitted
-  by the library.  Strings containing more tokens than this bound are
-  rejected with \texttt{H5E\_BADVALUE}, as a parameter count beyond what
-  \texttt{cd\_values} can represent provides no additional expressive power
-  and is a potential vector for maliciously crafted strings.
+\item The library defines the public constant \texttt{H5Z\_CONFIG\_MAX\_PARAMS}
+  (= 64) as the maximum number of key-value tokens in a single parameter
+  string.  Strings containing more tokens are rejected with
+  \texttt{H5E\_BADVALUE}.  This bound is intentionally well below
+  \texttt{UINT16\_MAX} (the per-filter \texttt{cd\_values} capacity) to bound
+  parsing work and limit exposure to maliciously crafted strings.
 \item \textbf{Locale independence:} The library's parameter string parser is
   locale-independent. All character classification (whitespace detection,
   case folding) uses the C locale (ASCII-only \texttt{tolower()}, not
@@ -445,6 +446,9 @@ typedef struct H5Z_class3_t {
   larger than this is rejected with \texttt{H5E\_BADVALUE}.  The parameter
   type is \texttt{size\_t} rather than a narrower type so that the limit can be
   raised in a future format revision without changing the callback signature.
+  Note: the per-string token count is separately bounded by
+  \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64), a parser-level limit applied before
+  \texttt{set\_config} is ever invoked (\SectionRef{sec:param-rules}).
 \item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array in
   bytes (0 when \texttt{cd\_values} is \texttt{NULL}).
 \item Returns non-negative on success, negative on failure.
@@ -587,27 +591,17 @@ conditional compilation to provide equivalent C++-compatible initialisers:
 #ifdef __cplusplus
 /* C++ does not support C99 compound literals.
    H5Z_PARAMS_RAW can be expressed as a brace-initialised aggregate.
-   H5Z_PARAMS_STR cannot: a C++ aggregate initialiser cannot carry a
-   runtime pointer argument without risking silent argument loss.
-   C++ callers MUST use the named-variable form instead (see below). */
+   H5Z_PARAMS_STR is intentionally disabled: a C++ aggregate initialiser
+   cannot carry a runtime pointer argument without risking silent argument
+   loss.  C++ callers MUST use the named-variable form instead (see below).
+   The undefined-function declaration below produces a clear, descriptive
+   linker/compiler error that includes the macro argument. */
 #define H5Z_PARAMS_RAW(n, vals) \
     (H5Z_params_t{ H5Z_PARAMS_CDVALUES, { { (n), (vals) } } })
-/* H5Z_PARAMS_STR expands to a declaration (static_assert), so
-   &H5Z_PARAMS_STR(...) is syntactically invalid -- the compiler error
-   may be a syntax error rather than a clean assertion message.
-   If the resulting diagnostics are too noisy, implementors may
-   substitute the undefined-function form below, which produces a
-   clear linker/compiler error that includes the argument:
-     extern H5Z_params_t
-     H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(const char*);
-     #define H5Z_PARAMS_STR(s) \
-         H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(s)
-   Both forms meet the safety goal: the macro is unusable in C++. */
+extern H5Z_params_t
+H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(const char *);
 #define H5Z_PARAMS_STR(s) \
-    static_assert(false, \
-        "H5Z_PARAMS_STR is not available in C++. " \
-        "Use the named-variable form: " \
-        "H5Z_params_t p; p.type = H5Z_PARAMS_STRING; p.u.str = (s);")
+    H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(s)
 #else
 /* C99: compound literals with designated initialisers */
 #define H5Z_PARAMS_RAW(n, vals) \
@@ -635,7 +629,7 @@ H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
 Both macros expand to C99 compound literals.  A compound literal has
 automatic storage duration within its enclosing block---it is not a
 temporary that expires at the semicolon.  Passing \texttt{\&H5Z\_PARAMS\_STR("level=6")}
-to \texttt{H5Pset\_filter\_params} is therefore valid C99: the literal's
+to \texttt{H5Pappend\_filter} is therefore valid C99: the literal's
 address is well-defined for the duration of the call.  However, storing
 that address in a pointer that outlives the enclosing block is undefined
 behaviour; callers who need to store an \texttt{H5Z\_params\_t} beyond a
@@ -667,12 +661,17 @@ Configures the filter identified by \texttt{id} and appends it to the
 existing filter pipeline on \texttt{plist\_id}.  The pipeline is subject to
 the existing maximum of \texttt{H5Z\_MAX\_NFILTERS} (32) entries.
 
-\texttt{H5Pset\_filter\_params} accepts either a raw \texttt{cd\_values} array
+\texttt{H5Pappend\_filter} accepts either a raw \texttt{cd\_values} array
 (\texttt{H5Z\_PARAMS\_CDVALUES}) or a key=value parameter string
 (\texttt{H5Z\_PARAMS\_STRING}) through the tagged union \texttt{H5Z\_params\_t}.
 Passing \texttt{NULL} for \texttt{params} is equivalent to
 \texttt{H5Z\_PARAMS\_CDVALUES} with \texttt{cd\_nelmts = 0} and is valid for
 filters that take no parameters.
+
+The name \texttt{H5Pappend\_filter} reflects its semantics: each call appends
+a new entry to the filter pipeline.  Modifying the parameters of an existing
+pipeline entry is handled by \texttt{H5Pmodify\_filter} (see the out-of-scope
+note in \SectionRef{sec:intro}).
 
 When \texttt{type} is \texttt{H5Z\_PARAMS\_CDVALUES}, the function behaves
 identically to \texttt{H5Pset\_filter}: the \texttt{cd\_values} array is stored
@@ -682,7 +681,7 @@ When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
 loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
 translate the parameter string into \texttt{cd\_values}, and stores the result.
 The plugin must be available at call time; if it cannot be found,
-\texttt{H5Pset\_filter\_params} returns \texttt{H5E\_NOFILTER} immediately
+\texttt{H5Pappend\_filter} returns \texttt{H5E\_NOFILTER} immediately
 rather than deferring the failure to \texttt{H5Dcreate}.
 
 \verysubsection{Behavioral note on flags}
@@ -1030,16 +1029,20 @@ my_filter_set_config(const char *params, unsigned *flags,
   \texttt{cd\_values\_size >= *cd\_nelmts * sizeof(*cd\_values)} before writing.
 \item For floating-point conversions, use C-locale \texttt{strtod} (see locale
   requirements in \SectionRef{sec:param-rules} and \SectionRef{sec:callback-specs}).
+\item When looking up multiple parameters, reset \texttt{buf\_size} to the
+  buffer capacity before each call to \texttt{H5Zconfig\_get\_param}, since
+  the function sets \texttt{*buf\_size} to the required length on return.
 \end{itemize}
 
 \textbf{Note on double parsing:} Because \texttt{cd\_nelmts} may vary depending on
 the parameter values (not just their presence), the two-pass protocol requires
 the callback to parse the parameter string twice.  Filters that wish to avoid
-this overhead may allocate a worst-case \texttt{cd\_values} buffer on the stack
-(bounded by \texttt{UINT16\_MAX} but in practice much smaller) and skip the
-size-query pass by always reporting the maximum count, filling unused slots
-with a sentinel value.  The library does not mandate which approach is used;
-both are conforming.
+this overhead may report a fixed worst-case \texttt{cd\_nelmts} on both passes,
+allocate that many slots on the stack, and fill unused trailing slots with a
+sentinel value.  This is conforming provided the worst-case count is a genuine
+constant---independent of the parameter string---so that both passes always
+return the same value and the two-pass identity contract is satisfied.
+The library does not mandate which approach is used.
 
 
 \subsection{Pipeline-in-a-String API}

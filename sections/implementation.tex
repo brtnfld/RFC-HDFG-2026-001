@@ -20,17 +20,12 @@ consistently regardless of whether the filter was configured via
 \texttt{H5Pset\_szip} or \texttt{H5Pappend\_filter}.
 
 \verysubsection{Implementation note}
-Built-in filters are currently registered internally as \texttt{H5Z\_class2\_t}
-structs. Each built-in filter's internal registration is converted to
-\texttt{H5Z\_class3\_t} with \texttt{set\_config} and \texttt{get\_config} added directly to the
-struct definition (e.g., in \texttt{H5Zdeflate.c}, \texttt{H5Zszip.c}, etc.).
-
-This conversion is entirely internal to the library. External code never
-directly accesses these struct definitions, so there is no public API
-compatibility concern. The converted structs are passed to the existing
-\texttt{H5Zregister()} path, which already handles \texttt{H5Z\_class3\_t} registrations
-(\SectionRef{sec:class3}). No parallel mechanism or additional internal API is
-required.
+Each built-in filter is converted to \texttt{H5Z\_class3\_t} in its existing
+source file (e.g., \texttt{H5Zdeflate.c}, \texttt{H5Zszip.c}), with
+\texttt{set\_config} and \texttt{get\_config} added to the struct definition.
+This is an entirely internal change; the existing \texttt{H5Zregister()} path
+(\SectionRef{sec:class3}) handles \texttt{H5Z\_class3\_t} registrations without
+modification.
 
 \subsection{Deflate}
 
@@ -152,18 +147,25 @@ one rank and broadcast it to all others (e.g., via serialisation through
 \texttt{H5Pencode}/\texttt{H5Pdecode}) rather than having each rank
 independently invoke \texttt{H5Pappend\_filter}.
 
+\textbf{Note:} \texttt{H5Pdecode} reconstructs a DCPL from the serialised
+bytes by copying the stored \texttt{cd\_values} directly; the filter's
+\texttt{set\_config} callback is not re-invoked.  The broadcast pattern is
+therefore safe on heterogeneous clusters: all ranks obtain an identical
+DCPL from the same binary buffer.
+
 \verysubsection{Diagnosing rank-inconsistent DCPLs}
 A DCPL mismatch across MPI ranks at \texttt{H5Dcreate} time produces an
 \texttt{H5E\_CANTCREATE} error in debug builds but can manifest as a hang
 or silent data corruption in optimised builds depending on the MPI
-implementation.  To aid diagnosis, the environment variable
-\texttt{HDF5\_MPI\_CHECK\_DCPL} (proposed for a future release) would
-cause the library to perform an \texttt{MPI\_Allreduce} hash of the
-serialised DCPL before each collective \texttt{H5Dcreate} and emit a
-warning if any rank's hash differs.  In the interim, applications can
-replicate this check manually: serialise the DCPL with \texttt{H5Pencode}
-on every rank, hash the result, \texttt{MPI\_Allreduce} the hashes, and
-abort collectively before \texttt{H5Dcreate} if any hash differs.
+implementation.  Applications can diagnose rank divergence manually:
+serialise the DCPL with \texttt{H5Pencode} on every rank, hash the result,
+\texttt{MPI\_Allreduce} the hashes, and abort collectively before
+\texttt{H5Dcreate} if any hash differs.
+
+\textbf{Future work:} A dedicated environment variable
+\texttt{HDF5\_MPI\_CHECK\_DCPL} is proposed for a future release; it would
+automate the above check at each collective \texttt{H5Dcreate} and emit a
+warning when any rank's hash differs.
 
 \verysubsection{Failure mode and plugin loading order}
 

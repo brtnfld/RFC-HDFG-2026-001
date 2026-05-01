@@ -9,8 +9,8 @@
 
 This document describes the high-level design for a new unified filter
 configuration interface for HDF5 I/O filters. The feature adds a usability
-layer on top of the existing filter machinery, allowing users to specify filter
-parameters as either raw \texttt{cd\_values} arrays or human-readable key=value
+layer on top of the existing filter machinery, accepting filter parameters as
+either raw \texttt{cd\_values} arrays or human-readable \texttt{key=value}
 strings through a single new API, \texttt{H5Pappend\_filter}.
 
 \subsection{Scope}
@@ -94,9 +94,8 @@ no standard way to recover the original intent of the configuration (e.g.,
 \begin{enumerate}
 \item Users can configure any filter using human-readable named
    parameters.
-\item Filter plugins are addressed by integer ID via \texttt{H5Pappend\_filter}
-   (\SectionRef{sec:append-filter}). Integer IDs are assigned by the HDF Group
-   filter registry~\cite{hdf5registeredfilters}.
+\item Configured filter pipelines are introspectable in human-readable form,
+   with labels that persist in the file independent of plugin availability.
 \item All existing APIs, plugins, and call sites continue to work without
    modification.
 \item The design supports both built-in and dynamically loaded plugin
