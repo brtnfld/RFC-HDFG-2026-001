@@ -200,7 +200,8 @@ for C++, since C99 compound literals are not available in Cython):
 cdef H5Z_params_t p
 p.type  = H5Z_PARAMS_STRING
 p.u.str = b"level=6"
-H5Pappend_filter(plist_id, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p)
+H5Pappend_filter(plist_id, H5Z_FILTER_DEFLATE,
+                 H5Z_FLAG_MANDATORY, &p)
 \end{minted}
 
 \verysubsection{\texttt{filter\_title} round-trip hazard for h5py}
