@@ -227,47 +227,18 @@ should update the plugin to the \texttt{>=} validation convention.
 
 \subsection{VOL Connector Interaction}
 
-Filters are applied to chunks by the native VOL connector during I/O.
+No changes to the VOL connector interface are required.
 \texttt{H5Pappend\_filter} resolves any parameter string into standard
-\texttt{cd\_values} before modifying the DCPL. From the VOL connector's perspective,
-the DCPL contains the same filter ID, flags, and \texttt{cd\_values} as if
-\texttt{H5Pset\_filter} had been called directly.
+\texttt{cd\_values} before modifying the DCPL, so VOL connectors see filter
+entries indistinguishable from those set via \texttt{H5Pset\_filter}, and
+\texttt{H5Pget\_filter2} returns the same raw \texttt{cd\_values}.
 
-Therefore, no changes to the VOL connector interface are required. Third-party
-VOL connectors that intercept DCPLs will see standard filter configurations
-regardless of whether they were set via \texttt{H5Pappend\_filter} or
-\texttt{H5Pset\_filter}.
-
-Parameter string resolution occurs at \texttt{H5Pappend\_filter}
-call time, before any dataset is opened or created. It therefore has no
-interaction with SWMR (which governs I/O access patterns on open datasets) or
-with asynchronous VOL event sets (which are populated after the DCPL is fully
-constructed).
-
-\verysubsection{Note for pass-through and network VOL connectors}
-VOL connectors that proxy dataset creation to a remote server (e.g., REST~VOL,
-DAOS~VOL) receive a DCPL whose filter entries are already in \texttt{cd\_values}
-form.  A remote server that natively understands key=value filter strings cannot
-recover the original string from \texttt{cd\_values} without calling
-\texttt{get\_config}.  This is an intentional trade-off: resolution at the
-\texttt{H5Pappend\_filter} call site is the simplest design that keeps the
-VOL interface unchanged.  Remote VOLs that require string-form parameters for
-their own API can call \texttt{H5Pget\_filter\_params\_by\_idx} (which invokes
-\texttt{get\_config}) to reconstruct a best-effort string from the stored
-\texttt{cd\_values} before forwarding the request.
-
-\textbf{Known limitation for thin-client architectures:}
-The reconstruction path above requires the filter plugin to be installed on the
-\emph{client} machine so that \texttt{get\_config} can be invoked.  For true
-thin-client REST deployments where the client has no local copy of the plugin,
-neither the original string nor a reconstructed equivalent is available after
-\texttt{H5Pappend\_filter} returns.  This is a direct consequence of the
-eager-parsing design and is the primary trade-off of resolving strings at
-property-list configuration time rather than at dataset creation time on the
-server.  Applications targeting thin-client REST VOLs that need to forward
-filter parameters as strings should use \texttt{H5Pset\_filter} directly with
-raw \texttt{cd\_values} constructed offline, or negotiate a separate
-out-of-band configuration channel with the server.
+Thin-client architectures that proxy dataset creation to a remote server
+(e.g., REST~VOL) and have no local copy of the filter plugin cannot recover
+the original parameter string after \texttt{H5Pappend\_filter} returns. This
+is the trade-off of resolving strings at property-list configuration time;
+such applications should use \texttt{H5Pset\_filter} with raw \texttt{cd\_values}
+or negotiate string-form parameters out-of-band with the server.
 
 
 %% ======================================================================

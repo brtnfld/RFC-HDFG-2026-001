@@ -680,9 +680,29 @@ in the DCPL without invoking any plugin callback.
 When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
 loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
 translate the parameter string into \texttt{cd\_values}, and stores the result.
-The plugin must be available at call time; if it cannot be found,
-\texttt{H5Pappend\_filter} returns \texttt{H5E\_NOFILTER} immediately
-rather than deferring the failure to \texttt{H5Dcreate}.
+
+\textbf{Empty-string fast path:} If \texttt{u.str} is \texttt{NULL} or the empty
+string \texttt{""}, \texttt{H5Pappend\_filter} treats the call as ``no
+parameters''---equivalent to \texttt{H5Z\_PARAMS\_CDVALUES} with
+\texttt{cd\_nelmts~=~0}---regardless of whether the filter implements
+\texttt{set\_config}. The plugin is not loaded and no callback is invoked.
+This makes parameterless filters (shuffle, fletcher32, nbit) usable through
+the \texttt{H5Z\_PARAMS\_STRING} form without forcing them to provide a
+\texttt{set\_config} callback that has nothing to do.
+
+\verysubsection{Eager plugin loading}
+\textbf{Note:} Unlike \texttt{H5Pset\_filter}, which stores raw \texttt{cd\_values}
+without consulting the plugin, \texttt{H5Pappend\_filter} with
+\texttt{H5Z\_PARAMS\_STRING} loads the filter plugin and invokes its
+\texttt{set\_config} callback at call time. The plugin must therefore be
+available when \texttt{H5Pappend\_filter} is called, not merely when
+\texttt{H5Dcreate} runs. If the plugin cannot be found,
+\texttt{H5Pappend\_filter} returns \texttt{H5E\_NOFILTER} immediately rather
+than deferring the failure to \texttt{H5Dcreate}. This is a deliberate
+design choice---fail-fast at configuration time gives clearer errors than
+deferred failure during dataset creation---but it differs from the lazy
+behavior of \texttt{H5Pset\_filter} and may surprise callers porting
+existing code.
 
 \verysubsection{Behavioral note on flags}
 The caller controls flags directly.  When \texttt{type} is
@@ -723,9 +743,11 @@ Non-negative on success; negative on failure.
 \begin{itemize}
 \item \texttt{H5E\_NOFILTER}---(\texttt{H5Z\_PARAMS\_STRING} only) The filter
   plugin could not be found or loaded.
-\item \texttt{H5E\_UNSUPPORTED}---(\texttt{H5Z\_PARAMS\_STRING} only) The filter
-  was found but does not implement \texttt{set\_config}.  Use
-  \texttt{H5Z\_PARAMS\_CDVALUES} instead.
+\item \texttt{H5E\_UNSUPPORTED}---(\texttt{H5Z\_PARAMS\_STRING} only) The
+  filter was found but does not implement \texttt{set\_config}, and a
+  non-empty parameter string was supplied.  An empty string or
+  \texttt{NULL} is accepted regardless of whether \texttt{set\_config} is
+  present (see the empty-string fast path in the Description).
 \item \texttt{H5E\_BADVALUE}---The parameter string is malformed, the
   \texttt{params} type field is unrecognised, or \texttt{set\_config} rejected
   the parameter string.
