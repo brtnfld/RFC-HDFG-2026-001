@@ -103,16 +103,6 @@ parameter, or if they require no parameters. Plugin authors can upgrade to
 \section{Risks}
 \label{sec:risks}
 
-\verysubsection{C++ compound literal incompatibility}
-The \texttt{H5Z\_PARAMS\_STR} and \texttt{H5Z\_PARAMS\_RAW} macros use C99
-compound literals, which are not valid in standard C++.  The macros use
-\texttt{\#ifdef \_\_cplusplus} guards to provide C++-compatible
-initialisers; C++ callers using \texttt{H5Z\_PARAMS\_STRING} should prefer
-the named-variable form documented in \SectionRef{sec:append-filter}.
-This is a documentation and testing obligation: the HDF5 test suite must
-compile the macro forms under both a C99 compiler and a C++11 (or later)
-compiler to confirm portability.
-
 \verysubsection{Two-pass \texttt{set\_config} developer error}
 The two-pass size-query protocol requires \texttt{set\_config} to report the
 same \texttt{cd\_nelmts} on both invocations.  A developer who uses stateful

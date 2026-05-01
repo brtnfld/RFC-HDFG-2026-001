@@ -194,8 +194,8 @@ this RFC, these bindings require \textbf{no changes and no recompilation}.
 Should h5py or another binding wish to expose the string form to Python
 callers, it would call \texttt{H5Pappend\_filter} from Cython by
 declaring \texttt{H5Z\_params\_t} as a Cython \texttt{cdef} struct and
-populating it by field assignment (the same named-variable pattern used
-for C++, since C99 compound literals are not available in Cython):
+populating it by field assignment (since C99 compound literals are not
+available in Cython):
 
 \begin{minted}{python}
 # Hypothetical Cython fragment (not part of this RFC)
@@ -546,8 +546,7 @@ public:
 \end{minted}
 
 Each \texttt{appendFilter} overload constructs the appropriate
-\texttt{H5Z\_params\_t} on the stack (using the named-variable form, since
-\texttt{H5Z\_PARAMS\_STR} is disabled in C++) and calls
+\texttt{H5Z\_params\_t} on the stack using the named-variable form and calls
 \texttt{H5Pappend\_filter}.  No new C entry point is required.  A matching
 \texttt{getFilterParams} method wraps \texttt{H5Pget\_filter\_params\_by\_idx}:
 
