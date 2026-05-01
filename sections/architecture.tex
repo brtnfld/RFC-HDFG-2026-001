@@ -602,49 +602,17 @@ typedef struct {
 } H5Z_params_t;
 \end{minted}
 
-Convenience initialiser macros are provided for the two common cases.
-Because C++ does not support C99 compound literals, the macros use
-conditional compilation to provide equivalent C++-compatible initialisers:
+Convenience initialiser macros are provided for the two common cases:
 
 \begin{minted}{c}
-#ifdef __cplusplus
-/* C++ does not support C99 compound literals.
-   H5Z_PARAMS_RAW can be expressed as a brace-initialised aggregate.
-   H5Z_PARAMS_STR is intentionally disabled: a C++ aggregate initialiser
-   cannot carry a runtime pointer argument without risking silent argument
-   loss.  C++ callers MUST use the named-variable form instead (see below).
-   The undefined-function declaration below produces a clear, descriptive
-   linker/compiler error that includes the macro argument. */
-#define H5Z_PARAMS_RAW(n, vals) \
-    (H5Z_params_t{ H5Z_PARAMS_CDVALUES, { { (n), (vals) } } })
-extern H5Z_params_t
-H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(const char *);
-#define H5Z_PARAMS_STR(s) \
-    H5Z_PARAMS_STR_unavailable_in_CXX_use_named_variable(s)
-#else
 /* C99: compound literals with designated initialisers */
 #define H5Z_PARAMS_RAW(n, vals) \
     ((H5Z_params_t){ H5Z_PARAMS_CDVALUES, { .raw = { (n), (vals) } } })
 #define H5Z_PARAMS_STR(s) \
     ((H5Z_params_t){ H5Z_PARAMS_STRING,   { .str  = (s)            } })
-#endif
 \end{minted}
 
-\noindent In C++, \texttt{H5Z\_PARAMS\_STR} is intentionally disabled via
-\texttt{static\_assert} to prevent silent argument loss (a macro that
-accepts an argument but cannot embed a runtime pointer in a brace-init
-would compile successfully while ignoring its payload).  C++ callers use
-the named-variable form:
-
-\begin{minted}{cpp}
-// Required C++ usage for string parameters
-H5Z_params_t p;
-p.type  = H5Z_PARAMS_STRING;
-p.u.str = "level=6";
-H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
-\end{minted}
-
-\verysubsection{Compound literal lifetime (C99)}
+\verysubsection{Compound literal lifetime}
 Both macros expand to C99 compound literals.  A compound literal has
 automatic storage duration within its enclosing block---it is not a
 temporary that expires at the semicolon.  Passing \texttt{\&H5Z\_PARAMS\_STR("level=6")}
