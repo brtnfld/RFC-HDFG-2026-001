@@ -237,38 +237,64 @@ introducing two new optional callbacks in a version~3 filter class structure.
 The existing version-to-struct mapping in HDF5 is:
 
 \begin{center}
-\begin{tabular}{lll}
+\begin{tabular}{ll}
 \toprule
-\textbf{Struct} & \textbf{Version Field} & \textbf{Constant} \\
+\textbf{Struct} & \textbf{Version Field} \\
 \midrule
-\texttt{H5Z\_class1\_t} & none (legacy) & --- \\
-\texttt{H5Z\_class2\_t} & \texttt{1} & \texttt{H5Z\_CLASS\_T\_VERS} \\
-\texttt{H5Z\_class3\_t} & \texttt{2} & \texttt{H5Z\_CLASS3\_T\_VERS} \\
+\texttt{H5Z\_class1\_t} & none (legacy) \\
+\texttt{H5Z\_class2\_t} & \texttt{1} \\
+\texttt{H5Z\_class3\_t} & \texttt{2} \\
 \bottomrule
 \end{tabular}
 \end{center}
 
-The dispatch logic in \texttt{H5Zregister()} currently works by checking
-\texttt{version != H5Z\_CLASS\_T\_VERS} first; any value other than
-\texttt{H5Z\_CLASS\_T\_VERS} is treated as a legacy \texttt{H5Z\_class1\_t} struct.
-No assumption is made about what that value will be.
+The version field is a single, monotonically increasing integer shared
+across all class struct generations.  Plugin authors set this field to the
+literal value corresponding to their chosen struct (\texttt{1} for
+\texttt{H5Z\_class2\_t}, \texttt{2} for \texttt{H5Z\_class3\_t}).  Adding a
+future \texttt{H5Z\_class4\_t} would assign it value \texttt{3}, with no new
+per-struct version macro required.
 
-The dispatch logic is extended to also recognise \texttt{H5Z\_CLASS3\_T\_VERS} within the
-\texttt{version != H5Z\_CLASS\_T\_VERS} branch, before falling back to the legacy path:
+The version constants are:
 
 \begin{minted}{c}
-    if (version != H5Z_CLASS_T_VERS) {
-        if (version == H5Z_CLASS3_T_VERS) /* -> H5Z_class3_t       */
-        else                              /* -> legacy H5Z_class1_t */
-    } else                                /* -> H5Z_class2_t        */
+#define H5Z_CLASS_T_VERS      1   /* Unchanged -- existing constant for H5Z_class2_t  */
+#define H5Z_CLASS_T_VERS_MAX  2   /* Highest accepted version field value (currently  *
+                                   * H5Z_class3_t).  Used by the library for sanity   *
+                                   * checking; plugin authors should not reference it *
+                                   * directly, since its value increases as new       *
+                                   * struct generations are added.                    */
+\end{minted}
+
+Note that \texttt{H5Z\_CLASS\_T\_VERS} remains at \texttt{1} for backward
+compatibility with code that already references it.  No new
+\texttt{H5Z\_CLASS3\_T\_VERS} (or future per-struct) constant is introduced;
+naming a constant after a specific struct generation would not generalise
+when \texttt{H5Z\_class4\_t} is added.  Plugin authors instead set the
+\texttt{version} field to the literal value documented in the table above.
+
+The dispatch logic in \texttt{H5Zregister()} currently works by checking
+\texttt{version != H5Z\_CLASS\_T\_VERS} first; any other value is treated as a
+legacy \texttt{H5Z\_class1\_t} struct.  The dispatch is extended to recognise
+\texttt{version == 2} as \texttt{H5Z\_class3\_t}, with
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX} guarding against unknown future values:
+
+\begin{minted}{c}
+    if (version > H5Z_CLASS_T_VERS_MAX)
+        /* -> error: version field exceeds library support */
+    else if (version == H5Z_CLASS_T_VERS)  /* 1 */
+        /* -> H5Z_class2_t        */
+    else if (version == 2)
+        /* -> H5Z_class3_t        */
+    else
+        /* -> legacy H5Z_class1_t */
 \end{minted}
 
 Note: When \texttt{H5\_NO\_DEPRECATED\_SYMBOLS} is defined, the legacy
-\texttt{H5Z\_class1\_t} path is compiled out entirely and any
-\texttt{version != H5Z\_CLASS\_T\_VERS} that is not \texttt{H5Z\_CLASS3\_T\_VERS}
-produces a hard error. The dispatch must account for this conditional
-compilation: under \texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, only version~1 (v2 struct)
-and \texttt{H5Z\_CLASS3\_T\_VERS} (v3 struct) are accepted.
+\texttt{H5Z\_class1\_t} path is compiled out entirely and any value other
+than \texttt{H5Z\_CLASS\_T\_VERS} or \texttt{2} produces a hard error.  Under
+\texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, only versions \texttt{1} and \texttt{2}
+are accepted.
 
 \texttt{H5Z\_class3\_t} is an independent flat struct; it does NOT embed
 \texttt{H5Z\_class2\_t} as a member.  The library reads the \texttt{version}
@@ -276,13 +302,6 @@ field in \texttt{H5Zregister()} via \texttt{memcpy}
 through a \texttt{char~*} to avoid strict-aliasing undefined behaviour.
 \texttt{H5PL\_\_open} receives an already-typed pointer via the plugin's
 exported \texttt{H5PLget\_plugin\_info()} symbol and does not need this.
-
-The version constants are:
-
-\begin{minted}{c}
-#define H5Z_CLASS_T_VERS   1   /* Unchanged -- used by H5Z_class2_t */
-#define H5Z_CLASS3_T_VERS  2   /* NEW -- used by H5Z_class3_t       */
-\end{minted}
 
 Document the version-to-struct mapping table in \texttt{H5Zdevelop.h}.
 
@@ -906,41 +925,15 @@ This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
 \texttt{H5Zpublic.h} to limit the public API surface.
 
 
-\subsection{Developer Helpers: Typed \texttt{cd\_values} Encoding}
-\label{sec:cd-packing}
-
-\begin{minted}{c}
-herr_t H5Zcd_pack_double  (double val,
-                           unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Zcd_unpack_double(const unsigned *slots, size_t n_slots, double *val);
-
-herr_t H5Zcd_pack_float   (float val,
-                           unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Zcd_unpack_float (const unsigned *slots, size_t n_slots, float *val);
-
-herr_t H5Zcd_pack_int64   (int64_t val,
-                           unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Zcd_unpack_int64 (const unsigned *slots, size_t n_slots, int64_t *val);
-
-herr_t H5Zcd_pack_string  (const char *str,
-                           unsigned *slots, size_t cap, size_t *n_used);
-herr_t H5Zcd_unpack_string(const unsigned *slots, size_t n_slots,
-                           char *buf, size_t bufsz);
-\end{minted}
-
-\verysubsection{Description}
-These helpers, declared in \texttt{H5Zdevelop.h}, encode and decode typed values
-to and from contiguous \texttt{unsigned int} slots using the normative packing
-convention below.  They enable \texttt{set\_config} and \texttt{get\_config}
-callbacks to achieve exact round-trips for types wider than 32~bits---in
-particular \texttt{double}---without ad hoc bit manipulation.  All built-in
-filter callbacks that handle floating-point or string parameters use these
-helpers.  Third-party filters are strongly encouraged to do the same.
-
-\verysubsection{Normative packing convention}
+\subsection{Normative \texttt{cd\_values} Packing Convention}
 \label{sec:cd-packing-convention}
 
-The following encoding is normative.
+For \texttt{set\_config} and \texttt{get\_config} callbacks to round-trip
+correctly across plugins and tools, typed parameters wider than a single
+\texttt{unsigned int} must be packed into \texttt{cd\_values} using a
+consistent layout.  The following convention is normative; built-in filter
+callbacks that handle floating-point or string parameters use it, and
+third-party filters are strongly encouraged to do the same.
 
 \begin{center}
 \renewcommand{\arraystretch}{1.2}
@@ -960,35 +953,18 @@ The following encoding is normative.
 \end{center}
 
 For \texttt{double} and \texttt{int64\_t} the two-slot layout is always
-little-endian regardless of the host platform.  The pack/unpack helpers
-perform the necessary byte swap on big-endian hosts, matching the existing
-HDF5 convention that all \texttt{cd\_values} are stored in little-endian order.
+little-endian regardless of the host platform; on big-endian hosts the
+plugin must perform the necessary byte swap, matching the existing HDF5
+convention that all \texttt{cd\_values} are stored in little-endian order.
+The convention assumes IEEE\,754 \texttt{float} (32~bits) and \texttt{double}
+(64~bits); types not enumerated above (e.g., \texttt{long double}) are out
+of scope for this encoding and must be reduced to one of the listed types
+by the plugin.
 
-\verysubsection{Parameters (pack functions)}
-
-\begin{itemize}
-\item \texttt{val} / \texttt{str}---Value to encode.
-\item \texttt{slots}---Output buffer of at least \texttt{cap} elements.  If
-  \texttt{NULL}, the function sets \texttt{*n\_used} to the required slot count and
-  returns success, enabling a size-query without writing.
-\item \texttt{cap}---Capacity of \texttt{slots} in elements (0 when \texttt{slots}
-  is \texttt{NULL}).
-\item \texttt{n\_used}---On return, number of slots written (or required).
-\end{itemize}
-
-\verysubsection{Parameters (unpack functions)}
-
-\begin{itemize}
-\item \texttt{slots}---Input buffer of \texttt{n\_slots} packed \texttt{unsigned int} values.
-\item \texttt{n\_slots}---Number of slots to consume.  For \texttt{H5Z\_cd\_unpack\_string},
-  this must include the length slot.
-\item \texttt{val} / \texttt{buf}---Output value or string buffer.
-\item \texttt{bufsz} (\texttt{H5Z\_cd\_unpack\_string} only)---Capacity of \texttt{buf}
-  in bytes; if 0 the function writes nothing and the caller must pre-read the
-  length from slot[0].
-\end{itemize}
-
-All functions return non-negative on success, negative on failure.
+The library does not export typed pack/unpack helpers as part of the public
+API; plugin authors implement the convention directly using \texttt{memcpy}
+and the byte layout above.  The same convention is documented in
+\texttt{H5Zdevelop.h} alongside the \texttt{set\_config} specification.
 
 
 \subsection{Canonical \texttt{set\_config} Implementation Template}
