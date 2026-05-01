@@ -241,11 +241,10 @@ These tests verify the two-pass \texttt{set\_config} contract
 For each built-in filter that implements \texttt{set\_config}/\texttt{get\_config}, a
 round-trip test confirms that:
 \begin{align*}
-  \text{set\_config}(s) \;\Rightarrow\; cd\_values_1
+  &\text{set\_config}(s) \;\Rightarrow\; cd\_values_1
   \quad\text{and}\quad
-  \text{get\_config}(cd\_values_1) \;\Rightarrow\; s'
-  \quad\text{and}\quad
-  \text{set\_config}(s') \;\Rightarrow\; cd\_values_2
+  \text{get\_config}(cd\_values_1) \;\Rightarrow\; s' \\
+  &\text{set\_config}(s') \;\Rightarrow\; cd\_values_2
   \quad\text{with}\quad cd\_values_1 = cd\_values_2
 \end{align*}
 The reconstructed string $s'$ need not equal $s$ literally; only the
