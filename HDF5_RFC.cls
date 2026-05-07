@@ -277,6 +277,7 @@
 \setlength{\parskip}{5pt}             % tweak the intra-para gap size
 \setlength{\headheight}{40pt}
 \setlength{\footheight}{40pt}
+\recalctypearea  % recompute type area with updated head/foot heights
 
 %% Redefine bits of document shape
 %\renewcommand{\topfraction}{0.95}%
