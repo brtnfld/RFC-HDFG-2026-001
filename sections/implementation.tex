@@ -31,7 +31,7 @@ modification.
 
 \begin{itemize}
 \item \texttt{level} (integer 0--9, default 6): Compression level.
-\item Example: \texttt{"level=6"}
+\item Example: \texttt{level = 6}
 \end{itemize}
 
 \subsection{Shuffle}
@@ -46,7 +46,7 @@ No parameters. \texttt{params} should be \texttt{NULL}.
 
 \begin{itemize}
 \item \texttt{coding} (\texttt{"entropy"} or \texttt{"nn"}, default \texttt{"nn"}): Coding
-  method.
+  method. Value must be a quoted string.
 \item \texttt{pixels\_per\_block} (even integer 2--32, default 16): Pixels per block.
 \item The \texttt{set\_config} callback translates these into the appropriate option
   masks (\texttt{H5\_SZIP\_EC\_OPTION\_MASK} or \texttt{H5\_SZIP\_NN\_OPTION\_MASK}) and
@@ -65,7 +65,7 @@ No parameters. \texttt{params} should be \texttt{NULL}.
   documented but is not changed by this feature. Callers that need to
   detect the flag override can compare the flags they passed with the
   flags returned by \texttt{H5Pget\_filter2} after the call.
-\item Example: \texttt{"coding=entropy, pixels\_per\_block=8"}
+\item Example: \texttt{coding = "entropy", pixels\_per\_block = 8}
 \end{itemize}
 
 \subsection{N-Bit}
@@ -77,11 +77,11 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 
 \begin{itemize}
 \item \texttt{scale\_type} (\texttt{"float\_dscale"}, \texttt{"float\_escale"}, or
-  \texttt{"int"}): Scale type. Required.
+  \texttt{"int"}): Scale type. Required. Value must be a quoted string.
 \item \texttt{scale\_factor} (integer): Scale factor. Required.
 \item The \texttt{set\_config} callback delegates to the existing
   \texttt{H5Pset\_scaleoffset} validation path.
-\item Example: \texttt{"scale\_type=float\_dscale, scale\_factor=4"}
+\item Example: \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
 \end{itemize}
 
 

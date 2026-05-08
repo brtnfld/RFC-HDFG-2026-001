@@ -202,10 +202,10 @@ for the test matrix; the actual test suite may group them differently.
 \subsection{Parser Unit Tests}
 \label{sec:test-parser}
 
-\noindent The parameter string parser (\SectionRef{sec:param-rules}) is the
+\noindent The parameter string parser (\SectionRef{sec:param-overview}) is the
 lowest-level component and is exercised independently of any filter
-registration.  Tests invoke \texttt{H5Zconfig\_get\_param} (\SectionRef{sec:config-get-param})
-directly with hand-crafted strings.
+registration.  Tests invoke the typed accessor functions
+(\SectionRef{sec:config-get-param}) directly with hand-crafted strings.
 
 \verysubsection{Valid inputs}
 
@@ -216,32 +216,34 @@ directly with hand-crafted strings.
 \toprule
 \textbf{Test ID} & \textbf{Input} & \textbf{Expected result} \\
 \midrule
-\texttt{parse-01} & \texttt{"level=6"}
-  & key=\texttt{level}, value=\texttt{"6"} \\
-\texttt{parse-02} & \texttt{"mode=rate, rate=3.5"}
-  & two key-value pairs; trailing whitespace stripped \\
-\texttt{parse-03} & \texttt{"fast\_mode, level=6"}
-  & bare-key boolean flag + \texttt{level=6} \\
-\texttt{parse-04} & \texttt{"fast\_mode"}
-  & single bare key; \texttt{H5Zconfig\_get\_param} returns positive, \texttt{*buf\_size = 0} \\
-\texttt{parse-05} & \texttt{NULL}
+\texttt{parse-01} & \texttt{level = 6}
+  & \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
+\texttt{parse-02} & \texttt{mode = "rate", rate = 3.5}
+  & \texttt{H5Zconfig\_get\_str} returns \texttt{"rate"}; \texttt{H5Zconfig\_get\_double} returns \texttt{3.5} \\
+\texttt{parse-03} & \texttt{fast\_mode = true, level = 6}
+  & \texttt{H5Zconfig\_get\_bool} returns \texttt{TRUE}; \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
+\texttt{parse-04} & \texttt{NULL}
+  & valid; zero parameters; all accessors return \texttt{0} (absent) \\
+\texttt{parse-05} & \texttt{""}
   & valid; zero parameters \\
-\texttt{parse-06} & \texttt{""}
-  & valid; zero parameters \\
-\texttt{parse-07} & \texttt{'dict\_path="/data/run\_1,v2/dict.bin"'}
-  & comma inside quotes is literal; value=\texttt{/data/run\_1,v2/dict.bin} \\
-\texttt{parse-08} & \texttt{'note="say ""hi"""'}
-  & doubled double-quote escape; value=\texttt{say "hi"} \\
-\texttt{parse-09} & \texttt{"  level  =  6  "}
-  & whitespace stripped; key=\texttt{level}, value=\texttt{6} \\
-\texttt{parse-10} & \texttt{'level = " value "'}
-  & key=\texttt{level}; value=\texttt{\ value\ } (leading/trailing spaces preserved inside quoted value) \\
-\texttt{parse-11} & \texttt{"LEVEL=6"}
-  & key normalized to lowercase \texttt{level}; value preserved as \texttt{"6"} \\
-\texttt{parse-12} & \texttt{"name='hello world'"}
-  & single-quoted value; value=\texttt{hello world} \\
-\texttt{parse-13} & \texttt{"desc='say \textquotedbl hello\textquotedbl'"}
-  & double-quote inside single-quoted value is literal; value=\texttt{say "hello"} \\
+\texttt{parse-06} & \texttt{path = "/data/run\_1,v2/dict.bin"}
+  & comma inside quoted string is literal; \texttt{H5Zconfig\_get\_str} returns \texttt{/data/run\_1,v2/dict.bin} \\
+\texttt{parse-07} & \texttt{note = "say \textbackslash"hi\textbackslash""}
+  & TOML escape sequence; \texttt{H5Zconfig\_get\_str} returns \texttt{say "hi"} \\
+\texttt{parse-08} & \texttt{\ \ level\ \ =\ \ 6\ \ }
+  & whitespace stripped; \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
+\texttt{parse-09} & \texttt{LEVEL = 6}
+  & key normalized to lowercase \texttt{level}; \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
+\texttt{parse-10} & \texttt{name = 'hello world'}
+  & single-quoted literal string; \texttt{H5Zconfig\_get\_str} returns \texttt{hello world} \\
+\texttt{parse-11} & \texttt{\{level = 6\}}
+  & braced form accepted; result identical to bare form \\
+\texttt{parse-12} & \texttt{stripe = \{size = 1048576, count = 4\}}
+  & nested inline table; \texttt{H5Zconfig\_get\_int} with key \texttt{stripe.size} returns \texttt{1048576} \\
+\texttt{parse-13} & \texttt{stripe.size = 1048576, stripe.count = 4}
+  & dotted keys; equivalent to parse-12 \\
+\texttt{parse-14} & \texttt{rate = -3.5}
+  & negative float; \texttt{H5Zconfig\_get\_double} returns \texttt{-3.5} \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -255,16 +257,16 @@ directly with hand-crafted strings.
 \toprule
 \textbf{Test ID} & \textbf{Input and reason for rejection} \\
 \midrule
-\texttt{parse-E01} & \texttt{"=value"} --- empty key before \texttt{=} \\
-\texttt{parse-E02} & \texttt{",level=6"} --- leading comma produces empty first token \\
-\texttt{parse-E03} & \texttt{"level=6,"} --- trailing comma produces empty last token \\
-\texttt{parse-E04} & \texttt{'path="/no/closing/quote'} --- unbalanced opening double-quote \\
-\texttt{parse-E05} & \texttt{"level=6, level=6"} --- duplicate key \\
-\texttt{parse-E06} & String longer than \texttt{H5Z\_CONFIG\_STRING\_MAX} (4096) bytes --- exceeds maximum \\
-\texttt{parse-E07} & String with more than \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) comma-separated tokens --- exceeds maximum parameter count \\
-\texttt{parse-E08} & \texttt{"level="} --- \texttt{key=} with no value after the equals sign \\
-\texttt{parse-E09} & \texttt{"path='/no/closing"} --- unbalanced opening single-quote \\
-\texttt{parse-E10} & \texttt{"key=''"} --- single-quoted empty string value \\
+\texttt{parse-E01} & \texttt{level = "rate"} passed to \texttt{H5Zconfig\_get\_int} --- type mismatch \\
+\texttt{parse-E02} & \texttt{level = 6, level = 6} --- duplicate key \\
+\texttt{parse-E03} & \texttt{path = "/no/closing/quote} --- unbalanced double-quote \\
+\texttt{parse-E04} & String longer than \texttt{H5Z\_CONFIG\_STRING\_MAX} (4096) bytes --- exceeds maximum \\
+\texttt{parse-E05} & String with more than \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) top-level keys --- exceeds maximum \\
+\texttt{parse-E06} & \texttt{rate = inf} --- special float value rejected by library \\
+\texttt{parse-E07} & \texttt{rate = nan} --- special float value rejected by library \\
+\texttt{parse-E08} & \texttt{data = [1, 2, 3]} --- arrays not in supported subset \\
+\texttt{parse-E09} & \texttt{filter\_title = "ZFP"} --- reserved key \\
+\texttt{parse-E10} & bare semicolon outside quoted string --- reserved delimiter \\
 \bottomrule
 \end{tabularx}
 \end{center}
@@ -272,19 +274,18 @@ directly with hand-crafted strings.
 \verysubsection{Boundary conditions}
 
 \begin{itemize}
-\item \texttt{parse-B01}: Single character key and value (\texttt{"a=1"}).
+\item \texttt{parse-B01}: Single character key and integer value (\texttt{a = 1}).
 \item \texttt{parse-B02}: Maximum allowed string length
   (\texttt{H5Z\_CONFIG\_STRING\_MAX} = 4096 bytes) --- accepted.
 \item \texttt{parse-B03}: \texttt{H5Z\_CONFIG\_STRING\_MAX}+1 byte string --- rejected
   with \texttt{H5E\_BADVALUE}.
-\item \texttt{parse-B04}: Key consisting entirely of printable non-special ASCII
-  (\texttt{"\_0123456789abcdefghijklmnopqrstuvwxyz=ok"}).
-\item \texttt{parse-B05}: Value containing semicolons inside double quotes --- accepted;
-  value containing a bare semicolon outside quotes --- rejected (reserved delimiter).
-\item \texttt{parse-B06}: Exactly \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) parameters ---
+\item \texttt{parse-B04}: Exactly \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64) top-level keys ---
   accepted.
-\item \texttt{parse-B07}: \texttt{H5Z\_CONFIG\_MAX\_PARAMS}+1 (65) parameters --- rejected
+\item \texttt{parse-B05}: \texttt{H5Z\_CONFIG\_MAX\_PARAMS}+1 (65) top-level keys --- rejected
   with \texttt{H5E\_BADVALUE}.
+\item \texttt{parse-B06}: Semicolon inside a double-quoted string value --- accepted.
+\item \texttt{parse-B07}: Two-level nested inline table --- accepted; three-level --- accepted
+  (depth is not bounded beyond the string length limit).
 \end{itemize}
 
 
@@ -348,14 +349,14 @@ resulting \texttt{cd\_values} must be identical.
 \toprule
 \textbf{Test ID} & \textbf{Filter} & \textbf{Representative parameter string} \\
 \midrule
-\texttt{rt-01} & deflate    & \texttt{"level=0"} (minimum) \\
-\texttt{rt-02} & deflate    & \texttt{"level=6"} (default) \\
-\texttt{rt-03} & deflate    & \texttt{"level=9"} (maximum) \\
-\texttt{rt-04} & szip       & \texttt{"coding=entropy, pixels\_per\_block=2"} \\
-\texttt{rt-05} & szip       & \texttt{"coding=nn, pixels\_per\_block=32"} \\
-\texttt{rt-06} & scaleoffset & \texttt{"scale\_type=float\_dscale, scale\_factor=4"} \\
-\texttt{rt-07} & scaleoffset & \texttt{"scale\_type=float\_escale, scale\_factor=0"} \\
-\texttt{rt-08} & scaleoffset & \texttt{"scale\_type=int, scale\_factor=8"} \\
+\texttt{rt-01} & deflate    & \texttt{level = 0} (minimum) \\
+\texttt{rt-02} & deflate    & \texttt{level = 6} (default) \\
+\texttt{rt-03} & deflate    & \texttt{level = 9} (maximum) \\
+\texttt{rt-04} & szip       & \texttt{coding = "entropy", pixels\_per\_block = 2} \\
+\texttt{rt-05} & szip       & \texttt{coding = "nn", pixels\_per\_block = 32} \\
+\texttt{rt-06} & scaleoffset & \texttt{scale\_type = "float\_dscale", scale\_factor = 4} \\
+\texttt{rt-07} & scaleoffset & \texttt{scale\_type = "float\_escale", scale\_factor = 0} \\
+\texttt{rt-08} & scaleoffset & \texttt{scale\_type = "int", scale\_factor = 8} \\
 \texttt{rt-09} & shuffle    & \texttt{NULL} (parameterless) \\
 \texttt{rt-10} & fletcher32 & \texttt{NULL} (parameterless) \\
 \texttt{rt-11} & nbit       & \texttt{NULL} (parameterless) \\
@@ -367,12 +368,15 @@ resulting \texttt{cd\_values} must be identical.
 \begin{itemize}
 \item \texttt{rt-E01}: Passing a non-NULL, non-empty \texttt{params} to a parameterless
   built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns \texttt{H5E\_BADVALUE}.
-\item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{"clevl=6"}
-  instead of \texttt{"clevel=6"}) to any built-in returns
+\item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{clevl = 6}
+  instead of \texttt{clevel = 6}) to any built-in returns
   \texttt{H5E\_BADVALUE} with an error message identifying the unrecognized key.
   v3 filters reject unknown keys (\SectionRef{sec:callback-specs}).
-\item \texttt{rt-E03}: Passing an out-of-range value (\texttt{"level=10"} for deflate,
-  \texttt{"pixels\_per\_block=33"} for szip) returns \texttt{H5E\_BADVALUE}.
+\item \texttt{rt-E03}: Passing an out-of-range value (\texttt{level = 10} for deflate,
+  \texttt{pixels\_per\_block = 33} for szip) returns \texttt{H5E\_BADVALUE}.
+\item \texttt{rt-E04}: Passing a type-mismatched value (\texttt{level = "six"} for deflate)
+  returns \texttt{H5E\_BADVALUE} (TOML parser rejects the type before \texttt{set\_config}
+  is invoked).
 \end{itemize}
 
 

@@ -8,214 +8,132 @@
 \section{Parameter String Format}
 \label{sec:param-format}
 
-The parameter string format is comma-separated \texttt{key=value} pairs and
-bare keys. Double-quote-delimited values allow commas and equals signs inside
-a value. Bare keys (tokens without an equals sign) are valid and treated as
-boolean flags with an implicit empty value. A token with an equals sign but no
-value (\texttt{key=}) is rejected with \texttt{H5E\_BADVALUE}. The format
-introduces no build or runtime dependency.
+The parameter string format is a subset of the TOML v1.0.0 inline table
+syntax~\cite{toml10}, parsed by a vendored subset of the tomlc17
+library~\cite{tomlc17}. The full TOML v1.0.0 specification is the normative
+reference for syntax and value types; this section documents the subset
+supported by HDF5, the additional constraints imposed by the library, and
+the rationale for deviations.
 
-\subsection{Rules}
-\label{sec:param-rules}
+Using an established, externally maintained grammar provides typed values
+(integer, float, boolean, string), a stable specification the library does not
+need to own, and a path to nested configuration for future VOL connector and
+VFD use cases without changing the API or the wire format.
+
+\subsection{Format Overview}
+\label{sec:param-overview}
+
+A parameter string is a comma-separated list of \texttt{key = value} pairs
+conforming to the TOML inline table content grammar.  Outer braces are
+\emph{optional}: the library accepts both the bare form
+(\texttt{level = 6}) and the braced form (\texttt{\{level = 6\}}), wrapping
+the string in \texttt{\{\ldots\}} internally before parsing if braces are
+absent.  \texttt{NULL} or an empty string means ``no parameters'' and is
+valid for filters that take no parameters (shuffle, fletcher32, nbit).
+
+\verysubsection{Value types}
 
 \begin{itemize}
-\item Parameters are separated by commas.
-\item Each parameter is either a \texttt{key=value} pair or a bare key (a
-  token without an equals sign, treated as a boolean flag with an implicit
-  empty value). A token of the form \texttt{key=} (equals sign present but no
-  value after it) is rejected with \texttt{H5E\_BADVALUE}.
-\item Leading and trailing whitespace around keys and values is stripped.
-\item Keys are case-insensitive; the library normalizes to lowercase using ASCII
-  case folding only (C locale \texttt{tolower()}, not locale-dependent
-  \texttt{towlower()}). Values are passed to the filter callback verbatim and are
-  case-sensitive by default; the filter is responsible for type interpretation.
-  Note: This means \texttt{"coding=Entropy"} and \texttt{"coding=entropy"} are different
-  strings from the library's perspective. Filter authors are encouraged to
-  handle values case-insensitively where practical (e.g., for enum-like
-  parameters) to minimize user confusion.
-\item \textbf{Character encoding:} Parameter strings are restricted to printable
-  ASCII (U+0021--U+007E) plus the space character (U+0020) as inter-token
-  whitespace. Multi-byte encodings (UTF-8, UTF-16, etc.) are NOT supported in
-  keys or unquoted values. Within quoted values, any byte sequence is accepted
-  verbatim (the parser does not interpret character encoding inside quotes),
-  but filter callbacks that receive non-ASCII bytes in quoted values do so at
-  their own risk---the library does not guarantee encoding-safe handling. This
-  restriction is a deliberate design choice to keep the parser simple,
-  locale-independent, and compatible with the C-locale ASCII semantics
-  described below. If future requirements demand internationalized parameter
-  values, they should be passed as file-path indirection (e.g.,
-  \texttt{config\_path="/path/to/config.json"}) rather than inline in the
-  parameter string.
-\item Keys and values consist of printable ASCII characters (excluding comma,
-  semicolon, and equals sign), unless quoted.
-\item \textbf{Quoted values:} A value may be enclosed in either double quotes
-  (\texttt{"\ldots"}) or single quotes (\texttt{'\ldots'}), determined by the first
-  character of the value after leading whitespace is stripped.
-  Within any quoted value, commas, semicolons, and equals signs are literal and
-  do not act as delimiters. Whitespace inside a quoted value is preserved exactly
-  as written (stripping applies only outside quotes). An unbalanced opening quote
-  causes the parser to return \texttt{H5E\_BADVALUE}.
-
-  \textbf{Double-quoted values} (\texttt{"}\ldots\texttt{"}) embed a literal
-  double-quote character by doubling it (\texttt{""}), following the quoted-field
-  convention of RFC~4180~\cite{rfc4180}.
-
-  \textbf{Single-quoted values} (\texttt{'}\ldots\texttt{'}) do not support any
-  escape mechanism; a single-quote character cannot appear inside a single-quoted
-  value. Single-quoted values are particularly convenient when the parameter string
-  is set via a shell double-quoted environment variable assignment:
-  \begin{minted}{bash}
-export HDF5_FILTER_PARAMS="desc='fast compression',level=6"
-  \end{minted}
-\item \textbf{Order of operations for parsing:} Scan the parameter string
-  once, tracking quote state to identify token boundaries; emit a token at
-  each unquoted comma $\rightarrow$ split each token at the first unquoted
-  equals sign $\rightarrow$ strip leading/trailing whitespace from both key
-  and value $\rightarrow$ apply quote processing to the value if it begins
-  with \texttt{"} (double-quoted) or \texttt{'} (single-quoted).
-\item \textbf{Duplicate keys:} If the same key appears more than once in a parameter
-  string, the parser rejects the string with \texttt{H5E\_BADVALUE}. The parser
-  can detect duplicates cheaply during a single pass by checking each key
-  against those already seen.
-\item \textbf{Empty keys:} A token whose key is empty after whitespace stripping causes
-  the parser to return \texttt{H5E\_BADVALUE}. This constraint is implicit in
-  the grammar (\SectionRef{sec:param-grammar}), where \textit{key} requires
-  one or more characters (\textit{printable-ascii-no-special}$^+$), but is
-  stated explicitly here for implementors. The string \texttt{"=value, level=6"}
-  contains an empty key before the first \texttt{=} and is rejected.
-\item \textbf{Bare keys:} A token without an equals sign (e.g.,
-  \texttt{"fast\_mode"}) is valid and treated as a boolean flag.
-  \texttt{H5Zconfig\_get\_param} returns positive with \texttt{*buf\_size = 0}
-  for a bare key, distinguishable from an absent key (which returns~\texttt{0}).
-\item \textbf{Key with explicit empty value rejected:} A token of the form
-  \texttt{"key="} (equals sign present but no value after it) is rejected
-  with \texttt{H5E\_BADVALUE}. Boolean flags use bare-key syntax
-  (\texttt{"fast\_mode"}), not \texttt{"fast\_mode="}.
-  A quoted empty string (\texttt{key=""} or \texttt{key=''}) is likewise rejected
-  with \texttt{H5E\_BADVALUE}.
-\item \textbf{Reserved keys:} The key \texttt{filter\_title} is reserved by the
-  library and may not be used as a user-defined parameter key. It is injected
-  into \texttt{cd\_values} by the library when \texttt{H5Zregister()} processes a
-  v3 plugin with a non-\texttt{NULL} \texttt{filter\_title} field, and is never
-  passed to the filter's \texttt{set\_config} callback. A parameter string
-  containing \texttt{filter\_title} as a key is rejected with
-  \texttt{H5E\_BADVALUE} by the library before \texttt{set\_config} is invoked.
-\item The semicolon character (outside of quoted values) is reserved for a
-  possible future pipeline-string API extension.
-\item A \texttt{NULL} or empty string means ``no parameters'' (valid for filters like
-  shuffle and fletcher32).
-\item The library defines the public constant \texttt{H5Z\_CONFIG\_STRING\_MAX}
-  (= 4096) as the normative maximum parameter string length. Strings
-  exceeding this limit are rejected with \texttt{H5E\_BADVALUE}
-  (\SectionRef{sec:param-rules}).
-\item The library defines the public constant \texttt{H5Z\_CONFIG\_MAX\_PARAMS}
-  (= 64) as the maximum number of key-value tokens in a single parameter
-  string.  Strings containing more tokens are rejected with
-  \texttt{H5E\_BADVALUE}.  This bound is intentionally well below
-  \texttt{UINT16\_MAX} (the per-filter \texttt{cd\_values} capacity) to bound
-  parsing work and limit exposure to maliciously crafted strings.
-\item \textbf{Locale independence:} The library's parameter string parser is
-  locale-independent. All character classification (whitespace detection,
-  case folding) uses the C locale (ASCII-only \texttt{tolower()}, not
-  locale-dependent \texttt{towlower()}). In particular, the parser is not
-  affected by process-wide locale settings that redefine the decimal separator
-  or whitespace characters. \texttt{set\_config} callbacks that parse numeric
-  values (e.g., converting a rate string to \texttt{double}) likewise use
-  C-locale numeric conversion (e.g., \texttt{strtod} under
-  \texttt{uselocale(newlocale(LC\_NUMERIC\_MASK, "C", 0))} or a
-  locale-independent equivalent such as a hand-written decimal parser). If a
-  user passes \texttt{"rate=3,5"} in a comma-decimal locale, the parser splits
-  on the comma and produces two tokens: \texttt{"rate=3"} and \texttt{"5"}.
-  The token \texttt{"5"} is a bare key and is syntactically valid; the
-  filter's \texttt{set\_config} callback will reject it as an unrecognized key
-  with \texttt{H5E\_BADVALUE}.
-  Documentation notes that parameter strings always use the period as the
-  decimal separator regardless of locale.
+\item \textbf{Integer:} Unquoted decimal integer, optional leading sign.
+  Example: \texttt{level = 6}, \texttt{offset = -4}.
+  TOML integer syntax (underscores as digit separators, \texttt{0x}/\texttt{0o}/\texttt{0b}
+  prefixes) is accepted by the parser but filter callbacks receive the
+  parsed \texttt{int64\_t} value directly via \texttt{H5Zconfig\_get\_int}.
+\item \textbf{Float:} Unquoted decimal float with mandatory decimal point or
+  exponent. Example: \texttt{rate = 3.5}, \texttt{tol = 1.0e-6}.
+  The decimal separator is always a period regardless of locale.
+  TOML special float values (\texttt{inf}, \texttt{nan}) are accepted by the
+  parser but rejected with \texttt{H5E\_BADVALUE} by the library before
+  \texttt{set\_config} is invoked.
+\item \textbf{Boolean:} \texttt{true} or \texttt{false} (lowercase only, per TOML).
+  Example: \texttt{fast\_mode = true}.
+\item \textbf{String:} Double-quoted only (\texttt{"\ldots"}).  Standard TOML
+  escape sequences are supported (\texttt{\textbackslash n}, \texttt{\textbackslash t},
+  \texttt{\textbackslash\textbackslash}, \texttt{\textbackslash"}, etc.).
+  Example: \texttt{coding = "entropy"}, \texttt{path = "/data/run\_1"}.
+  Single-quoted TOML literal strings (\texttt{'\ldots'}) are also accepted;
+  no escape processing is performed inside single quotes.
+\item \textbf{Inline table (nested):} A value may itself be a
+  comma-separated list of key=value pairs enclosed in braces.
+  Example: \texttt{stripe = \{size = 1048576, count = 4\}}.
+  Nesting is intended for VOL connector and VFD configuration; filter
+  \texttt{set\_config} callbacks are not expected to use it.
 \end{itemize}
 
-\subsection{Character Summary}
-\label{sec:param-char-summary}
+\verysubsection{Keys}
 
-The table below summarises which characters are permitted in each position of
-a parameter string.
+Keys follow the TOML bare-key rules: ASCII letters, digits, hyphens, and
+underscores (\texttt{[A-Za-z0-9\_-]+}).  Quoted keys (\texttt{"key"}) are
+accepted by the parser but discouraged.  Keys are \emph{case-insensitive};
+the library normalizes to lowercase before lookup.  Dotted keys
+(\texttt{stripe.size}) are accepted and express one level of nesting
+(\texttt{stripe.size = 1048576} is equivalent to
+\texttt{stripe = \{size = 1048576\}}); they are the recommended form for
+VOL/VFD nested parameters as they are more readable in a single-line string.
+Duplicate keys are rejected with \texttt{H5E\_BADVALUE}.
 
-\begin{center}
-\small
-\setlength{\tabcolsep}{4pt}
-\renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{>{\ttfamily}l>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X>{\raggedright\arraybackslash}X}
-\toprule
-\textbf{Character} & \textbf{In key} & \textbf{In unquoted value} & \textbf{In dquoted value} & \textbf{In squoted value} \\
-\midrule
-Printable ASCII (not special) & allowed & allowed & allowed & allowed \\
-Space (U+0020) & stripped & stripped & preserved as-is & preserved as-is \\
-Comma \texttt{,} & forbidden & forbidden (param delimiter) & allowed & allowed \\
-Equals \texttt{=} & forbidden & forbidden (key/value delimiter) & allowed & allowed \\
-Semicolon \texttt{;} & forbidden & forbidden (reserved) & allowed & allowed \\
-Double quote \texttt{"} & forbidden & forbidden (starts dquoted) & use \texttt{""} to embed & allowed as-is \\
-Single quote \texttt{'} & forbidden & allowed & allowed & forbidden (ends squoted) \\
-Non-ASCII / multi-byte & forbidden & forbidden & accepted verbatim (caller's risk) & accepted verbatim (caller's risk) \\
-\bottomrule
-\end{tabularx}
-\end{center}
+\verysubsection{Additional constraints imposed by HDF5}
+
+\begin{itemize}
+\item \textbf{Reserved key:} The key \texttt{filter\_title} is reserved by the
+  library (\SectionRef{sec:class3-struct}) and rejected with
+  \texttt{H5E\_BADVALUE} if it appears in a parameter string.
+\item \textbf{Maximum string length:} \texttt{H5Z\_CONFIG\_STRING\_MAX} (= 4096
+  bytes).  Strings exceeding this limit are rejected with
+  \texttt{H5E\_BADVALUE}.
+\item \textbf{Maximum parameter count:} \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (= 64
+  top-level keys).  Strings containing more top-level keys are rejected with
+  \texttt{H5E\_BADVALUE}.  This bound limits parsing work and exposure to
+  maliciously crafted strings.
+\item \textbf{Special float values:} \texttt{inf}, \texttt{-inf}, and
+  \texttt{nan} are valid TOML but rejected by the library with
+  \texttt{H5E\_BADVALUE}.
+\item \textbf{TOML features not supported:} Arrays (\texttt{[1,2,3]}),
+  multi-line strings, datetime values, and document-level tables
+  (\texttt{[section]}) are not part of the supported subset.  The parser
+  rejects them with \texttt{H5E\_BADVALUE}.
+\item \textbf{Locale independence:} The parser and all typed accessors use
+  C-locale numeric conversion.  Process-wide locale settings do not affect
+  parsing.  The decimal separator is always a period.
+\end{itemize}
 
 \subsection{Examples}
+\label{sec:param-examples}
 
 \begin{center}
 \begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X}
 \toprule
 \textbf{Parameter String} & \textbf{Use Case} \\
 \midrule
-\texttt{"level=6"} & deflate \\
-\texttt{"mode=rate, rate=3.5"} & ZFP \\
-\texttt{"pixels\_per\_block=16, coding=entropy"} & SZIP \\
-\texttt{"scale\_type=float\_dscale, scale\_factor=4"} & scaleoffset \\
-\texttt{'dict\_path="/data/run\_1,v2/dict.bin"'} & quoted value containing a comma \\
-\texttt{"fast\_mode, level=6"} & boolean flag as bare key \\
-\texttt{NULL} & shuffle (no params) \\
+\texttt{level = 6} & deflate (integer) \\
+\texttt{mode = "rate", rate = 3.5} & ZFP (string + float) \\
+\texttt{pixels\_per\_block = 16, coding = "entropy"} & SZIP \\
+\texttt{scale\_type = "float\_dscale", scale\_factor = 4} & scaleoffset \\
+\texttt{fast\_mode = true, level = 6} & boolean flag \\
+\texttt{path = "/data/run\_1,v2/dict.bin"} & string value containing a comma \\
+\texttt{stripe = \{size = 1048576, count = 4\}} & nested table (VOL/VFD) \\
+\texttt{stripe.size = 1048576, stripe.count = 4} & dotted keys (equivalent to above) \\
+\texttt{NULL} & shuffle, fletcher32 (no params) \\
 \bottomrule
 \end{tabularx}
 \end{center}
 
-\subsection{Formal Grammar (EBNF)}
-\label{sec:param-grammar}
+\subsection{Parser Implementation}
+\label{sec:param-parser}
 
-The grammar below is the normative reference for the parameter string format.
-Nonterminals are shown in \textit{italic}; terminals in \texttt{typewriter}
-font and enclosed in single quotation marks.  Standard EBNF operators are used:
-\texttt{|} for alternation, \texttt{*} for zero-or-more repetitions,
-\texttt{+} for one-or-more repetitions, and parentheses for grouping.
+The parameter string parser is a vendored, reduced subset of
+tomlc17~\cite{tomlc17}, a MIT-licensed C17 TOML library.  The vendored
+copy lives under \texttt{src/H5Ztoml.\{c,h\}} and is stripped to the inline
+table and primitive value subset described in \SectionRef{sec:param-overview}.
+HDF5's memory allocation functions (\texttt{H5MM\_malloc} etc.)\ are
+substituted for the library's default allocator.  The vendored copy is
+updated as part of the normal HDF5 dependency refresh process; the TOML
+v1.0.0 grammar is stable and no API-breaking changes are expected.
 
-\begin{center}
-\renewcommand{\arraystretch}{1.35}
-\begin{tabular}{r@{\quad$=$\quad}l}
-\toprule
-\textbf{Non-terminal} & \textbf{Production rule} \\
-\midrule
-\textit{param-string}  & \texttt{`'} $\mid$ \textit{param-list} \\
-\textit{param-list}    & \textit{param} $\;(\,\text{\texttt{`,'}}\;\textit{param}\,)^{*}$ \\
-\textit{param}         & \textit{key} \texttt{`='} \textit{value} $\mid$ \textit{key} \\
-\textit{key}           & \textit{printable-ascii-no-special}$^{+}$ \\
-\textit{value}         & \textit{bare-value} $\mid$ \textit{dquoted-value} $\mid$ \textit{squoted-value} \\
-\textit{bare-value}    & \textit{printable-ascii-no-special}$^{+}$ \\
-\textit{dquoted-value} & \texttt{`\textquotedbl'}\,$(\,\textit{non-dquote}
-                         \mid \text{\texttt{`\textquotedbl\textquotedbl'}}\,)^{*}$\,\texttt{`\textquotedbl'} \\
-\textit{squoted-value} & \texttt{'}\,\textit{non-squote}$^{*}$\,\texttt{'} \\
-\bottomrule
-\end{tabular}
-\end{center}
-
-\noindent
-where \textit{printable-ascii-no-special} is any printable ASCII character
-(U+0021--U+007E) except comma~(\texttt{,}), equals~sign~(\texttt{=}),
-double~quote~(\texttt{\textquotedbl}), and semicolon~(\texttt{;});
-\textit{non-dquote} is any character except double~quote~(\texttt{\textquotedbl});
-and \textit{non-squote} is any character except single~quote~(\texttt{'}).
-An empty \textit{param-string} (the first alternative) corresponds to a
-\texttt{NULL} or zero-length input, which is valid and means ``no parameters''.
-Whitespace stripping (leading/trailing spaces around keys and bare values)
-is applied as a post-processing step after the grammar is matched and is
-not captured in the grammar itself.
+The semicolon character is reserved at the grammar level for a possible
+future pipeline-string extension (\texttt{"shuffle; deflate, level = 9;
+fletcher32"}); it is not part of the TOML inline table grammar and is
+rejected with \texttt{H5E\_BADVALUE} outside of quoted strings.
 
 
 %% ======================================================================
@@ -625,10 +543,10 @@ single call should declare a named variable instead:
 \begin{minted}{c}
 /* Safe: compound literal address taken for the duration of one call */
 H5Pappend_filter(plist, H5Z_FILTER_DEFLATE,
-                     H5Z_FLAG_MANDATORY, &H5Z_PARAMS_STR("level=6"));
+                     H5Z_FLAG_MANDATORY, &H5Z_PARAMS_STR("level = 6"));
 
 /* Also safe: named variable with explicit lifetime */
-H5Z_params_t p = H5Z_PARAMS_STR("level=6");
+H5Z_params_t p = H5Z_PARAMS_STR("level = 6");
 H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
 \end{minted}
 
@@ -746,15 +664,19 @@ Non-negative on success; negative on failure.
 \verysubsection{Usage examples}
 
 \begin{minted}{c}
-/* --- String form (new) --- */
+/* --- String form (TOML inline table content) --- */
 
-/* Built-in deflate via key=value string */
+/* Built-in deflate: integer value */
 H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
-                     &H5Z_PARAMS_STR("level=6"));
+                     &H5Z_PARAMS_STR("level = 6"));
 
-/* External plugin (ZFP) via key=value string */
+/* External plugin (ZFP): string + float values */
 H5Pappend_filter(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
-                     &H5Z_PARAMS_STR("mode=rate, rate=3.5"));
+                     &H5Z_PARAMS_STR("mode = \"rate\", rate = 3.5"));
+
+/* Boolean flag */
+H5Pappend_filter(plist, H5Z_FILTER_BLOSC, H5Z_FLAG_MANDATORY,
+                     &H5Z_PARAMS_STR("fast_mode = true, level = 6"));
 
 /* Parameterless filter */
 H5Pappend_filter(plist, H5Z_FILTER_SHUFFLE, H5Z_FLAG_MANDATORY, NULL);
@@ -768,7 +690,7 @@ H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
 /* --- Building a mixed pipeline --- */
 H5Pappend_filter(plist, H5Z_FILTER_SHUFFLE,    H5Z_FLAG_MANDATORY, NULL);
 H5Pappend_filter(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY,
-                     &H5Z_PARAMS_STR("level=9"));
+                     &H5Z_PARAMS_STR("level = 9"));
 H5Pappend_filter(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
 \end{minted}
 
@@ -841,56 +763,48 @@ the parameter string rather than the filter title.
 Non-negative on success; negative on failure.
 
 
-\subsection{Developer Helper: Parameter Lookup}
+\subsection{Developer Helpers: Typed Parameter Lookup}
 \label{sec:config-get-param}
 
+Because the parameter string format is now TOML-typed, the library provides
+typed accessor functions in \texttt{H5Zdevelop.h} rather than a single
+string-returning helper.  All built-in filter \texttt{set\_config} implementations
+use these functions.
+
 \begin{minted}{c}
-htri_t H5Zconfig_get_param(
-    const char *params,
-    const char *key,
-    char       *value_buf,
-    size_t     *buf_size
-);
+/* Key presence check (all types) */
+htri_t H5Zconfig_has_key(const char *params, const char *key);
+
+/* Typed accessors -- return htri_t: >0 found, 0 absent, <0 error */
+htri_t H5Zconfig_get_int    (const char *params, const char *key,
+                              int64_t  *out);
+htri_t H5Zconfig_get_double (const char *params, const char *key,
+                              double   *out);
+htri_t H5Zconfig_get_bool   (const char *params, const char *key,
+                              hbool_t  *out);
+htri_t H5Zconfig_get_str    (const char *params, const char *key,
+                              char *buf, size_t *buf_size);
 \end{minted}
 
 \verysubsection{Description}
-Searches the parameter string \texttt{params} for the given \texttt{key}
-and returns the associated value. This function is declared in
-\texttt{H5Zdevelop.h} and is the library-provided parameter parser that plugin
-authors are expected to use in their \texttt{set\_config} callbacks. All built-in
-filter \texttt{set\_config} implementations (deflate, szip, scaleoffset) use this
-function.
+Each function searches the parameter string \texttt{params} for \texttt{key}
+and writes the decoded value into \texttt{*out} (or \texttt{buf} for the string
+accessor).  The \texttt{htri\_t} return type separates three cases cleanly:
+found (\texttt{>~0}), absent (\texttt{0}), and error (\texttt{<~0}) ---
+without pushing to the error stack for a merely absent optional parameter.
 
-Returns positive (\texttt{> 0}) if the key is present in \texttt{params}, \texttt{0} if the key
-is not present, or negative on error (malformed string). The \texttt{htri\_t} return
-type (HDF5's standard tri-state boolean) cleanly separates three cases: found,
-not found, and error---without triggering the error stack for a missing
-optional parameter.
+\texttt{H5Zconfig\_get\_str} follows the standard HDF5 size-query pattern:
+\texttt{buf\_size} is in/out.  On entry \texttt{*buf\_size} is the buffer
+capacity; on return it is set to the required byte count (excluding NUL).
+Passing \texttt{NULL} for \texttt{buf} performs a size query only.  If the
+buffer is too small, \texttt{H5E\_OVERFLOW} is pushed and the function returns
+negative; the caller reallocates and retries.
 
-\texttt{buf\_size} is an in/out parameter following the standard HDF5 size-query
-pattern. On entry, \texttt{*buf\_size} is the capacity of \texttt{value\_buf}. On
-return, \texttt{*buf\_size} is set to the number of bytes required for the processed
-value (excluding NUL), allowing callers to allocate correctly on a first pass.
-If \texttt{value\_buf} is \texttt{NULL} or \texttt{*buf\_size} is~0 on entry, the function
-performs a size query only and does not write to \texttt{value\_buf}.  When the key
-is found and \texttt{value\_buf} is non-\texttt{NULL}, the processed value is written as a
-NUL-terminated string (quotes stripped, \texttt{""} unescaped).  The caller can use
-\texttt{strlen} on the result; no separate length output is provided.
+Type mismatches (e.g., calling \texttt{H5Zconfig\_get\_int} on a key whose
+value is a string) return negative with \texttt{H5E\_BADVALUE}.
 
-If the capacity supplied on entry is non-zero but insufficient to hold the
-processed value plus a NUL terminator, the function writes nothing to
-\texttt{value\_buf}, sets \texttt{*buf\_size} to the required byte count
-(excluding NUL), pushes \texttt{H5E\_OVERFLOW} onto the error stack, and
-returns negative.  The caller can then reallocate and retry.  This mirrors
-the overflow behaviour of \texttt{H5Iget\_name} and similar size-query
-functions in the HDF5 API.
-
-A bare key (\texttt{"fast\_mode"}, no equals sign) returns positive with
-\texttt{*buf\_size = 0} and an empty string in \texttt{value\_buf},
-distinguishable from an absent key (which returns~\texttt{0}).
-
-This function is placed in \texttt{H5Zdevelop.h} (developer-facing) rather than
-\texttt{H5Zpublic.h} to limit the public API surface.
+These functions are placed in \texttt{H5Zdevelop.h} to limit the public API
+surface.
 
 
 \subsection{Normative \texttt{cd\_values} Packing Convention}
@@ -951,20 +865,14 @@ my_filter_set_config(const char *params, unsigned *flags,
                      size_t cd_values_size)
 {
     /* ---- 1. Parse parameters (identical on both passes) ---- */
-    char   val_buf[64];
-    size_t buf_size = sizeof(val_buf);
-    int    level  = 6;         /* default */
+    int64_t level = 6;   /* default */
 
     if (params) {
-        htri_t found = H5Zconfig_get_param(params, "level",
-                                           val_buf, &buf_size);
+        htri_t found = H5Zconfig_get_int(params, "level", &level);
         if (found < 0) return FAIL;
-        if (found > 0) {
-            char *end;
-            long v = strtol(val_buf, &end, 10);
-            if (*end != '\0' || v < 0 || v > 9)
-                return FAIL;           /* push H5E_BADVALUE */
-            level = (int)v;
+        if (found > 0 && (level < 0 || level > 9)) {
+            H5Epush(..., H5E_BADVALUE, "level must be 0-9");
+            return FAIL;
         }
     }
 
@@ -993,11 +901,9 @@ my_filter_set_config(const char *params, unsigned *flags,
   ensure the count is consistent.
 \item If \texttt{cd\_values} is non-\texttt{NULL}, verify
   \texttt{cd\_values\_size >= *cd\_nelmts * sizeof(*cd\_values)} before writing.
-\item For floating-point conversions, use C-locale \texttt{strtod} (see locale
-  requirements in \SectionRef{sec:param-rules} and \SectionRef{sec:callback-specs}).
-\item When looking up multiple parameters, reset \texttt{buf\_size} to the
-  buffer capacity before each call to \texttt{H5Zconfig\_get\_param}, since
-  the function sets \texttt{*buf\_size} to the required length on return.
+\item Use the typed accessors (\texttt{H5Zconfig\_get\_int},
+  \texttt{H5Zconfig\_get\_double}, etc.)\ rather than manual string conversion;
+  locale independence and TOML type checking are handled by the accessors.
 \end{itemize}
 
 \textbf{Note on double parsing:} Because \texttt{cd\_nelmts} may vary depending on
@@ -1015,9 +921,9 @@ The library does not mandate which approach is used.
 \label{sec:pipeline-string}
 
 A convenience function that accepts a semicolon-delimited pipeline string
-(e.g., \texttt{"shuffle; deflate, level=9; fletcher32"}) is deferred to a
-future release.  The semicolon character is reserved in the parameter
-string grammar (\SectionRef{sec:param-rules}) for this purpose.
+(e.g., \texttt{"shuffle; deflate, level = 9; fletcher32"}) is deferred to a
+future release.  The semicolon character is reserved outside of quoted strings
+(\SectionRef{sec:param-parser}) for this purpose.
 \texttt{H5Pappend\_filter} (\SectionRef{sec:append-filter}) is the primary API.
 
 

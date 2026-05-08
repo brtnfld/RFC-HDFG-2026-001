@@ -13,10 +13,14 @@ hostile to CLI tools and high-level language bindings.
 
 The proposed design
 introduces \texttt{H5Pappend\_filter}, which accepts a filter ID and
-either a raw \texttt{cd\_values} array or a human-readable key=value parameter
+either a raw \texttt{cd\_values} array or a TOML inline table parameter
 string via a tagged union \texttt{H5Z\_params\_t}, resolving string parameters
-into standard \texttt{cd\_values} at configuration time. Filters
-opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
+into standard \texttt{cd\_values} at configuration time. The parameter string
+format is a subset of the TOML v1.0.0 inline table syntax~\cite{toml10},
+parsed via a vendored subset of the tomlc17 library; this provides
+typed values (integer, float, boolean, string), nested configuration
+for future VOL and VFD use, and a stable externally-maintained grammar.
+Filters opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
 optional \texttt{set\_config}/\texttt{get\_config} callbacks and an optional
 \texttt{filter\_title} field that is packed into \texttt{cd\_values} at
 registration time, providing a persistent human-readable label for the filter
