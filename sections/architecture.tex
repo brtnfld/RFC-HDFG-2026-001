@@ -56,8 +56,13 @@ valid for filters that take no parameters (shuffle, fletcher32, nbit).
 \item \textbf{Inline table (nested):} A value may itself be a
   comma-separated list of key=value pairs enclosed in braces.
   Example: \texttt{stripe = \{size = 1048576, count = 4\}}.
-  Nesting is intended for VOL connector and VFD configuration; filter
-  \texttt{set\_config} callbacks are not expected to use it.
+  Nesting is appropriate for VOL connector and VFD configuration, and
+  also for filters that wrap a sub-compressor with its own parameters
+  (e.g., Blosc selecting an internal compressor:
+  \texttt{compressor = \{name = "zlib", level = 6\}, shuffle = 1}).
+  Dotted-key form (\texttt{compressor.name = "zlib", compressor.level = 6})
+  is equivalent and is the recommended style for readability in a
+  single-line string.
 \end{itemize}
 
 \verysubsection{Keys}
@@ -111,6 +116,8 @@ Duplicate keys are rejected with \texttt{H5E\_BADVALUE}.
 \texttt{scale\_type = "float\_dscale", scale\_factor = 4} & scaleoffset \\
 \texttt{fast\_mode = true, level = 6} & boolean flag \\
 \texttt{path = "/data/run\_1,v2/dict.bin"} & string value containing a comma \\
+\texttt{compressor.name = "zlib", compressor.level = 6, shuffle = 1} & Blosc sub-compressor (dotted keys) \\
+\texttt{compressor = \{name = "zlib", level = 6\}, shuffle = 1} & Blosc sub-compressor (inline table; equivalent) \\
 \texttt{stripe = \{size = 1048576, count = 4\}} & nested table (VOL/VFD) \\
 \texttt{stripe.size = 1048576, stripe.count = 4} & dotted keys (equivalent to above) \\
 \texttt{NULL} & shuffle, fletcher32 (no params) \\

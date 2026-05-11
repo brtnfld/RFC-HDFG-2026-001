@@ -84,6 +84,64 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 \item Example: \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
 \end{itemize}
 
+\subsection{Example: Blosc2 (Third-Party Filter with Sub-Compressor)}
+\label{sec:blosc-example}
+
+Blosc2 (filter ID 32001) is a third-party blocking compressor that wraps an
+internal codec---such as \texttt{zlib}, \texttt{lz4}, or \texttt{zstd}---and
+applies its own shuffle and blocking logic on top.  It is not a built-in HDF5
+filter, but it illustrates the use of nested inline table parameters
+(\SectionRef{sec:param-overview}) for filters that accept per-sub-compressor
+configuration alongside their own top-level parameters.
+
+The recommended parameter string form uses dotted keys for the sub-compressor:
+
+\begin{minted}{text}
+compressor.name = "zlib", compressor.level = 6, shuffle = 1, blocksize = 0
+\end{minted}
+
+The inline table form is equivalent:
+
+\begin{minted}{text}
+compressor = {name = "zlib", level = 6}, shuffle = 1, blocksize = 0
+\end{minted}
+
+\noindent Representative parameters a Blosc2 \texttt{set\_config} might support:
+
+\begin{itemize}
+\item \texttt{compressor.name} (string): Internal codec.
+  Accepted values: \texttt{"blosclz"}, \texttt{"lz4"}, \texttt{"lz4hc"},
+  \texttt{"zlib"}, \texttt{"zstd"}.  Default: \texttt{"blosclz"}.
+\item \texttt{compressor.level} (integer 0--9): Compression level passed to
+  the internal codec.  Default: \texttt{5}.
+\item \texttt{shuffle} (integer 0--2): Shuffle type applied before compression.
+  \texttt{0}~=~none, \texttt{1}~=~byte shuffle, \texttt{2}~=~bit shuffle.
+  Default: \texttt{1}.
+\item \texttt{blocksize} (integer $\geq 0$): Block size in bytes; \texttt{0}
+  selects an automatic size.  Default: \texttt{0}.
+\item \texttt{nthreads} (integer $\geq 1$): Compression threads.  Default:
+  \texttt{1}.
+\end{itemize}
+
+\noindent The \texttt{set\_config} callback reads the sub-compressor fields via
+dotted-key accessors:
+
+\begin{minted}{c}
+char   codec[32];
+int64_t clevel, shuffle, blocksize, nthreads;
+
+H5Zconfig_get_str (params, "compressor.name",  codec, sizeof(codec));
+H5Zconfig_get_int (params, "compressor.level", &clevel);
+H5Zconfig_get_int (params, "shuffle",           &shuffle);
+H5Zconfig_get_int (params, "blocksize",         &blocksize);
+H5Zconfig_get_int (params, "nthreads",          &nthreads);
+\end{minted}
+
+\noindent The same dotted-key form applies whether the caller wrote
+\texttt{compressor.name = "zlib"} or \texttt{compressor = \{name = "zlib"\}};
+the parser normalises both into the same key path before \texttt{set\_config}
+is invoked.
+
 
 %% ======================================================================
 %%  Section 8 – Thread Safety and Concurrency
