@@ -77,6 +77,43 @@ NULL                                                   # no parameters
 
 ---
 
+## Why This Matters for Python (and Other High-Level Languages)
+
+The old `cd_values` interface was essentially impossible to use correctly
+from Python without a dedicated wrapper. ZFP in rate mode required:
+
+```python
+import struct, h5py
+rate = 3.5
+cd = (1, 0) + struct.unpack("2I", struct.pack("d", rate))
+ds = f.create_dataset("x", data=data, compression=32013, compression_opts=cd)
+```
+
+Every float parameter required `struct.pack` to bit-cast into unsigned ints.
+Every binding (h5py, h5pyd, PyHDF5) reimplemented this translation
+independently — and got it wrong in different ways on different platforms.
+
+**With the string API:**
+
+```python
+ds = f.create_dataset("x", data=data, compression=32013,
+                      filter_params="mode='rate', rate=3.5")
+```
+
+**What changes for Python users:**
+- No `struct.pack`, no bit manipulation, no endian sensitivity
+- Booleans, floats, strings all expressed as they would be in any config file
+- Parameter strings can come from environment variables, config files,
+  or user input without any translation layer
+- TOML is already familiar — Python users know it from `pyproject.toml`
+
+**What changes for binding authors (h5py, etc.):**
+- One string argument replaces the `compression_opts` tuple for v3 filters
+- No per-filter codec knowledge required in the binding layer
+- The library validates types and rejects bad values before `set_config` runs
+
+---
+
 ## What Changed for Plugin Authors
 
 **Typed accessors replace the single string accessor:**
