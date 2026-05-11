@@ -397,45 +397,6 @@ introduced by this RFC is designed as its foundation; plugins that adopt it now
 will be forward-compatible without changes to their callbacks.
 
 %% =================================================================
-\section{Open Questions for Community Feedback}
-
-\begin{enumerate}
-
-\item \textbf{\texttt{filter\_title} and backward compatibility.}
-  Should \texttt{filter\_title} be opt-in at the call site rather than
-  automatically appended whenever non-\texttt{NULL}?  This would allow a v3
-  plugin to ship string configuration support without changing the on-disk
-  \texttt{cd\_values} layout until callers explicitly request it.
-
-\item \textbf{Nested parameters for wrapping filters.}
-  The design supports Blosc-style filters that embed a sub-compressor with
-  its own parameters (e.g.,
-  \texttt{compressor.name = "zlib", compressor.level = 6}).
-  Does this meet the needs of filters in your community that wrap another
-  codec?
-
-\item \textbf{Pipeline-string API.}
-  A convenience function accepting a semicolon-delimited pipeline string
-  (\texttt{"shuffle; deflate, level = 9; fletcher32"}) is deferred to a
-  future release.  The semicolon is reserved for this purpose.
-  Is there demand to include it in this release?
-
-\item \textbf{Parallel HDF5 and heterogeneous clusters.}
-  On clusters mixing CPU architectures, floating-point string parsing may
-  produce different \texttt{double} bit patterns per rank, causing
-  \texttt{cd\_values} divergence at a collective \texttt{H5Dcreate}.  The
-  recommended workaround is to call \texttt{H5Pappend\_filter} on one rank,
-  encode the DCPL with \texttt{H5Pencode}, broadcast the buffer, and decode
-  with \texttt{H5Pdecode} on all ranks.  Is this guidance sufficient, or
-  should the library provide built-in protection?
-
-\item \textbf{Plugin adoption path.}
-  What documentation or tooling would most lower the barrier for third-party
-  plugin authors to adopt \texttt{H5Z\_class3\_t}?
-
-\end{enumerate}
-
-%% =================================================================
 \newpage
 \phantomsection
 \addcontentsline{toc}{section}{References}
