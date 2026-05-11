@@ -1,0 +1,452 @@
+\documentclass[letterpaper,hyper]{HDF5_RFC}
+
+\usepackage[T1]{fontenc}
+
+\renewcommand{\texttt}[1]{\begingroup\small\ttfamily\hyphenchar\font=45
+  \spaceskip=.5em plus .3em minus .2em #1\endgroup}
+\let\oldtextunderscore\_
+\renewcommand{\_}{\oldtextunderscore\allowbreak}
+
+\usepackage{enumitem}
+\setlistdepth{4}
+
+\setminted[c]{fontsize=\scriptsize,breaklines,frame=leftline,framesep=2mm,%
+  rulecolor=rulecolor,linenos,numbersep=5pt}
+\setminted[python]{fontsize=\scriptsize,breaklines,frame=leftline,framesep=2mm,%
+  rulecolor=rulecolor,linenos,numbersep=5pt}
+\setminted[bash]{fontsize=\scriptsize,breaklines}
+\setminted[text]{fontsize=\scriptsize,breaklines}
+
+\title{RFC: String-Based Filter Configuration API\\[4pt]
+       {\large Community Review Edition}}
+\author{[Scot Breitenfeld]}
+\date{2026-05-11}
+\rfcversion{2026-001-CR}
+\organization{HDFG}
+\orglogo{THG_LOGO}
+
+\revision{v1-CR}{May 11, 2026}{Community review edition derived from
+  full RFC (tagged \texttt{v1.0-full}).  Technical detail reduced by
+  approximately half; focus on user-facing behaviour, compatibility
+  guarantees, and open questions for community input.}
+
+\makeindex[intoc]
+\addbibresource{support/rfc.bib}
+
+\begin{document}
+\maketitle
+
+%% -----------------------------------------------------------------
+\begin{abstract}
+This RFC proposes a string-based configuration API for HDF5 I/O filters.
+The existing \texttt{H5Pset\_filter} interface requires users to construct raw
+\texttt{cd\_values} arrays of \texttt{unsigned int}, which forces error-prone
+type-punning for floating-point parameters and produces configurations that are
+opaque to command-line tools and high-level language bindings.
+
+The proposed design introduces \texttt{H5Pappend\_filter}, which accepts a
+filter ID and either a raw \texttt{cd\_values} array or a TOML inline table
+parameter string~\cite{toml10}. String parameters are resolved into standard
+\texttt{cd\_values} at configuration time; the on-disk format is
+\textbf{unchanged}. Filters opt in via an updated plugin class
+(\texttt{H5Z\_class3\_t}) with two optional callbacks. Existing call sites
+compile and function without modification.
+
+This edition is intended for community review. The full technical specification
+is available in the tagged release \texttt{v1.0-full}.
+\end{abstract}
+
+\vfill
+{\footnotesize\textbf{Acknowledgements:} This work is supported by the U.S.\
+Department of Energy, Office of Science, Advanced Scientific Computing Research,
+under Contract DE-AC02-06CH11357 and by the U.S.\ Department of Energy, Office
+of Science, Office of Advanced Scientific Computing Research, Scientific
+Discovery through Advanced Computing (SciDAC) program.}
+
+\makerevisions
+\tableofcontents
+
+%% =================================================================
+\newpage
+\section{Problem Statement}
+
+Configuring an HDF5 filter today requires constructing a \texttt{cd\_values}
+array of \texttt{unsigned int}. This creates three concrete pain points.
+
+\subsection{Type Punning for Floating-Point Parameters}
+
+Filters such as H5Z-ZFP accept \texttt{double} parameters (rate, precision,
+tolerance). Callers must bit-cast the value into one or more
+\texttt{unsigned~int} slots:
+
+\begin{minted}{c}
+unsigned int cd_vals[4];
+double rate = 3.5;
+cd_vals[0] = H5Z_ZFP_MODE_RATE;
+memcpy(&cd_vals[2], &rate, sizeof(double));
+H5Pset_filter(plist, H5Z_FILTER_ZFP, flags, 4, cd_vals);
+\end{minted}
+
+This is endian-sensitive and essentially impossible to express naturally from
+Python, Java, or MATLAB without a dedicated wrapper. In Python the same
+operation currently requires:
+
+\begin{minted}{python}
+import struct, h5py
+rate = 3.5
+cd = (1, 0) + struct.unpack("2I", struct.pack("d", rate))
+ds = f.create_dataset("x", data=data, compression=32013, compression_opts=cd)
+\end{minted}
+
+Every binding (h5py, h5pyd, PyHDF5) reimplements this translation
+independently.
+
+\subsection{Opaque CLI Usage}
+
+\texttt{h5repack} users must pass raw integer sequences and rely on external
+helper scripts to translate human-readable settings into those sequences.
+Example for ZFP rate~3.5:
+
+\begin{minted}{bash}
+h5repack -f 'UD=32013,0,4,1,0,0,1074921472' input.h5 output.h5
+\end{minted}
+
+\subsection{Opaque Introspection}
+
+The \texttt{cd\_values} array stored in a file is meaningless without
+consulting the filter's documentation. There is no standard way to recover
+``ZFP rate mode, rate=3.5'' from a stored integer array.
+
+%% =================================================================
+\newpage
+\section{Proposed Design}
+
+\subsection{\texttt{H5Pappend\_filter} — New Configuration Entry Point}
+
+\begin{minted}{c}
+herr_t H5Pappend_filter(hid_t              plist_id,
+                         H5Z_filter_t       id,
+                         unsigned           flags,
+                         const H5Z_params_t *params);
+\end{minted}
+
+\texttt{H5Z\_params\_t} is a tagged union. Two convenience macros cover the
+common cases:
+
+\begin{minted}{c}
+/* String form */
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+                 &H5Z_PARAMS_STR("level = 6"));
+
+H5Pappend_filter(plist, H5Z_FILTER_ZFP, H5Z_FLAG_MANDATORY,
+                 &H5Z_PARAMS_STR("mode = \"rate\", rate = 3.5"));
+
+/* Blosc2 — sub-compressor specified via dotted keys */
+H5Pappend_filter(plist, H5Z_FILTER_BLOSC, H5Z_FLAG_MANDATORY,
+                 &H5Z_PARAMS_STR("compressor.name = \"zlib\","
+                                 " compressor.level = 6, shuffle = 1"));
+
+/* Parameterless filter */
+H5Pappend_filter(plist, H5Z_FILTER_SHUFFLE, H5Z_FLAG_MANDATORY, NULL);
+
+/* Raw cd_values — identical to H5Pset_filter */
+unsigned level = 6;
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY,
+                 &H5Z_PARAMS_RAW(1, &level));
+\end{minted}
+
+Equivalent Python (once h5py adopts the new API):
+
+\begin{minted}{python}
+ds = f.create_dataset("x", data=data, compression=32013,
+                      filter_params="mode = 'rate', rate = 3.5")
+\end{minted}
+
+\noindent\textbf{Eager plugin loading.}  Unlike \texttt{H5Pset\_filter}, which
+defers all plugin interaction, \texttt{H5Pappend\_filter} with a string
+parameter loads the plugin and invokes \texttt{set\_config} at call time.  A
+missing plugin returns \texttt{H5E\_NOFILTER} at the call site rather than at
+\texttt{H5Dcreate}.
+
+\subsection{\texttt{H5Pget\_filter\_params\_by\_idx} — Human-Readable Introspection}
+
+\begin{minted}{c}
+herr_t H5Pget_filter_params_by_idx(hid_t plist_id, unsigned filter_idx,
+                                    char *buf, size_t bufsz, size_t *len);
+\end{minted}
+
+Returns the human-readable parameter string for the filter at position
+\texttt{filter\_idx}.  For filters that implement \texttt{get\_config}, that
+output is used; otherwise \texttt{cd\_values} are formatted as a fallback
+(e.g., \texttt{"cd\_values=1:0:0:1074921472"}).
+
+%% =================================================================
+\newpage
+\section{Parameter String Format}
+
+The parameter string format is a subset of the \textbf{TOML v1.0.0 inline
+table syntax}~\cite{toml10}, parsed via a vendored subset of the MIT-licensed
+tomlc17 library~\cite{tomlc17}.  Using an established grammar provides typed
+values and a stable specification the library does not need to own.
+
+Outer braces are \emph{optional}; the library accepts both forms:
+
+\begin{minted}{text}
+level = 6          (bare form — recommended)
+{level = 6}        (braced form — equivalent)
+\end{minted}
+
+\subsection{Examples}
+
+\begin{center}
+\begin{tabularx}{\textwidth}{>{\ttfamily\raggedright\arraybackslash\hsize=1.55\hsize}X
+                             >{\raggedright\arraybackslash\hsize=0.45\hsize}X}
+\toprule
+\textbf{Parameter String} & \textbf{Use Case} \\
+\midrule
+level = 6 & deflate (integer) \\
+mode = "rate", rate = 3.5 & ZFP (string + float) \\
+pixels\_per\_block = 16, coding = "entropy" & SZIP \\
+scale\_type = "float\_dscale", scale\_factor = 4 & scale-offset \\
+fast\_mode = true, level = 6 & boolean flag \\
+path = "/data/run\_1,v2/dict.bin" & string value containing a comma \\
+compressor.name = "zlib", compressor.level = 6, shuffle = 1
+  & Blosc2: sub-compressor (dotted keys) \\
+compressor = \{name = "zlib", level = 6\}, shuffle = 1
+  & Blosc2: sub-compressor (inline table; equivalent) \\
+NULL & no parameters (shuffle, fletcher32) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+\subsection{Value Types and Constraints}
+
+Supported value types: integer, float, boolean (\texttt{true}/\texttt{false}),
+double-quoted string, single-quoted literal string, nested inline table.
+Dotted keys (\texttt{compressor.level}) are equivalent to one level of inline
+table nesting and are the recommended form for readability.
+
+Additional constraints imposed by HDF5 on top of TOML:
+\begin{itemize}
+\item \texttt{filter\_title} is a reserved key (injected by the library).
+\item \texttt{inf}, \texttt{-inf}, and \texttt{nan} are valid TOML but
+  rejected with \texttt{H5E\_BADVALUE}.
+\item Maximum string length: \texttt{H5Z\_CONFIG\_STRING\_MAX}~=~4096~bytes.
+\item Maximum parameter count: \texttt{H5Z\_CONFIG\_MAX\_PARAMS}~=~64
+  top-level keys.
+\item Decimal separator is always \texttt{.} regardless of locale.
+\end{itemize}
+
+%% =================================================================
+\newpage
+\section{Built-in Filter Parameters}
+
+All built-in filters implement the string API out of the box.
+
+\begin{center}
+\renewcommand{\arraystretch}{1.2}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Filter} & \textbf{Example parameter string} \\
+\midrule
+Deflate      & \texttt{level = 6} \quad (integer 0--9; default 6) \\
+Shuffle      & \texttt{NULL} \\
+Fletcher32   & \texttt{NULL} \\
+SZIP         & \texttt{coding = "entropy", pixels\_per\_block = 8}
+               \quad (\texttt{coding}: \texttt{"entropy"} or \texttt{"nn"};
+               ppb: even integer 2--32) \\
+N-Bit        & \texttt{NULL} \quad (parameters derived from datatype) \\
+Scale-Offset & \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
+               \quad (\texttt{scale\_type}: \texttt{"float\_dscale"},
+               \texttt{"float\_escale"}, or \texttt{"int"}) \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+%% =================================================================
+\newpage
+\section{For Plugin Authors}
+\label{sec:plugin-authors}
+
+Upgrading is \textbf{optional}.  Existing v2 plugins continue to load and
+function without any changes.
+
+\subsection{New Plugin Class: \texttt{H5Z\_class3\_t}}
+
+\begin{minted}{c}
+typedef struct H5Z_class3_t {
+    int                    version;        /* H5Z_CLASS3_T_VERS */
+    H5Z_filter_t           id;
+    unsigned               encoder_present;
+    unsigned               decoder_present;
+    const char            *name;           /* canonical name, e.g. "zfp" */
+    const char            *filter_title;   /* display label, e.g. "ZFP Compression" */
+    H5Z_can_apply_func_t   can_apply;
+    H5Z_set_local_func_t   set_local;
+    H5Z_func_t             filter;
+    H5Z_set_config_func_t  set_config;    /* optional: string -> cd_values */
+    H5Z_get_config_func_t  get_config;    /* optional: cd_values -> string */
+} H5Z_class3_t;
+\end{minted}
+
+\subsection{\texttt{set\_config} Callback}
+
+Translates the parameter string into \texttt{cd\_values}. Typed accessor
+helpers in \texttt{H5Zdevelop.h} handle parsing; no custom string parsing
+is required:
+
+\begin{minted}{c}
+static herr_t
+my_set_config(const char *params, unsigned *flags,
+              size_t *cd_nelmts, unsigned cd_values[], size_t cd_values_size)
+{
+    int64_t level = 6;   /* default */
+    if (params)
+        H5Zconfig_get_int(params, "level", &level);
+
+    *cd_nelmts = 1;
+    if (cd_values)
+        cd_values[0] = (unsigned)level;
+    return SUCCEED;
+}
+\end{minted}
+
+Available accessors: \texttt{H5Zconfig\_get\_int},
+\texttt{H5Zconfig\_get\_double}, \texttt{H5Zconfig\_get\_bool},
+\texttt{H5Zconfig\_get\_str}.  Dotted keys (e.g.,
+\texttt{"compressor.level"}) reach into nested inline tables, supporting
+Blosc-style sub-compressor configuration without custom parsing.
+
+\subsection{\texttt{get\_config} Callback}
+
+Reconstructs a parameter string from \texttt{cd\_values} for
+\texttt{h5dump~-p} output and \texttt{H5Pget\_filter\_params\_by\_idx}.
+Optional but recommended.
+
+\subsection{\texttt{filter\_title}}
+
+A short human-readable label (e.g., \texttt{"ZFP Compression"}) packed into
+\texttt{cd\_values} at registration time and persisted in the file, so tools
+can display it even when the plugin is not installed.
+
+\noindent\textbf{Compatibility note:} Because \texttt{filter\_title} adds
+trailing slots to \texttt{cd\_values}, any v2 plugin that validates
+\texttt{cd\_nelmts} with an exact equality check will fail on files written
+by a v3-registered plugin.  The required fix is to change
+\texttt{cd\_nelmts == expected} to \texttt{cd\_nelmts >= expected}.  This
+guidance is already in the HDF5 developer documentation; the full RFC
+includes a migration guide.
+
+%% =================================================================
+\newpage
+\section{CLI Tool Changes}
+
+\subsection{\texttt{h5repack}}
+
+The existing syntax continues to work unchanged.  A new form accepts a
+filter name and TOML parameter string:
+
+\begin{minted}{bash}
+# Old syntax (still works)
+h5repack -f 'UD=32013,0,4,1,0,0,1074921472' in.h5 out.h5
+
+# New syntax
+h5repack -f 'zfp, mode = "rate", rate = 3.5' in.h5 out.h5
+h5repack -f 'deflate, level = 9' in.h5 out.h5
+\end{minted}
+
+\subsection{\texttt{h5dump}}
+
+\texttt{h5dump~-p} appends a \texttt{PARAMS\_STRING} line for each filter.
+Default output (without \texttt{-p}) is unchanged.
+
+\begin{minted}{text}
+FILTERS {
+  COMPRESSION DEFLATE { LEVEL 6 }
+  PARAMS_STRING "level = 6"
+}
+\end{minted}
+
+%% =================================================================
+\newpage
+\section{Compatibility}
+
+\begin{center}
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{Area} & \textbf{Status} \\
+\midrule
+\texttt{H5Pset\_filter} and all existing public APIs
+  & Unchanged; no deprecation \\
+Existing v1/v2 plugins
+  & Load and function without modification \\
+On-disk format
+  & \textbf{No change} — files written by \texttt{H5Pappend\_filter}
+    are byte-identical to equivalent \texttt{H5Pset\_filter} output \\
+Files from \texttt{H5Pappend\_filter}
+  & Readable by all existing HDF5 readers \\
+ABI
+  & New functions added; no existing signatures changed
+    (minor version bump) \\
+h5py, PyTables, netCDF4-Python
+  & No changes required; they call \texttt{H5Pset\_filter} \\
+Fortran and Java bindings
+  & Updated to expose \texttt{H5Pappend\_filter} and
+    \texttt{H5Pget\_filter\_params\_by\_idx} \\
+\bottomrule
+\end{tabularx}
+\end{center}
+
+A future RFC targeting HDF5~3.0 will explore typed on-disk parameter storage
+(\texttt{H5O\_PLINE\_VERSION\_3}).  The \texttt{cd\_values} packing convention
+introduced by this RFC is designed as its foundation; plugins that adopt it now
+will be forward-compatible without changes to their callbacks.
+
+%% =================================================================
+\newpage
+\section{Open Questions for Community Feedback}
+
+\begin{enumerate}
+
+\item \textbf{\texttt{filter\_title} and backward compatibility.}
+  Should \texttt{filter\_title} be opt-in at the call site rather than
+  automatically appended whenever non-\texttt{NULL}?  This would allow a v3
+  plugin to ship string configuration support without changing the on-disk
+  \texttt{cd\_values} layout until callers explicitly request it.
+
+\item \textbf{Nested parameters for wrapping filters.}
+  The design supports Blosc-style filters that embed a sub-compressor with
+  its own parameters (e.g.,
+  \texttt{compressor.name = "zlib", compressor.level = 6}).
+  Does this meet the needs of filters in your community that wrap another
+  codec?
+
+\item \textbf{Pipeline-string API.}
+  A convenience function accepting a semicolon-delimited pipeline string
+  (\texttt{"shuffle; deflate, level = 9; fletcher32"}) is deferred to a
+  future release.  The semicolon is reserved for this purpose.
+  Is there demand to include it in this release?
+
+\item \textbf{Parallel HDF5 and heterogeneous clusters.}
+  On clusters mixing CPU architectures, floating-point string parsing may
+  produce different \texttt{double} bit patterns per rank, causing
+  \texttt{cd\_values} divergence at a collective \texttt{H5Dcreate}.  The
+  recommended workaround is to call \texttt{H5Pappend\_filter} on one rank,
+  encode the DCPL with \texttt{H5Pencode}, broadcast the buffer, and decode
+  with \texttt{H5Pdecode} on all ranks.  Is this guidance sufficient, or
+  should the library provide built-in protection?
+
+\item \textbf{Plugin adoption path.}
+  What documentation or tooling would most lower the barrier for third-party
+  plugin authors to adopt \texttt{H5Z\_class3\_t}?
+
+\end{enumerate}
+
+%% =================================================================
+\newpage
+\phantomsection
+\addcontentsline{toc}{section}{References}
+\printbibliography
+
+\end{document}
