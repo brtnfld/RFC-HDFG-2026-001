@@ -67,7 +67,6 @@ Discovery through Advanced Computing (SciDAC) program.}
 \tableofcontents
 
 %% =================================================================
-\newpage
 \section{Problem Statement}
 
 Configuring an HDF5 filter today requires constructing a \texttt{cd\_values}
@@ -118,7 +117,6 @@ consulting the filter's documentation. There is no standard way to recover
 ``ZFP rate mode, rate=3.5'' from a stored integer array.
 
 %% =================================================================
-\newpage
 \section{Proposed Design}
 
 \subsection{\texttt{H5Pappend\_filter} — New Configuration Entry Point}
@@ -181,7 +179,6 @@ output is used; otherwise \texttt{cd\_values} are formatted as a fallback
 (e.g., \texttt{"cd\_values=1:0:0:1074921472"}).
 
 %% =================================================================
-\newpage
 \section{Parameter String Format}
 
 The parameter string format is a subset of the \textbf{TOML v1.0.0 inline
@@ -238,7 +235,6 @@ Additional constraints imposed by HDF5 on top of TOML:
 \end{itemize}
 
 %% =================================================================
-\newpage
 \section{Built-in Filter Parameters}
 
 All built-in filters implement the string API out of the box.
@@ -264,7 +260,6 @@ Scale-Offset & \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
 \end{center}
 
 %% =================================================================
-\newpage
 \section{For Plugin Authors}
 \label{sec:plugin-authors}
 
@@ -338,7 +333,6 @@ guidance is already in the HDF5 developer documentation; the full RFC
 includes a migration guide.
 
 %% =================================================================
-\newpage
 \section{CLI Tool Changes}
 
 \subsection{\texttt{h5repack}}
@@ -368,7 +362,6 @@ FILTERS {
 \end{minted}
 
 %% =================================================================
-\newpage
 \section{Compatibility}
 
 \begin{center}
@@ -404,7 +397,6 @@ introduced by this RFC is designed as its foundation; plugins that adopt it now
 will be forward-compatible without changes to their callbacks.
 
 %% =================================================================
-\newpage
 \section{Open Questions for Community Feedback}
 
 \begin{enumerate}
