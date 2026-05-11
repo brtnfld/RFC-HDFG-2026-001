@@ -146,11 +146,11 @@ expected count, not exactly equal.  The test suite includes a cross-version
 read test (\texttt{reg-06}) to verify this behaviour.
 
 \verysubsection{Grammar maintenance}
-The key=value format with quoted-value support constitutes a specification
-the library must support indefinitely. Future grammar extensions are backward-compatible: any
-string valid under the current grammar remains valid with the same
-semantics under future grammars. The semicolon is reserved in anticipation of
-a possible pipeline-string extension.
+The TOML inline table subset defined in \SectionRef{sec:param-overview}
+constitutes a specification the library must support indefinitely. Future
+grammar extensions are backward-compatible: any string valid under the current
+grammar remains valid with the same semantics under future grammars. The
+semicolon is reserved in anticipation of a possible pipeline-string extension.
 
 \verysubsection{Plugin adoption}
 The value of the string API scales with the number of

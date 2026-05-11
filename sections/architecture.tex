@@ -385,7 +385,7 @@ typedef struct H5Z_class3_t {
   raised in a future format revision without changing the callback signature.
   Note: the per-string token count is separately bounded by
   \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64), a parser-level limit applied before
-  \texttt{set\_config} is ever invoked (\SectionRef{sec:param-rules}).
+  \texttt{set\_config} is ever invoked (\SectionRef{sec:param-overview}).
 \item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array in
   bytes (0 when \texttt{cd\_values} is \texttt{NULL}).
 \item Returns non-negative on success, negative on failure.
@@ -446,7 +446,7 @@ round-trip correctness. Document this requirement in
   success, enabling a two-pass size query.
 \item Returns \texttt{herr\_t}: zero on success, negative on failure.
 \item The output conforms to the grammar defined in
-  \SectionRef{sec:param-rules} so that it is at least valid input to
+  \SectionRef{sec:param-overview} so that it is at least valid input to
   \texttt{set\_config}, even if the resulting configuration may differ from the
   original due to precision loss or encoding limitations.
 \item \textbf{Locale requirement:} \texttt{get\_config} implementations that format
@@ -926,6 +926,53 @@ future release.  The semicolon character is reserved outside of quoted strings
 (\SectionRef{sec:param-parser}) for this purpose.
 \texttt{H5Pappend\_filter} (\SectionRef{sec:append-filter}) is the primary API.
 
+
+%% ======================================================================
+%%  Section – Current Limitations and Future On-Disk Format Work
+%% ======================================================================
+\section{Current Limitations and Future On-Disk Format Work}
+\label{sec:pline-v3}
+
+This RFC introduces \textbf{no on-disk format change}.  Files written via
+\texttt{H5Pappend\_filter} are byte-identical to files written via
+\texttt{H5Pset\_filter}: \texttt{cd\_values} are stored in the existing
+\texttt{H5O\_PLINE\_VERSION\_2} object-header message.  The parameter string
+is consumed at API call time and is not stored on disk.
+
+\subsection{Limitations of the \texttt{cd\_values}-only Approach}
+
+Without typed on-disk metadata, two limitations apply:
+
+\begin{enumerate}
+\item \textbf{Plugin-dependent introspection.}  Tools such as \texttt{h5dump}
+  must load the filter plugin and call \texttt{get\_config} to produce a
+  human-readable representation of \texttt{cd\_values}.  When the plugin is
+  unavailable, the stored array appears as opaque integers.
+
+\item \textbf{Best-effort round-trip.}  \texttt{get\_config} reconstructs a
+  parameter string from \texttt{cd\_values}, but this reconstruction may be
+  lossy for filters that store only a quantised approximation of a
+  floating-point value.  Consumers must treat \texttt{get\_config} output as
+  informational and must not rely on exact string equality with the original
+  \texttt{H5Pappend\_filter} input.  Filters that use the
+  \texttt{H5Z\_cd\_pack\_*} helpers (\SectionRef{sec:cd-packing-convention})
+  can achieve lossless round-trips.
+\end{enumerate}
+
+These limitations are shared with the existing \texttt{H5Pset\_filter} API.
+
+\subsection{Future Work: Typed On-Disk Storage}
+
+A future RFC targeting HDF5~3.0 will propose a typed on-disk storage
+extension---provisionally \texttt{H5O\_PLINE\_VERSION\_3}---that appends
+per-slot type tags alongside \texttt{cd\_values}.  The
+\texttt{H5Z\_cd\_pack\_*} packing convention defined in this RFC is the
+normative foundation: filters that adopt it today will be forward-compatible
+with that extension without changes to their callbacks.
+
+The format extension is deferred because the primary value of this RFC---human-readable
+filter configuration at the API level---is fully realised without a format
+change, and requiring a new libver upper bound would slow adoption.
 
 
 \end{document}

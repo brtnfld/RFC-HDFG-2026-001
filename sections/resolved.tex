@@ -86,7 +86,7 @@ internal validation code rather than reimplementing it. See
 Error code for unsupported string config. The error
 \texttt{H5E\_UNSUPPORTED} (not a new code) is used when a filter does not implement
 \texttt{set\_config}, rather than a novel \texttt{H5E\_CANTENCODE} code. See
-\SectionRef{sec:set-filter2}.
+\SectionRef{sec:append-filter}.
 
 \verysubsection{R11}
 On-demand plugin loading path. Plugin loading is always by integer ID via
@@ -113,11 +113,11 @@ plugin self-registration via \texttt{H5Z\_class3\_t.name}. Introspection returns
 first-registered name for a given filter ID. See \SectionRef{sec:name-registry}.
 
 \verysubsection{R14}
-No numeric-string disambiguation needed. \texttt{H5Pset\_filter2} takes an
+No numeric-string disambiguation needed. \texttt{H5Pappend\_filter} takes an
 explicit \texttt{H5Z\_filter\_t} integer ID rather than a string name, eliminating
 the ambiguity between a numeric filter-ID string and a registered canonical
 name that was present in the earlier name-based API design. See
-\SectionRef{sec:set-filter2}.
+\SectionRef{sec:append-filter}.
 
 \verysubsection{R15}
 \texttt{H5Z\_CLASS\_T\_VERS} and \texttt{H5Z\_class\_t\_vers} must not change. The
@@ -141,8 +141,8 @@ configuration.
 \verysubsection{R18}
 Duplicate filter IDs. A filter ID never appears more than once in a
 pipeline; it is the caller's responsibility not to add the same filter ID
-twice. \texttt{H5Pset\_filter2} appends to the pipeline, matching
-\texttt{H5Pset\_filter}. See \SectionRef{sec:set-filter2}.
+twice. \texttt{H5Pappend\_filter} appends to the pipeline, matching
+\texttt{H5Pset\_filter}. See \SectionRef{sec:append-filter}.
 
 \verysubsection{R19}
 Grammar forward compatibility. Future extensions to the parameter
@@ -154,7 +154,7 @@ grammar remains valid with the same semantics under future grammars. See
 Parameterless filter rejection. \texttt{set\_config} callbacks for filters
 that take no parameters (shuffle, fletcher32, nbit) should reject
 non-\texttt{NULL}, non-empty \texttt{params} strings with \texttt{H5E\_BADVALUE}. See
-\SectionRef{sec:set-filter2}.
+\SectionRef{sec:append-filter}.
 
 \verysubsection{R21}
 \texttt{get\_config} round-tripping. The output of \texttt{get\_config} conforms
@@ -181,16 +181,14 @@ adds the symmetric lower-bound check and makes identical counts the explicit
 contract. See \SectionRef{sec:callback-specs}.
 
 \verysubsection{R25}
-Empty keys forbidden; bare keys allowed; explicit empty value rejected. The
-grammar forbids empty keys (\textit{key} requires one or more characters) and
-this constraint is stated explicitly in the Rules section. Bare keys (tokens
-without an equals sign, e.g., \texttt{"fast\_mode"}) ARE permitted and are
-treated as boolean flags with an implicit empty value;
-\texttt{H5Zconfig\_get\_param} returns positive with \texttt{*buf\_size = 0}
-for a bare key. A token with an equals sign but no value (\texttt{"key="})
-is rejected with \texttt{H5E\_BADVALUE}. The string \texttt{"=value"}
-is also rejected with \texttt{H5E\_BADVALUE}.
-See \SectionRef{sec:param-rules}.
+Boolean parameters use TOML boolean syntax; bare tokens without values are
+rejected. The TOML-based grammar requires every key to have an explicit value.
+Boolean flags are expressed as \texttt{key = true} or \texttt{key = false}
+(lowercase only, per TOML); a bare token without an equals sign (e.g.,
+\texttt{"fast\_mode"}) is not valid TOML and is rejected with
+\texttt{H5E\_BADVALUE}.  An empty key (\texttt{"=value"}) and an equals sign
+with no value (\texttt{"key="}) are similarly rejected.
+See \SectionRef{sec:param-overview}.
 
 \verysubsection{R26}
 \texttt{h5repack} \texttt{UD=} disambiguation. When parsing the new
@@ -239,14 +237,14 @@ deprecation handling) for the \texttt{H5Pset\_filter2} name, which the group jud
 acceptable given the long-term usability benefit. This decision also simplifies
 the new additions to the public \texttt{H5Z} API surface: the only new public
 functions are \texttt{H5Pset\_filter2}, \texttt{H5Pget\_filter\_params\_by\_idx},
-and the developer-facing \texttt{H5Zconfig\_get\_param}. See \SectionRef{sec:set-filter2}.
+and the developer-facing \texttt{H5Zconfig\_get\_param}. See \SectionRef{sec:append-filter}.
 
 \verysubsection{R28}
 Normative string and parameter limits. The maximum parameter string length
 (4096~bytes, \texttt{H5Z\_CONFIG\_STRING\_MAX}) and the maximum number of
 parameters per string (64, \texttt{H5Z\_CONFIG\_MAX\_PARAMS}) are hard limits
 enforced by the library, not recommendations. Both
-constants are public. See \SectionRef{sec:param-rules}.
+constants are public. See \SectionRef{sec:param-overview}.
 
 \verysubsection{R29}
 Locale independence for both input and output. The library's parameter
@@ -254,7 +252,7 @@ string parser, \texttt{set\_config} callbacks, and \texttt{get\_config} callback
 all operate in C-locale semantics. Process-wide locale settings do not
 affect parsing or formatting. This ensures round-trip correctness in
 environments with non-ASCII-compatible locale settings. See
-\SectionRef{sec:param-rules} and \SectionRef{sec:callback-specs}.
+\SectionRef{sec:param-overview} and \SectionRef{sec:callback-specs}.
 
 \verysubsection{R30}
 Canonical \texttt{set\_config} implementation template. A normative code
@@ -275,18 +273,15 @@ is not installed. See
 \SectionRef{sec:class3-struct} and \SectionRef{sec:name-semantic-change}.
 
 \verysubsection{R35}
-On-disk format extended via \texttt{H5O\_PLINE\_VERSION\_3}
-(\SectionRef{sec:pline-v3}).  The decision to include the format change in
-this RFC (rather than deferring) reflects two realities: (1)~HDF5 does not
-guarantee forward compatibility, so the standard mechanism for user-controlled
-format selection is \texttt{H5Pset\_libver\_bounds}, which already gates all
-other format extensions; (2)~stopping at string-in/uint32-on-disk leaves
-parameters opaque to tools that cannot load the plugin, which contradicts the
-self-describing goal of HDF5.  Files written with a libver upper bound below
-\texttt{H5F\_LIBVER\_V300} are byte-identical to \texttt{H5Pset\_filter} output.
-The \texttt{H5Z\_class4\_t} schema extension (\SectionRef{sec:class4}) remains
-informative and is deferred to a follow-on RFC.
-See \SectionRef{sec:introspection}.
+No on-disk format change.  Files written via \texttt{H5Pappend\_filter} are
+byte-identical to \texttt{H5Pset\_filter} output at any libver bound.  The
+parameter string is resolved to \texttt{cd\_values} at API call time and is
+not stored on disk.  The known limitation---that \texttt{cd\_values} are opaque
+to tools that cannot load the plugin---is documented but does not affect filter
+correctness or interoperability.  A future RFC targeting HDF5~3.0 will address
+typed on-disk storage; the \texttt{H5Z\_cd\_pack\_*} convention defined in this
+RFC is the normative foundation for that extension.
+See \SectionRef{sec:pline-v3} and \SectionRef{sec:introspection}.
 
 \verysubsection{R36}
 \texttt{H5Pget\_filter2} semantics for v3 plugins.  For v3 plugins,
@@ -307,7 +302,7 @@ into \texttt{cd\_values}; this requires the plugin to be registered.  A
 missing plugin returns \texttt{H5E\_NOFILTER} at the call site, not at
 \texttt{H5Dcreate} time, giving earlier and more diagnosable errors.
 For Parallel HDF5, all ranks call \texttt{H5Pset\_filter2} before any
-collective \texttt{H5Dcreate}.  See \SectionRef{sec:set-filter2}.
+collective \texttt{H5Dcreate}.  See \SectionRef{sec:append-filter}.
 
 \verysubsection{R38}
 Raw-string callback interface retained.  \texttt{set\_config} receives
@@ -344,6 +339,6 @@ HTTP RFC~9110~\cite{rfc9110}, Python \texttt{configparser}
 string, a duplicate key is almost certainly a user error; silent last-wins
 would mask it.  Detection overhead is bounded by
 \texttt{H5Z\_CONFIG\_MAX\_PARAMS}\,$=\,64$ comparisons per parse.
-See \SectionRef{sec:param-rules}.
+See \SectionRef{sec:param-overview}.
 
 \end{document}
