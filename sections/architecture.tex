@@ -106,21 +106,23 @@ Duplicate keys are rejected with \texttt{H5E\_BADVALUE}.
 \label{sec:param-examples}
 
 \begin{center}
-\begin{tabularx}{\textwidth}{l>{\raggedright\arraybackslash}X}
+\begin{tabularx}{\textwidth}{>{\ttfamily\raggedright\arraybackslash\hsize=1.55\hsize}X
+                             >{\raggedright\arraybackslash\hsize=0.45\hsize}X}
 \toprule
 \textbf{Parameter String} & \textbf{Use Case} \\
 \midrule
-\texttt{level = 6} & deflate (integer) \\
-\texttt{mode = "rate", rate = 3.5} & ZFP (string + float) \\
-\texttt{pixels\_per\_block = 16, coding = "entropy"} & SZIP \\
-\texttt{scale\_type = "float\_dscale", scale\_factor = 4} & scaleoffset \\
-\texttt{fast\_mode = true, level = 6} & boolean flag \\
-\texttt{path = "/data/run\_1,v2/dict.bin"} & string value containing a comma \\
-\texttt{compressor.name = "zlib", compressor.level = 6, shuffle = 1} & Blosc sub-compressor (dotted keys) \\
-\texttt{compressor = \{name = "zlib", level = 6\}, shuffle = 1} & Blosc sub-compressor (inline table; equivalent) \\
-\texttt{stripe = \{size = 1048576, count = 4\}} & nested table (VOL/VFD) \\
-\texttt{stripe.size = 1048576, stripe.count = 4} & dotted keys (equivalent to above) \\
-\texttt{NULL} & shuffle, fletcher32 (no params) \\
+level = 6 & deflate (integer) \\
+mode = "rate", rate = 3.5 & ZFP (string + float) \\
+pixels\_per\_block = 16, coding = "entropy" & SZIP \\
+scale\_type = "float\_dscale", scale\_factor = 4 & scaleoffset \\
+fast\_mode = true, level = 6 & boolean flag \\
+path = "/data/run\_1,v2/dict.bin" & string value with a comma \\
+compressor.name = "zlib", compressor.level = 6, shuffle = 1
+  & Blosc2: dotted keys \\
+compressor = \{name = "zlib", level = 6\}, shuffle = 1
+  & Blosc2: inline table (equivalent) \\
+stripe = \{size = 1048576, count = 4\} & nested table (VOL/VFD) \\
+NULL & no parameters \\
 \bottomrule
 \end{tabularx}
 \end{center}
