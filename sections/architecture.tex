@@ -45,14 +45,21 @@ valid for filters that take no parameters (shuffle, fletcher32, nbit).
   TOML special float values (\texttt{inf}, \texttt{nan}) are accepted by the
   parser but rejected with \texttt{H5E\_BADVALUE} by the library before
   \texttt{set\_config} is invoked.
-\item \textbf{Boolean:} \texttt{true} or \texttt{false} (lowercase only, per TOML).
-  Example: \texttt{fast\_mode = true}.
+\item \textbf{Boolean:} \texttt{true} or \texttt{false} (lowercase only, per
+  TOML).  The values \texttt{True}, \texttt{False}, \texttt{1}, and \texttt{0}
+  are \emph{not} recognized as booleans; the parser rejects them with
+  \texttt{H5E\_BADVALUE}.  Example: \texttt{fast\_mode = true}.
 \item \textbf{String:} Double-quoted only (\texttt{"\ldots"}).  Standard TOML
   escape sequences are supported (\texttt{\textbackslash n}, \texttt{\textbackslash t},
   \texttt{\textbackslash\textbackslash}, \texttt{\textbackslash"}, etc.).
   Example: \texttt{coding = "entropy"}, \texttt{path = "/data/run\_1"}.
   Single-quoted TOML literal strings (\texttt{'\ldots'}) are also accepted;
   no escape processing is performed inside single quotes.
+  An empty quoted value (\texttt{key = ""} or \texttt{key = ''}) is valid
+  and passes the empty string to the filter callback; it is the filter's
+  responsibility to accept or reject an empty value.
+  A bare \texttt{key=} with no value and no quotes is a parse error and is
+  rejected with \texttt{H5E\_BADVALUE}.
 \item \textbf{Inline table (nested):} A value may itself be a
   comma-separated list of key=value pairs enclosed in braces.
   Example: \texttt{stripe = \{size = 1048576, count = 4\}}.
@@ -199,6 +206,16 @@ compatibility with code that already references it.  No new
 naming a constant after a specific struct generation would not generalise
 when \texttt{H5Z\_class4\_t} is added.  Plugin authors instead set the
 \texttt{version} field to the literal value documented in the table above.
+
+\textbf{Future class versions:} Other in-progress HDF5 work (e.g.,
+Accelerator-native I/O Pipeline) may also need to extend
+\texttt{H5Z\_class\_t}.  The \texttt{H5Z\_CLASS\_T\_VERS\_MAX} pattern
+accommodates this without back-to-back struct versioning: a future
+\texttt{H5Z\_class4\_t} would set \texttt{version = 3} and
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX} would be bumped to \texttt{3} in the same
+release, with a new dispatch branch added for \texttt{version == 3}.
+Extensions to \texttt{H5Z\_class\_t} from different features should be
+merged in the same release to avoid consecutive struct-generation bumps.
 
 The dispatch logic in \texttt{H5Zregister()} currently works by checking
 \texttt{version != H5Z\_CLASS\_T\_VERS} first; any other value is treated as a
