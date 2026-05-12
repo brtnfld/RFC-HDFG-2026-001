@@ -14,3 +14,7 @@ _minted/
 *.run.xml
 *.toc
 RFC-HDFG-2026-001.pdf
+
+
+#Ignore vscode AI rules
+.github/instructions/codacy.instructions.md
