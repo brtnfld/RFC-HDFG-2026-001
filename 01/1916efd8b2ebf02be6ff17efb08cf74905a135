@@ -1,0 +1,55 @@
+support/rfc.bib
+  s_5ea2b69dd7a63a::t_585e09297c8f88 80-84,86-89
+  s_1b6e7368809103::t_652873d596d22a 85
+sections/architecture.tex
+  s_1b6e7368809103::t_a2173de60d01b4 288
+  s_5ea2b69dd7a63a::t_067dd20f87317d 392-401
+  s_1b6e7368809103::t_3b6cbc02a14d9a 415-421,423-434
+  s_5ea2b69dd7a63a::t_104df538e9922f 317-326
+  s_5ea2b69dd7a63a::t_d536552c65af52 243-254
+  s_5ea2b69dd7a63a::t_f8819fa146dfc8 89-93,111,118-172
+  s_5ea2b69dd7a63a::t_96b59f64bc9af2 284-287,289-300
+  s_5ea2b69dd7a63a::t_d59acce1c2df31 11-18,21-23
+  s_5ea2b69dd7a63a::t_eed63b81f42ce7 436-447
+  s_5ea2b69dd7a63a::t_028b534e6c6092 491-532,567-571
+  s_5ea2b69dd7a63a::t_f1f2a1f91c77dc 533-550,552-566
+  s_5ea2b69dd7a63a::t_369e044ee52d46 174-242,255-283,301-316,327-391,402-414,422,435,448
+  s_1b6e7368809103::t_c922b06caa0933 551
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "011916efd8b2ebf02be6ff17efb08cf74905a135",
+  "prompts": {
+    "f5d1af5e78bbcf19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c7736ed-120d-4964-9c6b-943081adcad3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>",
+      "total_additions": 11,
+      "total_deletions": 0,
+      "accepted_lines": 1429,
+      "overriden_lines": 191
+    }
+  },
+  "sessions": {
+    "s_1b6e7368809103": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "d972642b-3276-459c-b4c2-26df3638e325",
+        "model": "claude-opus-4-7"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    },
+    "s_5ea2b69dd7a63a": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "f2bcbcd3-35c4-4c72-a86b-42abdad39090",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
