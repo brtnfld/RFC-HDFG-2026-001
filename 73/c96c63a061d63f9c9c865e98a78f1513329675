@@ -1,0 +1,26 @@
+sections/architecture.tex
+  s_cbdaf8069afb64::t_47d3c7702a5754 206,228,261,307,330,345
+  s_cbdaf8069afb64::t_4aa7a1090db337 399-400
+  s_cbdaf8069afb64::t_ee9216f8cf4bba 312
+  s_cbdaf8069afb64::t_ec756898acd1be 219
+  s_cbdaf8069afb64::t_3c7f78b8848886 177-181
+  s_cbdaf8069afb64::t_33817a0660d811 188
+  s_cbdaf8069afb64::t_4d14ddc5523c3e 239-242
+  s_cbdaf8069afb64::t_7a6f5106690628 420-425
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "73c96c63a061d63f9c9c865e98a78f1513329675",
+  "prompts": {},
+  "sessions": {
+    "s_cbdaf8069afb64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9663aa68-d1c7-482a-8637-fbaa0eba7a80",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
