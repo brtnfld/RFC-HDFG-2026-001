@@ -117,9 +117,10 @@ The following constraints apply to parameter strings used with I/O filters
 
 \verysubsection{Additional constraints — VFD/VOL profile (future work)}
 
-\textbf{Note: VFD/VOL configuration is out of scope for this RFC.}  The
-constraints below are forward-looking design notes included for completeness.
-They are out of scope for this RFC.
+\begin{outofscope}
+VFD/VOL configuration is out of scope for this RFC.  The constraints below
+are forward-looking design notes included for completeness.
+\end{outofscope}
 
 VFD and VOL connector configuration strings require richer structure than
 filter parameter strings: arbitrary stack depth, arrays (e.g., lists of
@@ -178,12 +179,14 @@ page_buffer = {
 \subsection{VFD/VOL Profile: Use Case Coverage (Future Work)}
 \label{sec:vfd-use-cases}
 
-\textbf{Note: This subsection is out of scope for this RFC.}  It is included
-as forward-looking design context to demonstrate that the TOML grammar chosen
+\begin{outofscope}
+This subsection is out of scope for this RFC.  It is included as
+forward-looking design context to demonstrate that the TOML grammar chosen
 for filter configuration extends naturally to VFD and VOL connector
 configuration.  The API changes described here
 (\texttt{H5FDconfig\_get\_subtable\_str}, \texttt{H5FDconfig\_load\_from\_file},
-VFD/VOL profile constants) are out of scope for this RFC.
+VFD/VOL profile constants) are not part of this RFC.
+\end{outofscope}
 
 This subsection demonstrates, use case by use case, that the TOML VFD/VOL
 profile is sufficient to express all VFD stack configuration requirements.
@@ -492,7 +495,9 @@ rejected with \texttt{H5E\_BADVALUE} outside of quoted strings.
 \verysubsection{Sub-table string extraction for VFD stack delegation (future work)}
 \label{sec:subtable-extraction}
 
-\textbf{Note: Out of scope for this RFC.}  See \SectionRef{sec:vfd-use-cases}.
+\begin{outofscope}
+Out of scope for this RFC.  See \SectionRef{sec:vfd-use-cases}.
+\end{outofscope}
 
 VFD stack delegation (\SectionRef{sec:vfd-use-cases}, UC-4 and UC-8) requires
 a VFD to pass the configuration of its underlying VFD as a string to that

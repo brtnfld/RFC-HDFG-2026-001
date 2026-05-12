@@ -13,6 +13,18 @@
 \renewcommand{\_}{\oldtextunderscore\allowbreak}
 
 
+% Callout box for out-of-scope notices
+\usepackage[skins]{tcolorbox}
+\newtcolorbox{outofscope}{
+  enhanced,
+  colback=yellow!10,
+  colframe=orange!70!black,
+  fonttitle=\bfseries,
+  title={Out of Scope},
+  left=4pt, right=4pt, top=3pt, bottom=3pt,
+  before=\medskip, after=\medskip
+}
+
 % For long tables spanning multiple pages
 \usepackage{longtable}
 
