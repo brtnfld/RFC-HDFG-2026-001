@@ -46,6 +46,13 @@ This design does not cover:
   to update the parameters of an existing filter entry in a copied DCPL should
   retrieve the current \texttt{cd\_values} via \texttt{H5Pget\_filter\_by\_id2}
   and call \texttt{H5Pmodify\_filter} directly.
+\item VFD and VOL connector string configuration.  The TOML-based parameter
+  string grammar defined here is designed to extend naturally to VFD/VOL
+  configuration, and \SectionRef{sec:vfd-use-cases} documents that design
+  as forward-looking context.  However, the VFD/VOL configuration API changes
+  (\texttt{H5FDconfig\_get\_subtable\_str}, profile constants, etc.) are
+  explicitly out of scope for this RFC and will be addressed in a follow-on
+  RFC.
 \end{itemize}
 
 
