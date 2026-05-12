@@ -1,0 +1,22 @@
+sections/implementation.tex
+  s_cbdaf8069afb64::t_08c4d60120c47d 384-387,390,392-394,399-400,402-405
+  s_cbdaf8069afb64::t_4a8a777550a821 51-58
+sections/architecture.tex
+  s_cbdaf8069afb64::t_2417436be3554a 563-568
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "f25f07323bae16b2be594bea7bf6af11e10b0f9f",
+  "prompts": {},
+  "sessions": {
+    "s_cbdaf8069afb64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9663aa68-d1c7-482a-8637-fbaa0eba7a80",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
