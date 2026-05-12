@@ -204,9 +204,9 @@ as a workaround, requiring comment annotations (\texttt{/* <- Use integer for
 bool value */}) to explain the intent.
 
 \textbf{Coverage.}  TOML has a native boolean type:
-\texttt{true}/\texttt{false} (lowercase, unquoted).  This is a strict
-improvement: the intent is self-documenting, the parser enforces the type, and
-no integer-to-boolean coercion is required.  Example:
+\texttt{true}/\texttt{false} (lowercase, unquoted).  The intent is
+self-documenting and the parser enforces the type without integer-to-boolean
+coercion.  Example:
 
 \begin{minted}{toml}
 H5F_vfd_swmr_config = {
