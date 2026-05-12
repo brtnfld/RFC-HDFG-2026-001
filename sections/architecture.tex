@@ -174,18 +174,18 @@ page_buffer = {
 \subsection{VFD/VOL Profile: Use Case Coverage}
 \label{sec:vfd-use-cases}
 
-This subsection argues, use case by use case, that the TOML VFD/VOL profile
-is sufficient to express all VFD stack configuration requirements.  The
-reference point for these use cases is the custom LISP-style configuration
-grammar proposed in the Lifeboat VFD configuration RFC~\cite{lifeboat-vfd-cl},
-which motivates several of the design choices described here.
+This subsection demonstrates, use case by use case, that the TOML VFD/VOL
+profile is sufficient to express all VFD stack configuration requirements.
+The Lifeboat VFD configuration RFC~\cite{lifeboat-vfd-cl} provides a concrete
+set of use cases and motivates several of the design choices described here;
+it is used as a reference point, not a competing proposal.
 
 \verysubsection{UC-1: Flat scalar VFD parameters}
 
 \textbf{Use case.}  A VFD such as the page buffer VFD requires a small set of
 scalar parameters: page size, maximum number of pages, replacement policy.
 
-\textbf{How TOML handles it.}  Standard TOML key\,=\,value pairs cover this
+\textbf{Coverage.}  Standard TOML key\,=\,value pairs cover this
 directly.  The grammar provides typed integers, floats, booleans, and quoted
 strings without any extension.  Example:
 
@@ -203,7 +203,7 @@ Lifeboat grammar has no boolean type; it uses integer \texttt{0}/\texttt{1}
 as a workaround, requiring comment annotations (\texttt{/* <- Use integer for
 bool value */}) to explain the intent.
 
-\textbf{How TOML handles it.}  TOML has a native boolean type:
+\textbf{Coverage.}  TOML has a native boolean type:
 \texttt{true}/\texttt{false} (lowercase, unquoted).  This is a strict
 improvement: the intent is self-documenting, the parser enforces the type, and
 no integer-to-boolean coercion is required.  Example:
@@ -216,7 +216,7 @@ H5F_vfd_swmr_config = {
 }
 \end{minted}
 
-The Lifeboat integer workaround is unnecessary under TOML.
+Native boolean support eliminates the need for integer \texttt{0}/\texttt{1} workarounds.
 
 \verysubsection{UC-3: Binary blob values (e.g., encryption keys)}
 
@@ -225,7 +225,7 @@ the Lifeboat example).  The Lifeboat grammar introduces a special
 \texttt{<binary\_blob>} terminal with a \texttt{--} prefix to distinguish hex
 byte sequences from identifiers and integers.
 
-\textbf{How TOML handles it.}  TOML has no native binary type, but a quoted
+\textbf{Coverage.}  TOML has no native binary type, but a quoted
 string carrying a hex-encoded value is fully sufficient.  The VFD callback
 receives the string and decodes it.  The convention is explicit and requires no
 grammar extension:
@@ -236,12 +236,10 @@ encryption_vfd = {
 }
 \end{minted}
 
-The Lifeboat \texttt{--} prefix served only to distinguish binary data from
-other terminal types within a grammar that lacks a string type capable of
-carrying arbitrary content.  TOML's quoted strings remove the need for any such
-disambiguation prefix.  The decoding convention (e.g., hex, base64) is
-specified by the VFD and validated in its configuration entry point, exactly
-as with all other parameter types.
+TOML's quoted string type carries arbitrary content, so no disambiguation
+prefix is needed.  The decoding convention (e.g., hex, base64) is specified
+by the VFD and validated in its configuration entry point, as with all other
+parameter types.
 
 \textbf{Validation responsibility.}  In the Lifeboat grammar, the parser
 natively enforces that a \texttt{<binary\_blob>} terminal contains only valid
@@ -260,7 +258,7 @@ page buffer~$\to$~encryption~$\to$~sec2).  Each VFD must be able to read its
 own parameters and forward the remaining configuration to the underlying VFD,
 without any VFD needing to know the schema of its neighbors.
 
-\textbf{How TOML handles it.}  TOML inline tables and dotted keys are
+\textbf{Coverage.}  TOML inline tables and dotted keys are
 recursively defined and support arbitrary nesting depth.  The VFD/VOL profile
 removes any library-imposed depth limit.  Each VFD in the stack reads the
 keys it recognizes by name and extracts the \texttt{underlying\_vfd} sub-table
@@ -306,13 +304,12 @@ identifier of the top-level name-value pair: \texttt{( page\_buffer ( \ldots )
 )}.  The configuration string is self-describing: the consumer can determine
 which VFD is being configured without out-of-band information.
 
-\textbf{How TOML handles it.}  The same self-describing property is achieved
+\textbf{Coverage.}  The same self-describing property is achieved
 by convention: the VFD name is the sole top-level key, and its value is the
 parameter table.  A configuration string that begins with
 \texttt{page\_buffer~=~\{~\ldots~\}} unambiguously identifies the page buffer
 VFD as the top-level driver.  The library reads the top-level key name to
-determine which VFD to load and configure, mirroring the Lifeboat approach
-exactly, but using standard TOML key-value syntax rather than a custom grammar.
+determine which VFD to load and configure.
 
 \textbf{Sole top-level key enforcement.}  The library validates that a
 VFD/VOL profile configuration string contains \emph{exactly one} top-level
@@ -330,7 +327,7 @@ single \texttt{<name\_value\_pair>}.
 the Lifeboat grammar this is expressed as \texttt{( sec2 () )} --- a VFD name
 with an explicit but empty parameter list.
 
-\textbf{How TOML handles it.}  An empty inline table \texttt{sec2 = \{\}} is
+\textbf{Coverage.}  An empty inline table \texttt{sec2 = \{\}} is
 the direct and idiomatic equivalent.  The VFD name is present (self-describing),
 the parameter list is explicitly empty, and the grammar requires no special
 case.  \texttt{NULL} or an empty string is also accepted by the VFD/VOL
@@ -345,7 +342,7 @@ independently, risking writer/reader mismatches.  The Lifeboat RFC introduces
 a ``configuration group'' concept: a named outer wrapper containing multiple
 named sub-configurations that are parsed and applied together.
 
-\textbf{How TOML handles it.}  The configuration group maps directly onto a
+\textbf{Coverage.}  The configuration group maps directly onto a
 TOML table whose value is a list of named sub-tables.  When delivered as an
 inline string (e.g., environment variable or API call), nested inline tables
 express the group:
@@ -399,8 +396,8 @@ placed in the FAPL.  VFDs always see the inline form; the distinction between
 the two authoring styles is transparent to them.
 
 The top-level name (\texttt{vfd\_swmr\_config\_data}) identifies the
-configuration group, and each sub-table name identifies the target subsystem,
-matching the Lifeboat group semantics exactly.  The writer/reader coordination
+configuration group, and each sub-table name identifies the target subsystem.
+The writer/reader coordination
 problem is solved by the same mechanism: both sides load from the same
 configuration string or file, with the library applying writer- and
 reader-specific flag overrides (\texttt{writer}, \texttt{create\_file})
@@ -420,18 +417,12 @@ treats a parenthesised sub-expression as a single token rather than
 descending into it.  Each VFD parses only the keys at its own level and
 forwards the unparsed sub-expression string down the stack.
 
-\textbf{Why breadth-first lexing is not needed with TOML.}  Lifeboat's
-grammar does have named identifiers at every level, so the schema-isolation
-goal could in principle have been met by a depth-first parser that simply
-ignored unrecognised keys.  The breadth-first lexer trick is specifically a
-consequence of Lifeboat's parser design choice to avoid building a recursive
-in-memory parse tree and to defer parsing of nested sub-expressions to the
-consuming VFD.  TOML parsers (including the vendored tomlc17 subset) build a
-full recursive AST in a single pass, after which each VFD can locate the
-keys it recognises by name and extract the \texttt{underlying\_vfd} sub-table
-without scanning past unknown structure.  Schema isolation is preserved ---
-each VFD reads only its own keys --- but it is achieved through named-key
-lookup over a complete AST rather than through a context-sensitive lexer.
+\textbf{Schema isolation via AST lookup.}  TOML parsers (including the
+vendored tomlc17 subset) build a full recursive AST in a single pass, after
+which each VFD can locate the keys it recognises by name and extract the
+\texttt{underlying\_vfd} sub-table without scanning past unknown structure.
+Schema isolation is preserved --- each VFD reads only its own keys --- through
+named-key lookup over a complete AST.
 
 \textbf{Implementation.}  Each VFD in the stack receives a TOML configuration
 string via \texttt{driver\_config\_str} in its FAPL.  It parses that string,
