@@ -451,10 +451,10 @@ mode = "rate", rate = 3.5 & ZFP (string + float) \\
 pixels\_per\_block = 16, coding = "entropy" & SZIP \\
 scale\_type = "float\_dscale", scale\_factor = 4 & scaleoffset \\
 fast\_mode = true, level = 6 & boolean flag \\
-path = "/data/run\_1,v2/dict.bin" & string value with a comma \\
-compressor.name = "zlib", compressor.level = 6, shuffle = 1
+path = "/data/run\_1,\allowbreak{}v2/dict.bin" & string value with a comma \\
+compressor.name = "zlib",\allowbreak{} compressor.level = 6,\allowbreak{} shuffle = 1
   & Blosc2: dotted keys \\
-compressor = \{name = "zlib", level = 6\}, shuffle = 1
+compressor = \{name = "zlib",\allowbreak{} level = 6\},\allowbreak{} shuffle = 1
   & Blosc2: inline table (equivalent) \\
 stripe = \{size = 1048576, count = 4\} & nested table (VOL/VFD) \\
 NULL & no parameters \\
