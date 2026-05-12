@@ -1,0 +1,34 @@
+.gitignore
+  f5d1af5e78bbcf19 17-20
+sections/introduction.tex
+  s_cbdaf8069afb64::t_6aede8a53f231e 80
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "f82d2e031c70f816194c60a4d904d2d746881d34",
+  "prompts": {
+    "f5d1af5e78bbcf19": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "3c7736ed-120d-4964-9c6b-943081adcad3",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>",
+      "total_additions": 0,
+      "total_deletions": 0,
+      "accepted_lines": 1620,
+      "overriden_lines": 0
+    }
+  },
+  "sessions": {
+    "s_cbdaf8069afb64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9663aa68-d1c7-482a-8637-fbaa0eba7a80",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
