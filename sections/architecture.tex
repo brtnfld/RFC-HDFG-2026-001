@@ -577,11 +577,11 @@ This function is defined in \texttt{H5FDconfig.c} and declared in
 filter developer API (\texttt{H5Zdevelop.h}).  The \texttt{H5FD} prefix
 distinguishes it from the filter-scoped \texttt{H5Zconfig\_*} helpers.
 
-\textbf{Implementation status.}  \texttt{H5FDconfig\_get\_subtable\_str} and
-the associated \texttt{H5FDconfig\_load\_from\_file} helper are proposed by
-this RFC but are not yet present in the HDF5 source tree.  They are part of
-the VFD/VOL configuration work that follows from this RFC's filter-focused
-implementation.
+\begin{outofscope}
+\texttt{H5FDconfig\_get\_subtable\_str} and the associated
+\texttt{H5FDconfig\_load\_from\_file} helper are not part of this RFC and are
+not present in the HDF5 source tree.
+\end{outofscope}
 
 
 %% ======================================================================
