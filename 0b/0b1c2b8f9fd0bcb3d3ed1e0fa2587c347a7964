@@ -1,0 +1,19 @@
+support/revisions.tex
+  s_cbdaf8069afb64::t_4aba88953d9e4f 3
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "0b0b1c2b8f9fd0bcb3d3ed1e0fa2587c347a7964",
+  "prompts": {},
+  "sessions": {
+    "s_cbdaf8069afb64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9663aa68-d1c7-482a-8637-fbaa0eba7a80",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
