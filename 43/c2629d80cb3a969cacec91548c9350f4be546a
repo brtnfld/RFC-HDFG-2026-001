@@ -1,0 +1,19 @@
+RFC-HDFG-2026-001.tex
+  s_cbdaf8069afb64::t_2a2d5a9ea75615 30
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.4.4",
+  "base_commit_sha": "43c2629d80cb3a969cacec91548c9350f4be546a",
+  "prompts": {},
+  "sessions": {
+    "s_cbdaf8069afb64": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "9663aa68-d1c7-482a-8637-fbaa0eba7a80",
+        "model": "claude-sonnet-4-6"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
