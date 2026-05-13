@@ -47,6 +47,10 @@ valid for filters that take no parameters (shuffle, fletcher32, nbit).
   TOML special float values (\texttt{inf}, \texttt{nan}) are accepted by the
   parser but rejected with \texttt{H5E\_BADVALUE} by the library before
   \texttt{set\_config} is invoked.
+  Hexadecimal float literals in C99 \texttt{\%a} form
+  (e.g., \texttt{rate = 0x1.8p+1} for exactly \texttt{3.0}) are also accepted
+  as input and are the canonical output form produced by the library
+  (\SectionRef{sec:float-precision}).
 \item \textbf{Boolean:} \texttt{true} or \texttt{false} (lowercase only, per
   TOML).  The values \texttt{True}, \texttt{False}, \texttt{1}, and \texttt{0}
   are \emph{not} recognized as booleans; the parser rejects them with
@@ -114,6 +118,61 @@ The following constraints apply to parameter strings used with I/O filters
   C-locale numeric conversion.  Process-wide locale settings do not affect
   parsing.  The decimal separator is always a period.
 \end{itemize}
+
+\verysubsection{Floating-point precision and serialization}
+\label{sec:float-precision}
+
+Decimal float literals are convenient for humans but cannot represent all
+IEEE\,754 \texttt{double} values exactly.  A value such as \texttt{rate = 0.1}
+parses to the nearest representable double, which when re-serialized as a
+decimal string may produce a slightly different numeral.  Passing such a
+reconstructed string back to \texttt{set\_config} may therefore yield a
+different binary value, breaking compression reproducibility.
+
+The C99 hexadecimal float format (\texttt{\%a}/\texttt{\%A} in \texttt{printf})
+solves this by encoding the exact bit pattern of the value.  For example,
+\texttt{printf("\%a", 3.0)} produces \texttt{0x1.8p+1}, which \texttt{strtod}
+parses back to the identical 64-bit pattern with no rounding.
+
+\textbf{Input (accepted by the library):} Both decimal float literals
+(e.g., \texttt{rate = 3.5}) and C99 hexadecimal float literals
+(e.g., \texttt{rate = 0x1.cp+1}) are valid in parameter strings.
+The underlying parser calls \texttt{strtod}, which handles both forms per
+ISO\,C99~\S{}6.4.4.2.
+
+\textbf{Output (produced by the library and callbacks):} \texttt{get\_config}
+implementations \emph{shall} format \texttt{float} and \texttt{double} values
+using \texttt{\%a} rather than \texttt{\%g} or \texttt{\%f}.  This guarantees
+that any parameter string returned by \texttt{H5Pget\_filter\_params\_by\_idx}
+or \texttt{h5dump -p} can be fed back to \texttt{H5Pappend\_filter} to obtain
+the identical filter configuration.
+
+\begin{notebox}
+\textbf{Implementation requirements:}
+\begin{itemize}
+  \item \textbf{Parser:} Confirm that the vendored tomlc17 subset delegates
+    float parsing to \texttt{strtod} (or equivalent), which already accepts
+    \texttt{0x}-prefixed hex-float literals under C99.  If the subset uses a
+    custom decimal-only parser, extend it to pass hex-float tokens to
+    \texttt{strtod} unchanged.
+  \item \textbf{\texttt{get\_config} callbacks:} Replace any \texttt{\%g},
+    \texttt{\%f}, or \texttt{\%e} format specifiers used to format
+    \texttt{float} or \texttt{double} values in parameter strings with
+    \texttt{\%a} (or \texttt{\%A} for uppercase hex digits).  This applies to
+    all built-in filter callbacks and should be documented in
+    \texttt{H5Zdevelop.h} as a normative requirement for third-party plugins.
+  \item \textbf{\texttt{H5Pget\_filter\_params\_by\_idx}:} When this function
+    reconstructs a parameter string from \texttt{cd\_values} via a
+    \texttt{get\_config} callback, no additional formatting step is needed
+    provided the callback already uses \texttt{\%a} as above.
+  \item \textbf{Documentation:} Add a note to \texttt{H5Zdevelop.h} and the
+    plugin author guide stating that \texttt{get\_config} must use \texttt{\%a}
+    for all floating-point keys to enable exact round-trips.  Decimal input
+    (e.g., \texttt{rate = 3.5}) remains valid for user convenience; the
+    asymmetry (decimal in, hex-float out) is intentional and should be
+    explained.
+\end{itemize}
+\end{notebox}
 
 \verysubsection{Additional constraints — VFD/VOL profile (future work)}
 
@@ -907,16 +966,21 @@ round-trip correctness. Document this requirement in
   \SectionRef{sec:param-overview} so that it is at least valid input to
   \texttt{set\_config}, even if the resulting configuration may differ from the
   original due to precision loss or encoding limitations.
-\item \textbf{Locale requirement:} \texttt{get\_config} implementations that format
-  numeric values (e.g., floating-point parameters) use the \texttt{"C"} locale
-  for number formatting. Process-wide locale settings (e.g., a locale that
-  uses a comma as the decimal separator) do not affect the output. In
-  practice, this means using \texttt{snprintf} with \texttt{uselocale(newlocale(LC\_NUMERIC\_MASK,
-  "C", 0))} or equivalent, or formatting numeric values through a
-  locale-independent method. Outputting \texttt{"rate=3,5"} in a
-  comma-decimal locale would violate the parameter string grammar and break
-  round-tripping via \texttt{set\_config}. Document this requirement
-  in \texttt{H5Zdevelop.h} as part of the \texttt{H5Z\_get\_config\_func\_t} specification.
+\item \textbf{Locale and precision requirement:} \texttt{get\_config}
+  implementations that format floating-point values must use the C99
+  \texttt{\%a} format specifier (e.g., \texttt{snprintf(buf, n, "\%a", val)})
+  rather than \texttt{\%g}, \texttt{\%f}, or \texttt{\%e}.  \texttt{\%a}
+  produces a hexadecimal float literal that is lossless and locale-independent:
+  it encodes the exact IEEE\,754 bit pattern, so that parsing the output with
+  \texttt{strtod} recovers the original value without rounding.  This
+  guarantees exact round-trips for filters that store \texttt{float} or
+  \texttt{double} parameters using the \texttt{cd\_values} packing convention
+  (\SectionRef{sec:cd-packing-convention}).  See \SectionRef{sec:float-precision}
+  for full rationale.  Process-wide locale settings (e.g., a comma-decimal
+  locale) do not affect \texttt{\%a} output; this requirement therefore
+  supersedes the earlier locale-isolation guidance for floating-point keys.
+  Document this requirement in \texttt{H5Zdevelop.h} as part of the
+  \texttt{H5Z\_get\_config\_func\_t} specification.
 \end{itemize}
 
 
@@ -1410,11 +1474,14 @@ Without typed on-disk metadata, two limitations apply:
 \item \textbf{Best-effort round-trip.}  \texttt{get\_config} reconstructs a
   parameter string from \texttt{cd\_values}, but this reconstruction may be
   lossy for filters that store only a quantised approximation of a
-  floating-point value.  Consumers must treat \texttt{get\_config} output as
-  informational and must not rely on exact string equality with the original
-  \texttt{H5Pappend\_filter} input.  Filters that use the
-  \texttt{H5Z\_cd\_pack\_*} helpers (\SectionRef{sec:cd-packing-convention})
-  can achieve lossless round-trips.
+  floating-point value (e.g., ZFP mode encoded as a packed integer).
+  Consumers must treat \texttt{get\_config} output as informational and must
+  not rely on exact string equality with the original \texttt{H5Pappend\_filter}
+  input.  Filters that use the \texttt{cd\_values} packing convention
+  (\SectionRef{sec:cd-packing-convention}) \emph{and} format floating-point
+  keys with \texttt{\%a} (\SectionRef{sec:float-precision}) achieve exact
+  lossless round-trips: the reconstructed string, when passed back to
+  \texttt{H5Pappend\_filter}, produces an identical filter configuration.
 \end{enumerate}
 
 These limitations are shared with the existing \texttt{H5Pset\_filter} API.
