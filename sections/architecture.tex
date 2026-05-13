@@ -799,6 +799,7 @@ typedef struct H5Z_class3_t {
     H5Z_filter_t               id;
     unsigned                   encoder_present;
     unsigned                   decoder_present;
+    const char                *name;
     const char                *filter_title;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
@@ -811,6 +812,14 @@ typedef struct H5Z_class3_t {
 \verysubsection{Field descriptions}
 
 \begin{itemize}
+\item \texttt{name}---The canonical string identifier for the filter (e.g.,
+  \texttt{"zfp"}, \texttt{"blosc2"}). This field occupies the same slot as
+  \texttt{name} in \texttt{H5Z\_class2\_t} and carries the same semantics: it
+  is the stable, unique string by which the filter identifies itself. It must
+  not be \texttt{NULL}. This value is the designated lookup key for any future
+  name-to-id mapping feature; plugin authors must treat it as an immutable
+  identifier and must not vary it across versions of the same plugin.
+
 \item \texttt{filter\_title}---An optional short human-readable label for the
   filter (e.g., \texttt{"ZFP Compression"}, \texttt{"Blosc2"}). This field is
   not used for registry lookup or any programmatic dispatch---it is purely
