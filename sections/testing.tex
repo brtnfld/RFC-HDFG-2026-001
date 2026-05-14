@@ -26,10 +26,11 @@ required.  Filters are still addressed by integer ID for programmatic
 dispatch (assigned by the HDF Group filter registry~\cite{hdf5registeredfilters}),
 but \texttt{canonical\_name} now serves as both the stable string
 identifier and the human-readable label returned by
-\texttt{H5Pget\_filter2}.  The library packs \texttt{canonical\_name}
-into \texttt{cd\_values} at filter-add time, so the name persists in
-the file and is available to tools even when the plugin is not
-installed.
+\texttt{H5Pget\_filter2}.  The library writes \texttt{canonical\_name}
+into the filter-pipeline message's name field at filter-add time ---
+the same on-disk slot v2 plugins use --- so the name persists in the
+file and is available to tools even when the plugin is not installed.
+No trailing \texttt{cd\_values} slots are added.
 
 \verysubsection{Before (v2): freeform debug comment}
 In \texttt{H5Z\_class2\_t}, the \texttt{name} field is documented as a ``Comment for
@@ -38,20 +39,21 @@ debugging'' and is also user-visible through the \texttt{name[]} output paramete
 human-readable prose such as \texttt{"HDF5 ZFP filter, version 1.0.0 (rate,
 precision, and accuracy modes)"} or \texttt{"My Compression Library v2.3"}.
 
-\verysubsection{After (v3): \texttt{canonical\_name} packed into \texttt{cd\_values}}
+\verysubsection{After (v3): \texttt{canonical\_name} in the pipeline-message name field}
 \texttt{H5Z\_class3\_t} replaces \texttt{name} with the required
 \texttt{canonical\_name} field --- a stable, unique string identifier
 (e.g., \texttt{"zfp"}, \texttt{"blosc2"}) that doubles as the
-human-readable display label.  The library packs it into
-\texttt{cd\_values} at filter-add time so the name persists in the file.
+human-readable display label.  The library writes it into the
+filter-pipeline message's name field at filter-add time, which is the
+same on-disk slot v2 plugins have always used.  \texttt{cd\_values}
+is unchanged.
 
 \verysubsection{Impact on \texttt{H5Pget\_filter2}}
 For v3 plugins, \texttt{H5Pget\_filter2} returns \texttt{canonical\_name}
-from the runtime registry when the plugin is loaded.  When the plugin is
-not loaded, it falls back to the name stored in the pipeline message at
-filter-add time (sourced from the packed \texttt{canonical\_name} in
-\texttt{cd\_values}).  If neither is available, it falls back to the
-numeric filter ID formatted as a decimal string.
+from the runtime registry when the plugin is loaded.  When the plugin
+is not loaded, it falls back to the name stored in the filter-pipeline
+message's name field at filter-add time.  If neither is available, it
+falls back to the numeric filter ID formatted as a decimal string.
 
 \verysubsection{Migration guidance}
 
@@ -133,20 +135,6 @@ informational only, and the round-trip tests (\SectionRef{sec:test-builtin-round
 verify \texttt{cd\_values} equality rather than string equality.  The
 API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
 this caveat so that callers are not surprised.
-
-\verysubsection{Legacy plugin \texttt{cd\_nelmts} validation hazard}
-When a file written with a v3-registered filter (which appends the
-packed \texttt{canonical\_name} to \texttt{cd\_values}) is opened by
-an older HDF5 library through a v2 plugin, the plugin's execution
-callback receives
-a \texttt{cd\_nelmts} larger than it was written to expect.  Plugins that
-assert exact \texttt{cd\_nelmts} equality will fail the read.  Mitigation
-is documented in the field description (\SectionRef{sec:class3-struct}); a
-plugin migration guide produced alongside this RFC will cover the
-\texttt{>=} validation convention and other v2$\rightarrow$v3 migration
-steps.  Plugins must check that \texttt{cd\_nelmts} is \emph{at least} the
-expected count, not exactly equal.  The test suite includes a cross-version
-read test (\texttt{reg-06}) to verify this behaviour.
 
 \verysubsection{Grammar maintenance}
 The TOML inline table subset defined in \SectionRef{sec:param-overview}
@@ -407,21 +395,22 @@ These tests confirm that no existing behavior is broken.
   \texttt{canonical\_name = "zfp"} returns \texttt{"zfp"}.
 \item \texttt{reg-04c}: For a v3 plugin that is not loaded but whose
   filter is present in a file, \texttt{H5Pget\_filter2} returns the
-  \texttt{canonical\_name} stored in the pipeline message at filter-add
-  time (sourced from the packed \texttt{canonical\_name} in
-  \texttt{cd\_values}).  If no stored name is available, it falls back
-  to the numeric filter ID as a decimal string.
+  \texttt{canonical\_name} stored in the filter-pipeline message's
+  name field at filter-add time.  If no stored name is available, it
+  falls back to the numeric filter ID as a decimal string.
 \item \texttt{reg-05}: All existing \texttt{h5repack} invocations with the legacy filter
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
   \texttt{h5repack}.
 \item \texttt{reg-06} (\textbf{cross-version read}): Write a dataset
-  using a v3-registered plugin (which appends the packed
-  \texttt{canonical\_name} to \texttt{cd\_values}).  Read the file
-  using a build of the library that presents only a v2 version of the
-  same plugin.  Verify that the dataset is read correctly --- the v2
-  plugin's execution callback must accept the larger \texttt{cd\_nelmts}
-  and return correct data.
+  using a v3-registered plugin.  Read the file using a build of the
+  library that presents only a v2 version of the same plugin.  Verify
+  that the dataset is read correctly.  Because the v3 path writes
+  \texttt{canonical\_name} into the pipeline-message name field
+  (already a v2 on-disk feature) and adds no trailing
+  \texttt{cd\_values} slots, the v2 plugin sees exactly the
+  \texttt{cd\_nelmts} it would have seen for an
+  \texttt{H5Pset\_filter}-written dataset.
 \item \texttt{reg-07} (\textbf{DCPL encode/decode round-trip}): Create a DCPL, append a
   v3 filter via \texttt{H5Pappend\_filter} with a string parameter, then
   \texttt{H5Pencode} the DCPL to a buffer.  \texttt{H5Pdecode} the buffer into a new

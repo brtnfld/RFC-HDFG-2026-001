@@ -23,9 +23,9 @@ for future VOL and VFD use, and a stable externally-maintained grammar.
 Filters opt into string configuration via a new \texttt{H5Z\_class3\_t} plugin class with
 optional \texttt{set\_config}/\texttt{get\_config} callbacks and a required
 \texttt{canonical\_name} field that serves as both the stable string
-identifier and the display name; it is packed into \texttt{cd\_values}
-at filter-add time so it is available to tools even when the plugin is
-not installed.
+identifier and the display name; it is written into the filter-pipeline
+message at filter-add time so it is available to tools even when the
+plugin is not installed.
 Existing call sites compile and function without modification; files written by a v3-aware library are readable by older libraries through v2 plugins that tolerate extra trailing \texttt{cd\_values} slots (see \S\ref{sec:class3-struct}).
 \end{abstract}
 

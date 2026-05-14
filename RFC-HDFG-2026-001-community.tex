@@ -323,18 +323,17 @@ A short, stable string identifier for the plugin class (e.g.,
 be \texttt{NULL}, and must not vary between versions of the same plugin.
 The library uses \texttt{canonical\_name} as both the programmatic
 identifier and the human-readable label returned by
-\texttt{H5Pget\_filter2}.  At filter-add time the library packs
-\texttt{canonical\_name} into \texttt{cd\_values} so the name persists
-in the file and tools can display it even when the plugin is not
-installed.
+\texttt{H5Pget\_filter2}.  At filter-add time the library writes
+\texttt{canonical\_name} into the filter-pipeline message's name field
+--- the same on-disk slot v2 plugins have always used to carry their
+\texttt{name} --- so the name persists in the file and tools can
+display it even when the plugin is not installed.
 
-\noindent\textbf{Compatibility note:} Because the packed
-\texttt{canonical\_name} adds trailing slots to \texttt{cd\_values},
-any v2 plugin that validates \texttt{cd\_nelmts} with an exact equality
-check will fail on files written by a v3-registered plugin.  The
-required fix is to change \texttt{cd\_nelmts == expected} to
-\texttt{cd\_nelmts >= expected}.  This guidance is already in the HDF5
-developer documentation; the full RFC includes a migration guide.
+\noindent\textbf{Compatibility note:} \texttt{cd\_values} is unchanged
+by this design; v2 plugins reading files written by a v3-aware library
+see exactly the \texttt{cd\_values} their own \texttt{set\_config} (or
+the \texttt{H5Pset\_filter} caller) produced.  No \texttt{cd\_nelmts}
+surprises for legacy plugins.
 
 %% =================================================================
 \section{CLI Tool Changes}

@@ -826,45 +826,31 @@ typedef struct H5Z_class3_t {
   identity.
 
   \textbf{How it is stored and retrieved.}  When a v3 filter is appended
-  to a pipeline, the library packs \texttt{canonical\_name} into the
-  \texttt{cd\_values} array using \texttt{H5Zcd\_pack\_string()}, after
-  \texttt{set\_config} has populated the filter's own parameters.  This
-  packed representation persists in the file so that tools such as
-  \texttt{h5dump} and callers of \texttt{H5Pget\_filter2} can display the
-  filter's name even when the plugin is not installed.  The library
-  additionally stores \texttt{canonical\_name} in the filter-pipeline
-  message's name field, so \texttt{H5Pget\_filter2} can return it without
-  having to unpack \texttt{cd\_values}.  When the plugin \emph{is}
-  registered, \texttt{H5Pget\_filter2} returns \texttt{canonical\_name}
-  directly from the runtime registry; without the plugin, it falls back
-  to the stored pipeline name; with neither available, it falls back to
-  the numeric filter ID formatted as a decimal string.
+  to a pipeline, the library writes \texttt{canonical\_name} into the
+  filter-pipeline message's name field.  This is the same on-disk slot
+  that \texttt{H5Z\_class2\_t} plugins have always used to carry their
+  \texttt{name} (the legacy ``debug comment'') and that
+  \texttt{H5Pget\_filter2} has always returned via its \texttt{name[]}
+  output parameter.  The library does \emph{not} pack
+  \texttt{canonical\_name} into \texttt{cd\_values}: the pipeline-message
+  name field is the single source of persistence for the filter's
+  display name, so v2 plugins on older libraries see exactly the
+  \texttt{cd\_values} their own \texttt{set\_config} produced and the
+  read-side legacy-plugin hazards that earlier drafts of this RFC
+  described do not arise.
+
+  When the plugin \emph{is} registered, \texttt{H5Pget\_filter2}
+  returns \texttt{canonical\_name} directly from the runtime registry;
+  without the plugin, it falls back to the name persisted in the
+  pipeline message; with neither available, it falls back to the
+  numeric filter ID formatted as a decimal string.
 
   \textbf{Length limit:} \texttt{canonical\_name} must not exceed 255
-  bytes (excluding the NUL terminator).  \texttt{H5Zregister()} rejects a
-  v3 registration where \texttt{strlen(canonical\_name) > 255} with
-  \texttt{H5E\_BADVALUE}.  This bound guarantees that the packed
-  \texttt{canonical\_name} consumes at most
-  $\lceil 255/4 \rceil + 1 = 65$ \texttt{cd\_values} slots, leaving the
-  remaining capacity exclusively for the filter's own parameters.
-
-  \textbf{Legacy plugin hazard.}  Because \texttt{canonical\_name} is
-  appended to \texttt{cd\_values}, a file written by a v3-aware library
-  and then opened by an older library (e.g., HDF5~1.14.x) with a v2
-  plugin will present the older plugin's execution callback with a
-  \texttt{cd\_nelmts} value larger than the plugin expects.  Plugins that
-  strictly validate \texttt{cd\_nelmts} will return an error, breaking
-  read-compatibility for those datasets.
-
-  \textbf{Mitigation.}  Plugin authors are strongly encouraged \emph{not}
-  to validate \texttt{cd\_nelmts} as an exact equality check; the HDF5
-  developer documentation already advises treating unknown trailing
-  \texttt{cd\_values} slots as reserved.  New built-in filter callbacks
-  upgraded to v3 explicitly tolerate extra trailing slots.  Plugin
-  authors who need strict validation should check only that
-  \texttt{cd\_nelmts} is \emph{at least} the expected count.  This
-  guidance is documented in \texttt{H5Zdevelop.h} and in the plugin
-  migration guide produced alongside this RFC.
+  bytes (excluding the NUL terminator).  \texttt{H5Zregister()} rejects
+  a v3 registration where \texttt{strlen(canonical\_name) > 255} with
+  \texttt{H5E\_BADVALUE}.  This bound is a sanity cap; the
+  pipeline-message name field is variable-length and short names fit
+  in the inline buffer (\texttt{H5Z\_COMMON\_NAME\_LEN}).
 
   A migration guide for plugin authors upgrading from v2 to v3 is
   produced alongside this RFC, covering at minimum: the rename of the
@@ -1021,11 +1007,12 @@ constraints shape the approach:
   example), and place the maintenance burden on the library for changes
   to plugins it does not own.
 
-\item \textbf{cd\_values encoding is for display, not lookup.}  The
-  \texttt{canonical\_name} packed into \texttt{cd\_values} provides
-  display when the plugin is unloaded, but it is not usable as a lookup
-  mechanism because files written prior to this feature do not carry
-  the encoding.
+\item \textbf{The pipeline-message name field is for display, not lookup.}
+  The \texttt{canonical\_name} written into the pipeline message at
+  filter-add time provides display when the plugin is unloaded, but it
+  is not usable as a lookup mechanism because files written prior to
+  this feature carry a v2 plugin's debug-comment name in that slot
+  rather than a canonical identifier.
 
 \item \textbf{Plugins own their own identity.}  Each v3 plugin
   advertises its \texttt{canonical\_name} in its \texttt{H5Z\_class3\_t}
@@ -1064,23 +1051,19 @@ A v3 plugin remains fully usable through the traditional \texttt{H5Pset\_filter}
 Upgrading to v3 is optional and additive.
 
 Files written by a v3-aware library carry the v3 plugin's
-\texttt{canonical\_name} packed at the end of \texttt{cd\_values}.  Such
-files remain readable by older HDF5 libraries through \emph{existing} v2
-plugins, provided those plugins tolerate a \texttt{cd\_nelmts} value
-larger than their baseline expectation (see the legacy plugin hazard
-note in \SectionRef{sec:class3-struct}).  Plugin authors who perform
-exact \texttt{cd\_nelmts} validation must update their callbacks to
-accept trailing slots before their plugin is used with a v3-aware
-library.
+\texttt{canonical\_name} in the filter-pipeline message's name field --
+the same on-disk slot existing v2 plugins have always used.  No extra
+\texttt{cd\_values} slots are appended, so \texttt{cd\_nelmts} as seen
+by the plugin's execution callback is exactly what \texttt{set\_config}
+(or the caller of \texttt{H5Pset\_filter}) produced.  Older HDF5
+libraries reading these files via existing v2 plugins encounter no new
+\texttt{cd\_nelmts} surprises.
 
-For v3 plugins, after \texttt{set\_config} has populated the filter's
-\texttt{cd\_values}, the library appends the packed
-\texttt{canonical\_name} string at the tail.  The packed bytes are never
-seen by \texttt{set\_config} or \texttt{get\_config}.  When
-\texttt{H5Pget\_filter2} is called, it returns \texttt{canonical\_name}
-from the runtime registry if the plugin is loaded, falls back to the
-name stored in the pipeline message at filter-add time, and finally
-falls back to the numeric filter ID formatted as a decimal string.
+When \texttt{H5Pget\_filter2} is called for a v3 filter, it returns
+\texttt{canonical\_name} from the runtime registry if the plugin is
+loaded, falls back to the name stored in the pipeline message at
+filter-add time, and finally falls back to the numeric filter ID
+formatted as a decimal string.
 
 
 %% ======================================================================
@@ -1335,9 +1318,9 @@ plugins, \texttt{H5Pget\_filter2} returns \texttt{canonical\_name}
 directly from the runtime registry when the plugin is loaded; otherwise
 it returns the name stored in the pipeline message at filter-add time;
 otherwise it falls back to the numeric filter ID formatted as a decimal
-string.  Because \texttt{canonical\_name} is packed into
-\texttt{cd\_values} at filter-add time, the name is available even when
-the plugin is not loaded.
+string.  Because \texttt{canonical\_name} is written into the
+filter-pipeline message's name field at filter-add time, the name is
+available even when the plugin is not loaded.
 \texttt{H5Pget\_filter\_params\_by\_idx} complements \texttt{H5Pget\_filter2}
 by returning the parameter string rather than the filter name.
 
