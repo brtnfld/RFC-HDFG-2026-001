@@ -652,6 +652,97 @@ A filter must be able to accept a parameter string and produce \texttt{cd\_value
 and optionally to reverse the process for introspection. This is achieved by
 introducing two new optional callbacks in a version~3 filter class structure.
 
+\subsection{Where \texttt{canonical\_name} Lives}
+\label{sec:canonical-name-flow}
+
+The \texttt{canonical\_name} field appears in three distinct locations
+with three distinct roles.  \FigureRef{fig:canonical-name-flow}
+summarises the data flow; the rest of this section, and
+\SectionRef{sec:future-name-lookup}, refer back to it.
+
+\begin{figure}[h]
+\centering
+\begin{tikzpicture}[
+  font=\small,
+  node distance=8mm and 6mm,
+  source/.style={
+    rectangle, rounded corners=2pt, draw=black!70, thick,
+    fill=blue!8, align=center, inner sep=4pt,
+    minimum width=58mm, minimum height=12mm
+  },
+  sink/.style={
+    rectangle, rounded corners=2pt, draw=black!60,
+    fill=gray!8, align=center, inner sep=3pt,
+    minimum width=42mm, minimum height=11mm
+  },
+  consumer/.style={
+    rectangle, draw=black!40, dashed,
+    fill=yellow!10, align=center, inner sep=3pt,
+    font=\scriptsize,
+    minimum width=42mm, minimum height=9mm
+  },
+  arr/.style={-{Latex[length=2mm]}, thick, black!70},
+  arrlbl/.style={font=\scriptsize, fill=white, inner sep=1pt},
+]
+
+% Source of truth
+\node[source] (src) {%
+  \textbf{Plugin source} \\
+  \texttt{H5Z\_class3\_t}\\
+  \texttt{.canonical\_name = "zfp"}};
+
+% Three downstream copies / uses
+\node[sink, below=of src.south, xshift=-58mm] (disk) {%
+  \textbf{(1) On-disk}\\
+  \texttt{H5O\_PLINE} name slot};
+\node[sink, below=of src.south] (reg) {%
+  \textbf{(2) Runtime registry}\\
+  loaded class struct};
+\node[sink, below=of src.south, xshift=58mm] (lookup) {%
+  \textbf{(3) Name-lookup}\\
+  (future)};
+
+% Arrows from source to copies
+\draw[arr] (src.south) -- node[arrlbl, midway] {written at \texttt{H5Pappend\_filter}} (disk.north);
+\draw[arr] (src.south) -- node[arrlbl, midway] {read at plugin load} (reg.north);
+\draw[arr] (src.south) -- node[arrlbl, midway] {matched against caller string} (lookup.north);
+
+% Consumers
+\node[consumer, below=of disk] (cdisk) {%
+  \texttt{h5dump} / \texttt{H5Pget\_filter2}\\
+  when plugin \emph{unloaded}};
+\node[consumer, below=of reg] (creg) {%
+  \texttt{H5Pget\_filter2}\\
+  when plugin \emph{loaded}};
+\node[consumer, below=of lookup] (clookup) {%
+  future \texttt{by\_name} API\\
+  resolves to numeric \texttt{id}};
+
+\draw[arr] (disk.south) -- (cdisk.north);
+\draw[arr] (reg.south) -- (creg.north);
+\draw[arr] (lookup.south) -- (clookup.north);
+
+\end{tikzpicture}
+\caption{The plugin's \texttt{H5Z\_class3\_t} struct is the single
+source of truth for \texttt{canonical\_name}.  At
+\texttt{H5Pappend\_filter} time the library copies the string into
+the on-disk pipeline-message name slot~(1) for introspection when
+the plugin is unloaded.  At plugin load time the library reads it
+into the runtime filter registry~(2), which serves
+\texttt{H5Pget\_filter2} when the plugin is present.  A future
+name-based lookup API~(3) will match a caller-supplied string
+against the registry to recover the numeric
+\texttt{H5Z\_filter\_t} \texttt{id} needed by the DCPL.}
+\label{fig:canonical-name-flow}
+\end{figure}
+
+The three roles are independent: the on-disk copy~(1) supports
+introspection of files whose plugin is not installed; the runtime
+copy~(2) is the authoritative identity used while the plugin is
+loaded; the lookup arrow~(3) is the future-work mechanism that lets
+callers configure a pipeline using a stable name rather than a
+numeric identifier.
+
 \subsection{Version Numbering}
 \label{sec:version-numbering}
 
@@ -858,6 +949,99 @@ typedef struct H5Z_class3_t {
   constant change, and the locations in the library where v2/v3
   branching is required.
 \end{itemize}
+
+\subsection{Identity Allocation and Uniqueness}
+\label{sec:identity-allocation}
+
+The numeric \texttt{id} and the \texttt{canonical\_name} together form
+a filter's public identity.  Allocation is coordinated administratively
+by the HDF Group, and conflicts are caught at runtime by
+\texttt{H5Zregister()}.
+
+\textbf{Current state of the registry (informational).}  Today the
+list of allocated third-party filter IDs lives on the HDF Group
+portal as a web page (``Registered Filter Plugins''), not as a
+versioned artifact in the HDF5 source tree.  This RFC does \emph{not}
+change that arrangement, but the limitation is real: the page is not
+tagged with library releases and tools cannot consume it without
+scraping.  Moving the registry into the HDF5 source tree (so that the
+source is the single source of truth and the web view is generated
+from it) is tracked separately as HDF5 issue
+\href{https://github.com/HDFGroup/hdf5/issues/6407}{\#6407} and is
+out of scope for this RFC.  The runtime checks below apply regardless of where the
+registry physically lives.
+
+\verysubsection{What \texttt{H5Zregister} checks today (numeric \texttt{id})}
+
+\begin{itemize}
+\item \textbf{Range check.}  The numeric \texttt{id} must lie in
+  the range \texttt{[H5Z\_FILTER\_RESERVED, H5Z\_FILTER\_MAX]} =
+  \texttt{[256, 65535]}.  IDs 0--255 are reserved for HDF~Group built-ins
+  (\texttt{H5Z\_FILTER\_DEFLATE}=1, \texttt{\_SHUFFLE}=2,
+  \texttt{\_FLETCHER32}=3, \texttt{\_SZIP}=4, \texttt{\_NBIT}=5,
+  \texttt{\_SCALEOFFSET}=6); values above $65535$ do not fit the
+  16-bit on-disk filter slot in \texttt{H5O\_PLINE}.
+\item \textbf{Duplicate check.}  If another class with the same
+  \texttt{id} is already in the in-process filter registry, the second
+  registration is rejected.  First-registered wins.
+\item \textbf{No semantic check.}  The library does \emph{not} consult
+  any external list to verify that, e.g., ID 32013 was actually
+  allocated by the registry to ZFP.  A plugin can hard-code any ID in
+  the legal range; the runtime can only tell that the ID is
+  syntactically valid and not already taken in this process.
+\end{itemize}
+
+\verysubsection{Extending the same model to \texttt{canonical\_name}}
+
+The \texttt{canonical\_name} field is governed by an identical
+three-layer model:
+
+\begin{itemize}
+\item \textbf{Administrative allocation.}  The HDF Group's filter
+  registration process assigns the \texttt{canonical\_name} alongside
+  the numeric \texttt{id}.  A plugin author requesting ID 32013 also
+  receives, in the same registration, the canonical name string
+  (e.g., \texttt{"zfp"}).  This RFC adds \texttt{canonical\_name} to
+  the information the registration records; where that record
+  physically lives (web page today, source-tree file in the future)
+  is orthogonal to the runtime semantics specified here.
+\item \textbf{Syntactic check at \texttt{H5Zregister}.}
+  \texttt{canonical\_name} must be a non-NULL, non-empty string of at
+  most 255 bytes (already specified in the field description above)
+  drawn from the character class \texttt{[A-Za-z0-9\_.-]}.  Names are
+  matched case-sensitively.  Registrations that violate the syntax are
+  rejected with \texttt{H5E\_BADVALUE}.
+\item \textbf{In-process duplicate check at \texttt{H5Zregister}.}  If
+  the in-process registry already contains a filter with the same
+  \texttt{canonical\_name} but a different \texttt{id} (or vice
+  versa), the second registration is rejected with
+  \texttt{H5E\_CANTREGISTER}.  As with numeric IDs, first-registered
+  wins.
+\item \textbf{No semantic check.}  The library does \emph{not} verify
+  that the (name, id) pair carried by a plugin matches the public
+  registry.  A rogue plugin can declare any well-formed name in its
+  source.  Coordinated allocation through the registry is the only
+  guarantee that \texttt{"zfp"} means the same thing on every system,
+  exactly as it is the only guarantee today that ID 32013 does.
+\end{itemize}
+
+\verysubsection{What this does and does not prevent}
+
+The in-process duplicate check is sufficient to keep a single HDF5
+process internally consistent: two plugins claiming the same name or
+ID cannot both be active in the same library load.  It does \emph{not}
+prevent two independently-built plugins from declaring the same
+\texttt{canonical\_name} in their source.  The collision surfaces only
+when a user attempts to load both into one process---at which point
+the second registration fails and the user must remove or rebuild one
+of the plugins.  This mirrors today's behaviour for duplicate numeric
+IDs and is, in practice, why the registry exists.
+
+Recommended convention (non-normative): third-party plugins that have
+not gone through HDF Group filter registration should self-namespace
+their canonical names (e.g., \texttt{"org.example.fastlz"}) to make
+accidental collisions vanishingly unlikely.  Coordinated registration
+remains the recommended path for plugins that want a short, bare name.
 
 \subsection{Callback Specifications}
 \label{sec:callback-specs}
