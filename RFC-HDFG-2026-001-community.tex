@@ -225,7 +225,6 @@ table nesting and are the recommended form for readability.
 
 Additional constraints imposed by HDF5 on top of TOML:
 \begin{itemize}
-\item \texttt{filter\_title} is a reserved key (injected by the library).
 \item \texttt{inf}, \texttt{-inf}, and \texttt{nan} are valid TOML but
   rejected with \texttt{H5E\_BADVALUE}.
 \item Maximum string length: \texttt{H5Z\_CONFIG\_STRING\_MAX}~=~4096~bytes.
@@ -274,8 +273,7 @@ typedef struct H5Z_class3_t {
     H5Z_filter_t           id;
     unsigned               encoder_present;
     unsigned               decoder_present;
-    const char            *name;           /* canonical name, e.g. "zfp" */
-    const char            *filter_title;   /* display label, e.g. "ZFP Compression" */
+    const char            *canonical_name; /* required, e.g. "zfp" */
     H5Z_can_apply_func_t   can_apply;
     H5Z_set_local_func_t   set_local;
     H5Z_func_t             filter;
@@ -318,19 +316,25 @@ Reconstructs a parameter string from \texttt{cd\_values} for
 \texttt{h5dump~-p} output and \texttt{H5Pget\_filter\_params\_by\_idx}.
 Optional but recommended.
 
-\subsection{\texttt{filter\_title}}
+\subsection{\texttt{canonical\_name}}
 
-A short human-readable label (e.g., \texttt{"ZFP Compression"}) packed into
-\texttt{cd\_values} at registration time and persisted in the file, so tools
-can display it even when the plugin is not installed.
+A short, stable string identifier for the plugin class (e.g.,
+\texttt{"zfp"}, \texttt{"blosc2"}).  Required for v3 plugins, must not
+be \texttt{NULL}, and must not vary between versions of the same plugin.
+The library uses \texttt{canonical\_name} as both the programmatic
+identifier and the human-readable label returned by
+\texttt{H5Pget\_filter2}.  At filter-add time the library packs
+\texttt{canonical\_name} into \texttt{cd\_values} so the name persists
+in the file and tools can display it even when the plugin is not
+installed.
 
-\noindent\textbf{Compatibility note:} Because \texttt{filter\_title} adds
-trailing slots to \texttt{cd\_values}, any v2 plugin that validates
-\texttt{cd\_nelmts} with an exact equality check will fail on files written
-by a v3-registered plugin.  The required fix is to change
-\texttt{cd\_nelmts == expected} to \texttt{cd\_nelmts >= expected}.  This
-guidance is already in the HDF5 developer documentation; the full RFC
-includes a migration guide.
+\noindent\textbf{Compatibility note:} Because the packed
+\texttt{canonical\_name} adds trailing slots to \texttt{cd\_values},
+any v2 plugin that validates \texttt{cd\_nelmts} with an exact equality
+check will fail on files written by a v3-registered plugin.  The
+required fix is to change \texttt{cd\_nelmts == expected} to
+\texttt{cd\_nelmts >= expected}.  This guidance is already in the HDF5
+developer documentation; the full RFC includes a migration guide.
 
 %% =================================================================
 \section{CLI Tool Changes}

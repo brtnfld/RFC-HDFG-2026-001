@@ -255,17 +255,17 @@ H5Pappend_filter(plist_id, H5Z_FILTER_DEFLATE,
                  H5Z_FLAG_MANDATORY, &p)
 \end{minted}
 
-\verysubsection{\texttt{filter\_title} round-trip hazard for h5py}
-A subtle issue arises when h5py reads a DCPL from a file that was written
-using a v3 plugin with a non-\texttt{NULL} \texttt{filter\_title}: the
-\texttt{cd\_values} array returned by \texttt{H5Pget\_filter} (or
-\texttt{H5Pget\_filter\_by\_id}) will include the appended
-\texttt{filter\_title} slots in addition to the filter's own parameters.
-If h5py then passes those \texttt{cd\_values} verbatim back to
-\texttt{H5Pset\_filter} to copy or repack a dataset, the larger
-\texttt{cd\_nelmts} is presented to the plugin's execution callback ---
-triggering the same legacy plugin \texttt{cd\_nelmts} validation hazard
-documented in \SectionRef{sec:class3-struct}.
+\verysubsection{\texttt{canonical\_name} round-trip hazard for h5py}
+A subtle issue arises when h5py reads a DCPL from a file that was
+written using a v3 plugin: the \texttt{cd\_values} array returned by
+\texttt{H5Pget\_filter} (or \texttt{H5Pget\_filter\_by\_id}) will
+include the appended packed \texttt{canonical\_name} slots in addition
+to the filter's own parameters.  If h5py then passes those
+\texttt{cd\_values} verbatim back to \texttt{H5Pset\_filter} to copy or
+repack a dataset, the larger \texttt{cd\_nelmts} is presented to the
+plugin's execution callback --- triggering the same legacy plugin
+\texttt{cd\_nelmts} validation hazard documented in
+\SectionRef{sec:class3-struct}.
 
 The mitigation is the same: plugins must validate \texttt{cd\_nelmts} as
 \emph{at least} the expected count rather than exactly equal.  h5py itself

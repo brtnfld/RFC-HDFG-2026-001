@@ -262,15 +262,17 @@ filter \texttt{set\_config} callbacks follow this structure. See
 \SectionRef{sec:set-config-template}.
 
 \verysubsection{R31}
-\texttt{filter\_title} field in \texttt{H5Z\_class3\_t}. A new optional
-\texttt{filter\_title} field provides a short human-readable label for the
-filter. When non-\texttt{NULL}, the library packs it into \texttt{cd\_values}
-as a reserved key so it persists in the file. \texttt{H5Pget\_filter2} extracts
-\texttt{filter\_title} from \texttt{cd\_values} when present, falling back to
-\texttt{name} otherwise. This mitigates the semantic change in the \texttt{name}
-field and allows tools to display a human-readable label even when the plugin
-is not installed. See
-\SectionRef{sec:class3-struct} and \SectionRef{sec:name-semantic-change}.
+\texttt{canonical\_name} unified field in \texttt{H5Z\_class3\_t}. The
+legacy \texttt{name} slot is renamed to \texttt{canonical\_name} and made
+required; it serves as both the stable string identifier for the filter
+and the human-readable label returned by \texttt{H5Pget\_filter2}. The
+library packs \texttt{canonical\_name} into \texttt{cd\_values} at
+filter-add time so the name persists in the file, allowing tools to
+display it even when the plugin is not installed. A separate
+display-only \texttt{filter\_title} field was considered and rejected as
+redundant; see \SectionRef{sec:class3-struct} and the future
+name-based ID lookup discussion at
+\SectionRef{sec:future-name-lookup}.
 
 \verysubsection{R35}
 No on-disk format change.  Files written via \texttt{H5Pappend\_filter} are
@@ -285,11 +287,13 @@ See \SectionRef{sec:pline-v3} and \SectionRef{sec:introspection}.
 
 \verysubsection{R36}
 \texttt{H5Pget\_filter2} semantics for v3 plugins.  For v3 plugins,
-\texttt{H5Pget\_filter2} extracts \texttt{filter\_title} from \texttt{cd\_values}
-when the key is present, falling back to \texttt{name}.  This preserves
-backward-compatible human-readable output provided plugin authors populate
-\texttt{filter\_title} on migration, and works even when the plugin is not
-loaded since the title is persisted in the file.
+\texttt{H5Pget\_filter2} returns \texttt{canonical\_name} from the
+runtime registry when the plugin is loaded; otherwise it returns the
+name stored in the pipeline message at filter-add time (sourced from
+the packed \texttt{canonical\_name} in \texttt{cd\_values}); otherwise
+it falls back to the numeric filter ID formatted as a decimal string.
+This gives backward-compatible human-readable output and works even
+when the plugin is not loaded since the name is persisted in the file.
 \texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
 \texttt{get\_config}) is the new introspection function.
 See \SectionRef{sec:introspection}.
