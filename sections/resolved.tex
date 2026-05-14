@@ -262,15 +262,17 @@ filter \texttt{set\_config} callbacks follow this structure. See
 \SectionRef{sec:set-config-template}.
 
 \verysubsection{R31}
-\texttt{canonical\_name} unified field in \texttt{H5Z\_class3\_t}. The
-legacy \texttt{name} slot is renamed to \texttt{canonical\_name} and
-made required; it serves as both the stable string identifier for the
-filter and the human-readable label returned by \texttt{H5Pget\_filter2}.
-The library writes \texttt{canonical\_name} into the filter-pipeline
-message's name field at filter-add time --- the same on-disk slot v2
+Strengthened \texttt{name} contract in \texttt{H5Z\_class3\_t}.  The
+existing \texttt{name} field is kept (same offset, same type, no
+struct member rename) but its contract changes: in v3 it is required
+and must carry the filter's canonical name --- a stable, unique
+string identifier serving as both the programmatic identity and the
+human-readable label returned by \texttt{H5Pget\_filter2}.  The
+library writes the plugin's \texttt{name} into the filter-pipeline
+message's name slot at filter-add time --- the same on-disk slot v2
 plugins have always used --- so the name persists in the file without
-adding any trailing \texttt{cd\_values} slots.  An earlier draft packed
-\texttt{canonical\_name} into \texttt{cd\_values}; that approach was
+adding any trailing \texttt{cd\_values} slots.  An earlier draft
+packed the canonical name into \texttt{cd\_values}; that approach was
 abandoned because it created a legacy-plugin \texttt{cd\_nelmts}
 validation hazard and an h5py round-trip hazard, both for no
 additional capability beyond what the pipeline-message slot already
@@ -293,13 +295,13 @@ See \SectionRef{sec:pline-v3} and \SectionRef{sec:introspection}.
 
 \verysubsection{R36}
 \texttt{H5Pget\_filter2} semantics for v3 plugins.  For v3 plugins,
-\texttt{H5Pget\_filter2} returns \texttt{canonical\_name} from the
-runtime registry when the plugin is loaded; otherwise it returns the
-name written into the pipeline message's name field at filter-add
-time; otherwise it falls back to the numeric filter ID formatted as a
-decimal string.  This gives backward-compatible human-readable output
-and works even when the plugin is not loaded since the name is
-persisted in the pipeline message.
+\texttt{H5Pget\_filter2} returns \texttt{name} from the runtime
+registry when the plugin is loaded; otherwise it returns the name
+written into the pipeline message's name slot at filter-add time;
+otherwise it falls back to the numeric filter ID formatted as a
+decimal string.  This gives backward-compatible human-readable
+output and works even when the plugin is not loaded since the name
+is persisted in the pipeline message.
 \texttt{H5Pget\_filter\_params\_by\_idx} (parameter string via
 \texttt{get\_config}) is the new introspection function.
 See \SectionRef{sec:introspection}.

@@ -795,7 +795,7 @@ typedef struct H5Z_class3_t {
     H5Z_filter_t               id;
     unsigned                   encoder_present;
     unsigned                   decoder_present;
-    const char                *canonical_name;
+    const char                *name;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
     H5Z_func_t                filter;
@@ -807,43 +807,83 @@ typedef struct H5Z_class3_t {
 \verysubsection{Field descriptions}
 
 \begin{itemize}
-\item \texttt{canonical\_name}---The canonical string identifier for the
-  filter (e.g., \texttt{"zfp"}, \texttt{"blosc2"}). This field occupies the
-  same memory slot as \texttt{name} in \texttt{H5Z\_class2\_t} but is
-  renamed to make its intent explicit: it is the stable, unique string by
-  which the filter identifies itself \emph{and} the human-readable label
-  the library uses for display. It must not be \texttt{NULL}.
-  Plugin authors must treat \texttt{canonical\_name} as an immutable
-  identifier and must not vary it across versions of the same plugin.
+\item \texttt{name}---The same field as in \texttt{H5Z\_class2\_t}
+  (same offset, same type, same lifetime).  In v3 the field's
+  contract is strengthened: it is no longer a free-form ``debug
+  comment'' but the filter's \emph{canonical name}---a short, stable,
+  unique string identifier (e.g., \texttt{"zfp"}, \texttt{"blosc2"})
+  that the filter uses to identify itself and that the library uses
+  as the human-readable label.  It must not be \texttt{NULL} for v3
+  plugins.  Plugin authors must treat the value as immutable and must
+  not vary it across versions of the same plugin.  No struct member
+  is renamed; the migration from v2 to v3 is purely a contract change
+  on the contents of \texttt{name}.
 
   \textbf{Scope: plugin class, not algorithm variant.}  A filter plugin
   that supports multiple internal algorithms (e.g., Blosc2, which can use
   lz4, zstd, snappy, and others as its internal compressor) registers a
-  single \texttt{canonical\_name} for the plugin class
-  (\texttt{"blosc2"}).  The choice of internal algorithm is a
-  \emph{parameter}, expressed in the TOML configuration string
-  (e.g., \texttt{"compressor=lz4, clevel=5"}), not a separate filter
-  identity.
+  single canonical name for the plugin class (\texttt{name = "blosc2"}).
+  The choice of internal algorithm is a \emph{parameter}, expressed in
+  the TOML configuration string (e.g., \texttt{"compressor=lz4,
+  clevel=5"}), not a separate filter identity.
 
   \textbf{How it is stored and retrieved.}  When a v3 filter is appended
-  to a pipeline, the library writes \texttt{canonical\_name} into the
-  filter-pipeline message's name field.  This is the same on-disk slot
-  that \texttt{H5Z\_class2\_t} plugins have always used to carry their
-  \texttt{name} (the legacy ``debug comment'') and that
-  \texttt{H5Pget\_filter2} has always returned via its \texttt{name[]}
-  output parameter.  The library does \emph{not} pack
-  \texttt{canonical\_name} into \texttt{cd\_values}: the pipeline-message
-  name field is the single source of persistence for the filter's
-  display name, so v2 plugins on older libraries see exactly the
-  \texttt{cd\_values} their own \texttt{set\_config} produced and the
-  read-side legacy-plugin hazards that earlier drafts of this RFC
-  described do not arise.
+  to a pipeline, the library writes the plugin's \texttt{name} into the
+  filter-pipeline message's name slot on disk.  This is the same slot
+  v2 plugins have always used (the encoder at
+  \texttt{H5O\_\_pline\_encode} reads \texttt{cls->name} and writes it
+  to disk; the decoder at \texttt{H5O\_\_pline\_decode} reads it back
+  into \texttt{filter->name}) and that \texttt{H5Pget\_filter2} has
+  always returned via its \texttt{name[]} output parameter.  This RFC
+  does not introduce a new persistence channel; it strengthens the
+  contract on the bytes that channel carries.  The library does
+  \emph{not} pack the name into \texttt{cd\_values}: the on-disk slot
+  is the single source of persistence for the filter's display name,
+  so v2 plugins on older libraries see exactly the \texttt{cd\_values}
+  their own \texttt{set\_config} produced and the read-side
+  legacy-plugin hazards that earlier drafts of this RFC described do
+  not arise.
 
   When the plugin \emph{is} registered, \texttt{H5Pget\_filter2}
-  returns \texttt{canonical\_name} directly from the runtime registry;
-  without the plugin, it falls back to the name persisted in the
-  pipeline message; with neither available, it falls back to the
-  numeric filter ID formatted as a decimal string.
+  returns \texttt{name} directly from the runtime registry; without
+  the plugin, it falls back to the name persisted in the pipeline
+  message; with neither available, it falls back to the numeric
+  filter ID formatted as a decimal string.
+
+  \textbf{Reading old files: non-canonical name content is harmless.}
+  Files written before this RFC carry whatever string the v2 plugin
+  author put into the \texttt{name} field, ranging from a one-word
+  identifier to free-form prose to a NULL.  A v3-aware library
+  reading such a file behaves as follows:
+
+  \begin{itemize}
+  \item \emph{If the corresponding v3 plugin is loaded:}
+    \texttt{H5Pget\_filter2} returns the canonical \texttt{name}
+    from the runtime registry; the on-disk slot is shadowed and its
+    contents do not propagate anywhere.
+  \item \emph{If only the v2 plugin is loaded:} \texttt{H5Pget\_filter2}
+    returns the v2 plugin's \texttt{name} from the runtime registry,
+    exactly as it did before this RFC.
+  \item \emph{If no plugin is loaded:} \texttt{H5Pget\_filter2}
+    returns the bytes from the on-disk slot verbatim, exactly as it
+    did before this RFC.
+  \end{itemize}
+
+  In none of these cases does the library promote on-disk content to
+  the runtime registry, treat it as a canonical identifier, or use
+  it for a programmatic lookup.  The on-disk slot is one-way:
+  display/introspection out, never an authoritative source in.
+
+  \textbf{Consequence: no name$\rightarrow$ID lookup via the on-disk
+  slot.}  Because the slot may carry pre-v3 free-form content, it is
+  not a reliable reverse map from canonical name to numeric ID.  The
+  future name-based lookup mechanism (\SectionRef{sec:future-name-lookup})
+  resolves names by loading plugins and matching against
+  \texttt{H5Z\_class3\_t.name} in the loaded plugin struct---never
+  by consulting on-disk name bytes.  Tools that wish to enumerate
+  ``all filters named X across a set of files'' have to either load
+  the relevant plugin and compare to the numeric ID on disk, or
+  accept that v2-written files will not match by name alone.
 
   \textbf{Scope of on-disk persistence: third-party filters only.}
   The pipeline-message name slot exists in \texttt{H5O\_PLINE\_VERSION\_2}
@@ -853,14 +893,13 @@ typedef struct H5Z_class3_t {
   nbit, scale-offset), the V2 encoder and decoder
   (\texttt{H5O\_\_pline\_encode} / \texttt{H5O\_\_pline\_decode}) omit
   the name length field and name bytes entirely; no slot is reserved.
-  Consequently, \texttt{canonical\_name} for built-ins is \emph{not}
-  persisted to disk.  This is harmless: built-in filters are
-  unconditionally present in every HDF5 build, so the runtime
-  registry always supplies their \texttt{canonical\_name} to
-  \texttt{H5Pget\_filter2}, and the ``plugin unloaded, read name
-  from disk'' fallback path never engages for them.  The disk-slot
-  mechanism is therefore the persistence channel for third-party
-  filters; built-ins rely on the runtime registry only.
+  Consequently, \texttt{name} for built-ins is \emph{not} persisted to
+  disk.  This is harmless: built-in filters are unconditionally
+  present in every HDF5 build, so the runtime registry always supplies
+  their \texttt{name} to \texttt{H5Pget\_filter2}, and the ``plugin
+  unloaded, read name from disk'' fallback path never engages for
+  them.  The disk-slot mechanism is therefore the persistence channel
+  for third-party filters; built-ins rely on the runtime registry only.
 
   \textbf{Pre-existing \texttt{H5Pequal} behavior.}  The pipeline
   property's comparison callback (\texttt{H5P\_\_pline\_cmp}) does a
@@ -869,7 +908,7 @@ typedef struct H5Z_class3_t {
   introduced and is not changed by this RFC.  One observable
   consequence is that two pipelines with identical \texttt{id},
   \texttt{flags}, and \texttt{cd\_values} but different name slots
-  (e.g., one read from disk carrying \texttt{canonical\_name}, the
+  (e.g., one read from disk carrying the plugin's canonical name, the
   other constructed in memory via \texttt{H5Pset\_filter} with
   \texttt{name = NULL}) compare as unequal under \texttt{H5Pequal}.
   This is not used inside libhdf5 for any correctness-relevant path;
@@ -878,25 +917,25 @@ typedef struct H5Z_class3_t {
   compare \texttt{id} and \texttt{cd\_values} directly via
   \texttt{H5Pget\_filter2}.
 
-  \textbf{Length limit:} \texttt{canonical\_name} must not exceed 255
-  bytes (excluding the NUL terminator).  \texttt{H5Zregister()} rejects
-  a v3 registration where \texttt{strlen(canonical\_name) > 255} with
+  \textbf{Length limit:} \texttt{name} must not exceed 255 bytes
+  (excluding the NUL terminator).  \texttt{H5Zregister()} rejects a v3
+  registration where \texttt{strlen(name) > 255} with
   \texttt{H5E\_BADVALUE}.  This bound is a sanity cap; the
   pipeline-message name field is variable-length and short names fit
   in the inline buffer (\texttt{H5Z\_COMMON\_NAME\_LEN}).
 
   A migration guide for plugin authors upgrading from v2 to v3 is
-  produced alongside this RFC, covering at minimum: the rename of the
-  legacy \texttt{name} field to \texttt{canonical\_name}, the version
-  constant change, and the locations in the library where v2/v3
-  branching is required.
+  produced alongside this RFC, covering at minimum: the strengthened
+  contract on the \texttt{name} field (free-form debug comment in v2
+  becomes the canonical name in v3), the version constant change, and
+  the locations in the library where v2/v3 branching is required.
 \end{itemize}
 
 \subsection{Identity Allocation and Uniqueness}
 \label{sec:identity-allocation}
 
-The numeric \texttt{id} and the \texttt{canonical\_name} together form
-a filter's public identity.  Allocation is coordinated administratively
+The numeric \texttt{id} and the canonical name carried in \texttt{name}
+together form a filter's public identity.  Allocation is coordinated administratively
 by the HDF Group, and conflicts are caught at runtime by
 \texttt{H5Zregister()}.
 
@@ -933,32 +972,31 @@ registry physically lives.
   syntactically valid and not already taken in this process.
 \end{itemize}
 
-\verysubsection{Extending the same model to \texttt{canonical\_name}}
+\verysubsection{Extending the same model to the canonical name}
 
-The \texttt{canonical\_name} field is governed by an identical
-three-layer model:
+The canonical name carried in \texttt{name} is governed by an
+identical three-layer model:
 
 \begin{itemize}
 \item \textbf{Administrative allocation.}  The HDF Group's filter
-  registration process assigns the \texttt{canonical\_name} alongside
-  the numeric \texttt{id}.  A plugin author requesting ID 32013 also
+  registration process assigns the canonical name alongside the
+  numeric \texttt{id}.  A plugin author requesting ID 32013 also
   receives, in the same registration, the canonical name string
-  (e.g., \texttt{"zfp"}).  This RFC adds \texttt{canonical\_name} to
-  the information the registration records; where that record
-  physically lives (web page today, source-tree file in the future)
-  is orthogonal to the runtime semantics specified here.
-\item \textbf{Syntactic check at \texttt{H5Zregister}.}
-  \texttt{canonical\_name} must be a non-NULL, non-empty string of at
+  (e.g., \texttt{"zfp"}).  This RFC adds the canonical name to the
+  information the registration records; where that record physically
+  lives (web page today, source-tree file in the future) is orthogonal
+  to the runtime semantics specified here.
+\item \textbf{Syntactic check at \texttt{H5Zregister}.}  For v3
+  plugins, \texttt{name} must be a non-NULL, non-empty string of at
   most 255 bytes (already specified in the field description above)
   drawn from the character class \texttt{[A-Za-z0-9\_.-]}.  Names are
   matched case-sensitively.  Registrations that violate the syntax are
   rejected with \texttt{H5E\_BADVALUE}.
 \item \textbf{In-process duplicate check at \texttt{H5Zregister}.}  If
-  the in-process registry already contains a filter with the same
-  \texttt{canonical\_name} but a different \texttt{id} (or vice
-  versa), the second registration is rejected with
-  \texttt{H5E\_CANTREGISTER}.  As with numeric IDs, first-registered
-  wins.
+  the in-process registry already contains a v3 filter with the same
+  \texttt{name} but a different \texttt{id} (or vice versa), the
+  second registration is rejected with \texttt{H5E\_CANTREGISTER}.  As
+  with numeric IDs, first-registered wins.
 \item \textbf{No semantic check.}  The library does \emph{not} verify
   that the (name, id) pair carried by a plugin matches the public
   registry.  A rogue plugin can declare any well-formed name in its
@@ -973,7 +1011,7 @@ The in-process duplicate check is sufficient to keep a single HDF5
 process internally consistent: two plugins claiming the same name or
 ID cannot both be active in the same library load.  It does \emph{not}
 prevent two independently-built plugins from declaring the same
-\texttt{canonical\_name} in their source.  The collision surfaces only
+\texttt{name} value in their source.  The collision surfaces only
 when a user attempts to load both into one process---at which point
 the second registration fails and the user must remove or rebuild one
 of the plugins.  This mirrors today's behaviour for duplicate numeric
@@ -1116,15 +1154,16 @@ round-trip correctness. Document this requirement in
 
 \begin{outofscope}
 Name-based filter ID lookup is out of scope for this RFC.  This
-subsection records the design intent so that the \texttt{canonical\_name}
-field defined here is forward-compatible with the planned mechanism; no
-new public API is added by this RFC.
+subsection records the design intent so that the canonical-name
+contract on \texttt{H5Z\_class3\_t.name} defined here is
+forward-compatible with the planned mechanism; no new public API is
+added by this RFC.
 \end{outofscope}
 
 A follow-on change will let callers resolve a filter's numeric
-\texttt{H5Z\_filter\_t} \texttt{id} from its \texttt{canonical\_name},
-without requiring the plugin to be pre-loaded by ID.  Three design
-constraints shape the approach:
+\texttt{H5Z\_filter\_t} \texttt{id} from its canonical name, without
+requiring the plugin to be pre-loaded by ID.  Three design constraints
+shape the approach:
 
 \begin{itemize}
 \item \textbf{No static library-internal name table.}  Embedding a
@@ -1134,25 +1173,26 @@ constraints shape the approach:
   to plugins it does not own.
 
 \item \textbf{Plugins own their own identity.}  Each v3 plugin
-  advertises its \texttt{canonical\_name} in its \texttt{H5Z\_class3\_t}
-  struct; the plugin loader can read this string after \texttt{dlopen}.
-  The library does not need a registry to know what a plugin calls
-  itself.
+  advertises its canonical name in the \texttt{name} field of its
+  \texttt{H5Z\_class3\_t} struct; the plugin loader can read this
+  string after \texttt{dlopen}.  The library does not need a registry
+  to know what a plugin calls itself.
 \end{itemize}
 
 The planned mechanism is therefore \emph{full plugin discovery}: the
 plugin loader's key type (\texttt{H5PL\_key\_t}) is extended with a
 name-based filter branch.  To locate the plugin, the loader first
 probes for libraries that match a standard naming convention---e.g.,
-\texttt{libh5filter\_<canonical\_name>.so}---and only falls back to a
-full scan of the plugin directories if no matching file is found.
-Once the file is opened, the v3 plugin's \texttt{H5Z\_class3\_t}
-struct supplies both the \texttt{canonical\_name} (to confirm the
-match) and the numeric \texttt{id} required by the DCPL.  This
-approach handles plugin name changes without library updates, works
-for plugins never previously loaded, and does not depend on
-file-format encoding.  v2 plugins (which have no
-\texttt{canonical\_name}) do not participate in name-based lookup.
+\texttt{libh5filter\_<name>.so}---and only falls back to a full scan
+of the plugin directories if no matching file is found.  Once the file
+is opened, the v3 plugin's \texttt{H5Z\_class3\_t} struct supplies
+both the \texttt{name} (to confirm the match) and the numeric
+\texttt{id} required by the DCPL.  This approach handles plugin
+renames without library updates, works for plugins never previously
+loaded, and does not depend on file-format encoding.  v2 plugins
+(whose \texttt{name} field carries an unstructured debug comment
+rather than a canonical identifier) do not participate in name-based
+lookup.
 
 \textbf{HPC note.}  The naming-convention fast path is a normative
 requirement, not a hint: in a parallel job with thousands of MPI ranks
@@ -1184,8 +1224,8 @@ unchanged for ID-based callers.
 True soft-failure semantics for missing name-based filters require a
 future format extension (provisionally
 \texttt{H5O\_PLINE\_VERSION\_3}, \SectionRef{sec:pline-v3}) capable
-of storing name-only pipeline entries that carry a
-\texttt{canonical\_name} without a resolved numeric \texttt{id}.
+of storing name-only pipeline entries that carry a canonical name
+without a resolved numeric \texttt{id}.
 Such entries would be resolved at open time on systems where the
 plugin is installed and gracefully skipped where it is not.  Until
 that format is available, callers that need optional name-based
@@ -1207,20 +1247,20 @@ modification. The new callbacks are never accessed for v1/v2 registrations.
 A v3 plugin remains fully usable through the traditional \texttt{H5Pset\_filter} API.
 Upgrading to v3 is optional and additive.
 
-Files written by a v3-aware library carry the v3 plugin's
-\texttt{canonical\_name} in the filter-pipeline message's name field --
-the same on-disk slot existing v2 plugins have always used.  No extra
-\texttt{cd\_values} slots are appended, so \texttt{cd\_nelmts} as seen
-by the plugin's execution callback is exactly what \texttt{set\_config}
-(or the caller of \texttt{H5Pset\_filter}) produced.  Older HDF5
-libraries reading these files via existing v2 plugins encounter no new
-\texttt{cd\_nelmts} surprises.
+Files written by a v3-aware library carry the v3 plugin's canonical
+name (its \texttt{name} field) in the filter-pipeline message's name
+slot -- the same on-disk slot existing v2 plugins have always used.
+No extra \texttt{cd\_values} slots are appended, so \texttt{cd\_nelmts}
+as seen by the plugin's execution callback is exactly what
+\texttt{set\_config} (or the caller of \texttt{H5Pset\_filter})
+produced.  Older HDF5 libraries reading these files via existing v2
+plugins encounter no new \texttt{cd\_nelmts} surprises.
 
 When \texttt{H5Pget\_filter2} is called for a v3 filter, it returns
-\texttt{canonical\_name} from the runtime registry if the plugin is
-loaded, falls back to the name stored in the pipeline message at
-filter-add time, and finally falls back to the numeric filter ID
-formatted as a decimal string.
+the canonical name (\texttt{name}) from the runtime registry if the
+plugin is loaded, falls back to the name stored in the pipeline
+message at filter-add time, and finally falls back to the numeric
+filter ID formatted as a decimal string.
 
 
 %% ======================================================================
@@ -1482,16 +1522,16 @@ input and output, and should treat the reconstructed string as informational
 only.
 
 \verysubsection{Note on \texttt{H5Pget\_filter2}}
-The existing \texttt{H5Pget\_filter2} function returns a filter name from
-the class struct's \texttt{name} field (the ``debug comment'' in v2
-plugins) or the \texttt{canonical\_name} field for v3 plugins.  For v3
-plugins, \texttt{H5Pget\_filter2} returns \texttt{canonical\_name}
-directly from the runtime registry when the plugin is loaded; otherwise
-it returns the name stored in the pipeline message at filter-add time;
-otherwise it falls back to the numeric filter ID formatted as a decimal
-string.  Because \texttt{canonical\_name} is written into the
-filter-pipeline message's name field at filter-add time, the name is
-available even when the plugin is not loaded.
+The existing \texttt{H5Pget\_filter2} function returns the class
+struct's \texttt{name} field.  In v2 plugins this is a free-form
+debug comment; in v3 plugins it is the canonical name.  For v3
+plugins, \texttt{H5Pget\_filter2} returns \texttt{name} directly from
+the runtime registry when the plugin is loaded; otherwise it returns
+the name stored in the pipeline message at filter-add time;
+otherwise it falls back to the numeric filter ID formatted as a
+decimal string.  Because the plugin's \texttt{name} is written into
+the filter-pipeline message's name slot at filter-add time, the name
+is available even when the plugin is not loaded.
 \texttt{H5Pget\_filter\_params\_by\_idx} complements \texttt{H5Pget\_filter2}
 by returning the parameter string rather than the filter name.
 
