@@ -1023,21 +1023,59 @@ constraints shape the approach:
 
 The planned mechanism is therefore \emph{full plugin discovery}: the
 plugin loader's key type (\texttt{H5PL\_key\_t}) is extended with a
-name-based filter branch, the loader scans the configured plugin
-directories, and a v3 plugin whose \texttt{canonical\_name} matches the
-requested string is registered.  Its numeric \texttt{id} comes back
-from the plugin's own struct.  This approach handles plugin name
-changes without library updates, works for plugins never previously
-loaded, and does not depend on file-format encoding.  v2 plugins (which
-have no \texttt{canonical\_name}) do not participate in name-based
-lookup.
+name-based filter branch.  To locate the plugin, the loader first
+probes for libraries that match a standard naming convention---e.g.,
+\texttt{libh5filter\_<canonical\_name>.so}---and only falls back to a
+full scan of the plugin directories if no matching file is found.
+Once the file is opened, the v3 plugin's \texttt{H5Z\_class3\_t}
+struct supplies both the \texttt{canonical\_name} (to confirm the
+match) and the numeric \texttt{id} required by the DCPL.  This
+approach handles plugin name changes without library updates, works
+for plugins never previously loaded, and does not depend on
+file-format encoding.  v2 plugins (which have no
+\texttt{canonical\_name}) do not participate in name-based lookup.
 
-The contract for callers that perform name-based lookup for an
-optional filter must match the existing \texttt{H5Z\_FLAG\_OPTIONAL}
-semantics for pipeline-apply: a ``not found'' result is a soft failure
-that the pipeline skips, not a hard error.  The public API will expose
-a flag analogous to \texttt{H5Z\_FLAG\_OPTIONAL} so callers can opt
-into soft-failure semantics.
+\textbf{HPC note.}  The naming-convention fast path is a normative
+requirement, not a hint: in a parallel job with thousands of MPI ranks
+on a shared file system (Lustre, GPFS), a brute-force
+\texttt{dlopen()} of every shared library in the plugin directory on
+each rank would generate a metadata storm capable of stalling the
+file system's metadata server.  The fast path keeps a missed lookup
+to a single \texttt{stat()} per rank.  The directory-wide fallback
+scan is retained only for hand-installed plugins that do not follow
+the convention; deployments concerned with HPC scaling should
+require the convention.
+
+\textbf{Optional filters and the missing-ID constraint.}  The current
+\texttt{H5O\_PLINE} on-disk format strictly requires a numeric
+\texttt{H5Z\_filter\_t} for every pipeline entry.  Name-based
+configuration therefore requires the plugin to be present at
+configuration time so the numeric \texttt{id} can be resolved before
+the entry is appended to the DCPL.  If a caller requests an optional
+filter by name and the plugin cannot be found, the API must return a
+hard error: the library has no legal way to record a ``missing''
+pipeline entry without an \texttt{id}, and silently dropping the
+entry would alter the user's intended data schema without leaving a
+trace in the file.  This differs from the existing
+\texttt{H5Z\_FLAG\_OPTIONAL} semantics for ID-based configuration,
+where the \texttt{id} is known at \texttt{H5Pset\_filter} time and
+only the plugin body is missing at I/O time---those semantics remain
+unchanged for ID-based callers.
+
+True soft-failure semantics for missing name-based filters require a
+future format extension (provisionally
+\texttt{H5O\_PLINE\_VERSION\_3}, \SectionRef{sec:pline-v3}) capable
+of storing name-only pipeline entries that carry a
+\texttt{canonical\_name} without a resolved numeric \texttt{id}.
+Such entries would be resolved at open time on systems where the
+plugin is installed and gracefully skipped where it is not.  Until
+that format is available, callers that need optional name-based
+filters must check for plugin presence themselves and adjust the
+pipeline accordingly.  No new flag analogous to
+\texttt{H5Z\_FLAG\_OPTIONAL} is introduced; when the future API
+appears, callers will pass \texttt{H5Z\_FLAG\_OPTIONAL} through the
+existing \texttt{flags} bitmask, and its meaning will be defined by
+the new on-disk encoding.
 
 \subsection{Backward Compatibility}
 
@@ -1161,14 +1199,26 @@ When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
 loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
 translate the parameter string into \texttt{cd\_values}, and stores the result.
 
-\textbf{Empty-string fast path:} If \texttt{u.str} is \texttt{NULL} or the empty
+\textbf{Empty-string handling:} If \texttt{u.str} is \texttt{NULL} or the empty
 string \texttt{""}, \texttt{H5Pappend\_filter} treats the call as ``no
-parameters''---equivalent to \texttt{H5Z\_PARAMS\_CDVALUES} with
-\texttt{cd\_nelmts~=~0}---regardless of whether the filter implements
-\texttt{set\_config}. The plugin is not loaded and no callback is invoked.
-This makes parameterless filters (shuffle, fletcher32, nbit) usable through
-the \texttt{H5Z\_PARAMS\_STRING} form without forcing them to provide a
-\texttt{set\_config} callback that has nothing to do.
+parameters''. The library locates the filter plugin and inspects its class
+record:
+\begin{itemize}
+\item If the plugin does \emph{not} implement \texttt{set\_config} (the
+  typical case for parameterless built-ins such as shuffle, fletcher32, and
+  nbit), the library appends the filter with \texttt{cd\_nelmts~=~0} and no
+  callback is invoked. Such filters are usable through the
+  \texttt{H5Z\_PARAMS\_STRING} form without being forced to provide a
+  \texttt{set\_config} callback that has nothing to do.
+\item If the plugin \emph{does} implement \texttt{set\_config}, the callback
+  is invoked with \texttt{params~=~NULL}. The plugin decides whether an
+  empty configuration is acceptable: parameterless or fully-defaulted
+  filters may return success with the appropriate \texttt{cd\_values}, while
+  filters that strictly require parameters (e.g., Scale-Offset, SZIP) may
+  return \texttt{H5E\_BADVALUE} so the failure surfaces at
+  \texttt{H5Pappend\_filter} rather than later at \texttt{H5Dcreate} or
+  I/O time. This preserves the fail-fast contract documented below.
+\end{itemize}
 
 \verysubsection{Eager plugin loading}
 \textbf{Note:} Unlike \texttt{H5Pset\_filter}, which stores raw \texttt{cd\_values}
@@ -1226,8 +1276,10 @@ Non-negative on success; negative on failure.
 \item \texttt{H5E\_UNSUPPORTED}---(\texttt{H5Z\_PARAMS\_STRING} only) The
   filter was found but does not implement \texttt{set\_config}, and a
   non-empty parameter string was supplied.  An empty string or
-  \texttt{NULL} is accepted regardless of whether \texttt{set\_config} is
-  present (see the empty-string fast path in the Description).
+  \texttt{NULL} is accepted when \texttt{set\_config} is absent; when
+  \texttt{set\_config} is present, an empty/NULL string is forwarded to
+  the callback for validation (see Empty-string handling in the
+  Description).
 \item \texttt{H5E\_BADVALUE}---The parameter string is malformed, the
   \texttt{params} type field is unrecognised, or \texttt{set\_config} rejected
   the parameter string.
@@ -1547,9 +1599,10 @@ These limitations are shared with the existing \texttt{H5Pset\_filter} API.
 A future RFC targeting HDF5~3.0 will propose a typed on-disk storage
 extension---provisionally \texttt{H5O\_PLINE\_VERSION\_3}---that appends
 per-slot type tags alongside \texttt{cd\_values}.  The
-\texttt{H5Z\_cd\_pack\_*} packing convention defined in this RFC is the
-normative foundation: filters that adopt it today will be forward-compatible
-with that extension without changes to their callbacks.
+\texttt{cd\_values} packing convention defined in this RFC
+(\SectionRef{sec:cd-packing-convention}) is the normative foundation:
+filters that adopt it today will be forward-compatible with that extension
+without changes to their callbacks.
 
 The format extension is deferred because the primary value of this RFC---human-readable
 filter configuration at the API level---is fully realised without a format

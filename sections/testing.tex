@@ -358,6 +358,12 @@ resulting \texttt{cd\_values} must be identical.
 \begin{itemize}
 \item \texttt{rt-E01}: Passing a non-NULL, non-empty \texttt{params} to a parameterless
   built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns \texttt{H5E\_BADVALUE}.
+\item \texttt{rt-E01b}: Passing \texttt{NULL} or an empty parameter string
+  to a filter that implements \texttt{set\_config} and requires parameters
+  (e.g., Scale-Offset, SZIP) invokes \texttt{set\_config} with
+  \texttt{params~=~NULL} and returns \texttt{H5E\_BADVALUE} at
+  \texttt{H5Pappend\_filter} time (fail-fast). The pipeline must not be
+  appended.
 \item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{clevl = 6}
   instead of \texttt{clevel = 6}) to any built-in returns
   \texttt{H5E\_BADVALUE} with an error message identifying the unrecognized key.

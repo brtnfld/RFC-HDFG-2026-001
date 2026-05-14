@@ -286,8 +286,9 @@ parameter string is resolved to \texttt{cd\_values} at API call time and is
 not stored on disk.  The known limitation---that \texttt{cd\_values} are opaque
 to tools that cannot load the plugin---is documented but does not affect filter
 correctness or interoperability.  A future RFC targeting HDF5~3.0 will address
-typed on-disk storage; the \texttt{H5Z\_cd\_pack\_*} convention defined in this
-RFC is the normative foundation for that extension.
+typed on-disk storage; the \texttt{cd\_values} packing convention defined in
+this RFC (\SectionRef{sec:cd-packing-convention}) is the normative
+foundation for that extension.
 See \SectionRef{sec:pline-v3} and \SectionRef{sec:introspection}.
 
 \verysubsection{R36}
