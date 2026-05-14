@@ -845,6 +845,39 @@ typedef struct H5Z_class3_t {
   pipeline message; with neither available, it falls back to the
   numeric filter ID formatted as a decimal string.
 
+  \textbf{Scope of on-disk persistence: third-party filters only.}
+  The pipeline-message name slot exists in \texttt{H5O\_PLINE\_VERSION\_2}
+  only for filters with \texttt{id $\geq$ H5Z\_FILTER\_RESERVED} (i.e.,
+  \texttt{id $\geq$ 256}, the third-party range).  For HDF~Group
+  built-ins (\texttt{id < 256}: deflate, shuffle, fletcher32, szip,
+  nbit, scale-offset), the V2 encoder and decoder
+  (\texttt{H5O\_\_pline\_encode} / \texttt{H5O\_\_pline\_decode}) omit
+  the name length field and name bytes entirely; no slot is reserved.
+  Consequently, \texttt{canonical\_name} for built-ins is \emph{not}
+  persisted to disk.  This is harmless: built-in filters are
+  unconditionally present in every HDF5 build, so the runtime
+  registry always supplies their \texttt{canonical\_name} to
+  \texttt{H5Pget\_filter2}, and the ``plugin unloaded, read name
+  from disk'' fallback path never engages for them.  The disk-slot
+  mechanism is therefore the persistence channel for third-party
+  filters; built-ins rely on the runtime registry only.
+
+  \textbf{Pre-existing \texttt{H5Pequal} behavior.}  The pipeline
+  property's comparison callback (\texttt{H5P\_\_pline\_cmp}) does a
+  \texttt{strcmp} of the name slot when comparing two pipelines.  This
+  has been the case since the V2 pipeline-message format was
+  introduced and is not changed by this RFC.  One observable
+  consequence is that two pipelines with identical \texttt{id},
+  \texttt{flags}, and \texttt{cd\_values} but different name slots
+  (e.g., one read from disk carrying \texttt{canonical\_name}, the
+  other constructed in memory via \texttt{H5Pset\_filter} with
+  \texttt{name = NULL}) compare as unequal under \texttt{H5Pequal}.
+  This is not used inside libhdf5 for any correctness-relevant path;
+  it surfaces only via the public \texttt{H5Pequal} API.  Code that
+  needs to test pipeline equivalence at the I/O-behavior level should
+  compare \texttt{id} and \texttt{cd\_values} directly via
+  \texttt{H5Pget\_filter2}.
+
   \textbf{Length limit:} \texttt{canonical\_name} must not exceed 255
   bytes (excluding the NUL terminator).  \texttt{H5Zregister()} rejects
   a v3 registration where \texttt{strlen(canonical\_name) > 255} with
