@@ -1007,13 +1007,6 @@ constraints shape the approach:
   example), and place the maintenance burden on the library for changes
   to plugins it does not own.
 
-\item \textbf{The pipeline-message name field is for display, not lookup.}
-  The \texttt{canonical\_name} written into the pipeline message at
-  filter-add time provides display when the plugin is unloaded, but it
-  is not usable as a lookup mechanism because files written prior to
-  this feature carry a v2 plugin's debug-comment name in that slot
-  rather than a canonical identifier.
-
 \item \textbf{Plugins own their own identity.}  Each v3 plugin
   advertises its \texttt{canonical\_name} in its \texttt{H5Z\_class3\_t}
   struct; the plugin loader can read this string after \texttt{dlopen}.
