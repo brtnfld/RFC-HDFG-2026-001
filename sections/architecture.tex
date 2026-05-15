@@ -795,7 +795,8 @@ typedef struct H5Z_class3_t {
     H5Z_filter_t               id;
     unsigned                   encoder_present;
     unsigned                   decoder_present;
-    const char                *name;
+    const char                *canonical_name;
+    const char                *description;
     H5Z_can_apply_func_t      can_apply;
     H5Z_set_local_func_t      set_local;
     H5Z_func_t                filter;
@@ -929,6 +930,22 @@ typedef struct H5Z_class3_t {
   contract on the \texttt{name} field (free-form debug comment in v2
   becomes the canonical name in v3), the version constant change, and
   the locations in the library where v2/v3 branching is required.
+
+\item \texttt{description}---A human-readable, free-form summary of
+  what the filter does, intended for users and tooling rather than
+  programmatic lookup (e.g., \texttt{"Deflate (zlib) general-purpose
+  lossless compression"}, \texttt{"SZIP lossless compression for
+  scientific data"}).  Unlike \texttt{canonical\_name}, the
+  description is purely informational: it is \emph{not} persisted to
+  disk, \emph{not} used for any identity comparison, and \emph{not}
+  required to remain stable across plugin versions.  Plugin authors
+  may set it to \texttt{NULL} if no useful description is available,
+  in which case introspection tools fall back to displaying only the
+  canonical name.  The field has no length limit beyond ordinary
+  string conventions.  This is the v3 successor to the v1/v2 informal
+  practice of writing a longer-form sentence into the \texttt{name}
+  field; v3 separates the identifier (canonical\_name) from the
+  prose (description) so that each can serve its purpose cleanly.
 \end{itemize}
 
 \subsection{Identity Allocation and Uniqueness}

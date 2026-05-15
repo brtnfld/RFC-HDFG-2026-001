@@ -22,10 +22,14 @@ consistently regardless of whether the filter was configured via
 \verysubsection{Implementation note}
 Each built-in filter is converted to \texttt{H5Z\_class3\_t} in its existing
 source file (e.g., \texttt{H5Zdeflate.c}, \texttt{H5Zszip.c}), with
-\texttt{set\_config} and \texttt{get\_config} added to the struct definition.
-This is an entirely internal change; the existing \texttt{H5Zregister()} path
-(\SectionRef{sec:class3}) handles \texttt{H5Z\_class3\_t} registrations without
-modification.
+\texttt{set\_config}, \texttt{get\_config}, and a short \texttt{description}
+string added to the struct definition.  The \texttt{description} is
+informational only (used by introspection tools; see
+\SectionRef{sec:class3-struct}) and is set to a one-line summary of the
+algorithm (e.g., \texttt{"Deflate (zlib) general-purpose lossless
+compression"} for the deflate filter).  This is an entirely internal change;
+the existing \texttt{H5Zregister()} path (\SectionRef{sec:class3}) handles
+\texttt{H5Z\_class3\_t} registrations without modification.
 
 \subsection{Deflate}
 
@@ -69,9 +73,15 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
 \begin{itemize}
 \item \texttt{scale\_type} (\texttt{"float\_dscale"}, \texttt{"float\_escale"}, or
   \texttt{"int"}): Scale type. Required. Value must be a quoted string.
-\item \texttt{scale\_factor} (integer): Scale factor. Required.
-\item The \texttt{set\_config} callback delegates to the existing
-  \texttt{H5Pset\_scaleoffset} validation path.
+\item \texttt{scale\_factor} (non-negative integer): Scale factor. Required.
+\item The \texttt{set\_config} callback (\texttt{H5Z\_\_scaleoffset\_set\_config}
+  in \texttt{H5Zscaleoffset.c}) parses the parameter string directly using
+  \texttt{H5Zconfig\_get\_str} and \texttt{H5Zconfig\_get\_int}, translates
+  \texttt{scale\_type} into the corresponding \texttt{H5Z\_SO\_*} enumerator,
+  validates that \texttt{scale\_factor} is non-negative, and populates
+  \texttt{cd\_values} directly.  The callback returns
+  \texttt{H5E\_BADVALUE} if either key is absent.  The callback does not
+  delegate to \texttt{H5Pset\_scaleoffset}.
 \item Example: \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
 \end{itemize}
 
