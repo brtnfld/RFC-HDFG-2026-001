@@ -186,9 +186,10 @@ A further concern specific to floating-point parameters is
 CPU architectures (e.g., x86\_64 and ARM64), the conversion of a decimal
 string such as \texttt{"rate=3.55555555"} to a \texttt{double} may produce
 different bit patterns if the platform \texttt{strtod} implementations are
-not both correctly-rounded per IEEE~754.  Because \texttt{H5Z\_cd\_pack\_double}
-is layout-deterministic only after the \texttt{double} value is in hand, a
-per-rank difference in the string-to-double conversion step propagates into
+not both correctly-rounded per IEEE~754.  Because the
+\texttt{cd\_values} packing convention is layout-deterministic only
+after the \texttt{double} value is in hand, a per-rank difference in
+the string-to-double conversion step propagates into
 \texttt{cd\_values} and causes a DCPL mismatch at the collective
 \texttt{H5Dcreate} call.  Applications running on heterogeneous clusters
 with floating-point filter parameters should obtain a single parsed DCPL on
