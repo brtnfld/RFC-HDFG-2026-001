@@ -1179,11 +1179,19 @@ round-trip correctness. Document this requirement in
   configuration.  See the note on string reconstruction in
   \SectionRef{sec:introspection}.
 \item Follows the standard HDF5 buffer-size query pattern: \texttt{buf\_size} is
-  an in/out parameter. On entry, \texttt{*buf\_size} is the capacity of \texttt{buf};
-  on return, \texttt{*buf\_size} is set to the number of bytes required (excluding
-  the NUL terminator). If \texttt{buf} is \texttt{NULL} or the capacity is~0, the
-  callback still sets \texttt{*buf\_size} to the required size and returns
-  success, enabling a two-pass size query.
+  an in/out parameter. On entry, \texttt{*buf\_size} is the total capacity of
+  \texttt{buf} in bytes, \textbf{including} the slot for the NUL terminator
+  (i.e., \texttt{*buf\_size~$\geq$~strlen(output)~+~1}); on return,
+  \texttt{*buf\_size} is set to the number of characters written, excluding the
+  NUL terminator.  This matches the convention used by \texttt{snprintf} and all
+  other standard C buffer-size arguments, so implementations may write directly
+  with \texttt{snprintf(buf,~*buf\_size,~...)} without adjustment.  If
+  \texttt{buf} is \texttt{NULL}, the callback still sets \texttt{*buf\_size} to
+  the required character count (excluding NUL) and returns success, enabling a
+  size query.  \texttt{H5Pget\_filter\_params\_by\_idx} allocates
+  \texttt{needed~+~1} bytes for its internal buffer and passes
+  \texttt{*buf\_size~=~needed~+~1} on the populate call, where \texttt{needed}
+  is the character count returned by the preceding size-query call.
 \item Returns \texttt{herr\_t}: zero on success, negative on failure.
 \item The output conforms to the grammar defined in
   \SectionRef{sec:param-overview} so that it is at least valid input to
