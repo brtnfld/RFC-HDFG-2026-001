@@ -680,6 +680,7 @@ The version constants are:
 
 \begin{minted}{c}
 #define H5Z_CLASS_T_VERS      1   /* Unchanged -- existing constant for H5Z_class2_t  */
+#define H5Z_CLASS3_T_VERS     2   /* Version constant for H5Z_class3_t (H5Zdevelop.h) */
 #define H5Z_CLASS_T_VERS_MAX  2   /* Highest accepted version field value (currently  *
                                    * H5Z_class3_t).  Used by the library for sanity   *
                                    * checking; plugin authors should not reference it *
@@ -688,11 +689,12 @@ The version constants are:
 \end{minted}
 
 Note that \texttt{H5Z\_CLASS\_T\_VERS} remains at \texttt{1} for backward
-compatibility with code that already references it.  No new
-\texttt{H5Z\_CLASS3\_T\_VERS} (or future per-struct) constant is introduced;
-naming a constant after a specific struct generation would not generalise
-when \texttt{H5Z\_class4\_t} is added.  Plugin authors instead set the
-\texttt{version} field to the literal value documented in the table above.
+compatibility with code that already references it.  \texttt{H5Z\_CLASS3\_T\_VERS}
+is defined in \texttt{H5Zdevelop.h} as a convenience constant for plugin authors
+using \texttt{H5Z\_class3\_t}; it equals the literal value \texttt{2}.
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX} is reserved for library sanity checking and
+should not be referenced by plugin authors directly, since its value increases as
+new struct generations are added.
 
 \textbf{Future class versions:} Other in-progress HDF5 work (e.g.,
 Accelerator-native I/O Pipeline) may also need to extend
@@ -1688,10 +1690,14 @@ The convention assumes IEEE\,754 \texttt{float} (32~bits) and \texttt{double}
 of scope for this encoding and must be reduced to one of the listed types
 by the plugin.
 
-The library does not export typed pack/unpack helpers as part of the public
-API; plugin authors implement the convention directly using \texttt{memcpy}
-and the byte layout above.  The same convention is documented in
-\texttt{H5Zdevelop.h} alongside the \texttt{set\_config} specification.
+The library exports typed pack/unpack helpers from \texttt{H5Zdevelop.h} as
+part of the developer API (not the stable public API):
+\texttt{H5Zcd\_pack\_double}/\texttt{H5Zcd\_unpack\_double},
+\texttt{H5Zcd\_pack\_float}/\texttt{H5Zcd\_unpack\_float},
+\texttt{H5Zcd\_pack\_int64}/\texttt{H5Zcd\_unpack\_int64}, and
+\texttt{H5Zcd\_pack\_string}/\texttt{H5Zcd\_unpack\_string}.
+Plugin authors may use these helpers or implement the convention directly
+using \texttt{memcpy} and the byte layout above.
 
 
 \subsection{Canonical \texttt{set\_config} Implementation Template}
