@@ -963,7 +963,6 @@ typedef struct H5Z_class_info_t {
     const char   *description;
     hbool_t       has_set_config;
     hbool_t       has_get_config;
-    char          params_string[H5Z_CONFIG_STRING_MAX + 1];
 } H5Z_class_info_t;
 
 herr_t H5Zget_filter_info2(H5Z_filter_t filter,
@@ -971,27 +970,20 @@ herr_t H5Zget_filter_info2(H5Z_filter_t filter,
 \end{minted}
 
 \noindent returns the same flag bits \emph{plus} the canonical \texttt{name},
-the free-form \texttt{description}, presence flags for the v3
-\texttt{set\_config} / \texttt{get\_config} callbacks, and a
-\texttt{params\_string} containing the filter's factory-default parameter
-string.  The factory-default string is obtained by calling the filter's
-\texttt{get\_config} callback with zero \texttt{cd\_values}; all built-in
-filters fall back gracefully to their compiled-in defaults (e.g.\
-\texttt{"level = 6"} for deflate, \texttt{"coding = \textbackslash"nn\textbackslash", pixels\_per\_block = 16"} for
-SZIP).  Filters that do not implement \texttt{get\_config} leave
-\texttt{params\_string} as an empty string.
+the free-form \texttt{description}, and presence flags for the v3
+\texttt{set\_config} / \texttt{get\_config} callbacks.  The function triggers
+a dynamic plugin load if needed (same policy as \texttt{H5Zfilter\_avail});
+unknown filter IDs return \texttt{H5E\_NOFILTER}.
 
-The function triggers a dynamic plugin load if needed (same policy as
-\texttt{H5Zfilter\_avail}); unknown filter IDs return \texttt{H5E\_NOFILTER}.
+String fields in \texttt{info} point into library-owned storage; their
+lifetime extends until the filter is unregistered.  Callers must not
+free them.
 
-The \texttt{name} and \texttt{description} fields point into library-owned
-storage; their lifetime extends until the filter is unregistered and they
-must not be freed.  The \texttt{params\_string} field is a value-copy
-embedded directly in the struct and requires no special handling.
-
-This is the supported way to read a filter's \texttt{description} and
-default \texttt{params\_string}, since neither field is persisted to disk
-and both only exist when the plugin is loaded.  The original
+This is the supported way to read a filter's \texttt{description}, since
+that field is not persisted to disk and only exists when the plugin is
+loaded.  Per-instance parameter strings (reflecting actual \texttt{cd\_values}
+stored in a dataset's pipeline) are obtained via
+\texttt{H5Pget\_filter\_params\_by\_idx}.  The original
 \texttt{H5Zget\_filter\_info(filter, *flags)} remains available for callers
 that only need the encode/decode bits.
 
