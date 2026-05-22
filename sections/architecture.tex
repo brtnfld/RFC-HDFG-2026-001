@@ -147,8 +147,12 @@ using \texttt{\%.17e}.  This format:
     is 17, meaning 17 significant decimal digits suffice to distinguish any two
     distinct \texttt{double} values and recover the original bit pattern via
     \texttt{strtod}; and
-  \item is locale-independent: the exponent form uses only ASCII digits and
-    \texttt{e}/\texttt{E}, unaffected by \texttt{LC\_NUMERIC}.
+  \item is made locale-independent by the implementation: standard
+    \texttt{snprintf} respects \texttt{LC\_NUMERIC} and may replace the decimal
+    point with a comma (e.g., \texttt{de\_DE} locale), which TOML prohibits.
+    Implementations must therefore scan the formatted string and replace any
+    comma with a period before use; since \texttt{\%.17e} places exactly one
+    decimal separator in the mantissa, a single-pass scan suffices.
 \end{itemize}
 
 \begin{notebox}
@@ -1197,12 +1201,15 @@ round-trip correctness. Document this requirement in
 \item \textbf{Locale and precision requirement:} \texttt{get\_config}
   implementations that format floating-point values must use
   \texttt{\%.17e} (e.g., \texttt{snprintf(buf, n, "\%.17e", val)}).
-  This format is strictly TOML\,v1.0 compliant (always contains a decimal
-  point and exponent), guarantees exact IEEE\,754 \texttt{double} round-trips
-  via 17 significant digits (\texttt{DBL\_DECIMAL\_DIG}), and is
-  locale-independent.  Do not use \texttt{\%a} (hex-float, not valid TOML),
-  \texttt{\%g} (may omit decimal point, producing a TOML integer), \texttt{\%f},
-  or fewer than 17 significant digits.
+  This format always contains a decimal point and exponent (valid TOML\,v1.0
+  float) and guarantees exact IEEE\,754 \texttt{double} round-trips via 17
+  significant digits (\texttt{DBL\_DECIMAL\_DIG}).  Do not use \texttt{\%a}
+  (hex-float, not valid TOML), \texttt{\%g} (may omit decimal point, producing
+  a TOML integer), \texttt{\%f}, or fewer than 17 significant digits.
+  \textbf{Locale caveat:} \texttt{snprintf} respects \texttt{LC\_NUMERIC}; in
+  locales with a comma decimal separator the output is not valid TOML.
+  Implementations must replace any comma in the formatted number with a
+  period before returning the string.
   See \SectionRef{sec:float-precision} for full rationale.
   Document this requirement in \texttt{H5Zdevelop.h} as part of the
   \texttt{H5Z\_get\_config\_func\_t} specification.
