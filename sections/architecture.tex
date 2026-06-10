@@ -648,10 +648,25 @@ not present in the HDF5 source tree.
 
 \subsection{Rationale}
 
-The string configuration feature requires filters to participate voluntarily.
-A filter must be able to accept a parameter string and produce \texttt{cd\_values},
-and optionally to reverse the process for introspection. This is achieved by
-introducing two new optional callbacks in a version~3 filter class structure.
+Version~3 of the filter class extends \texttt{H5Z\_class2\_t} in three
+ways:
+
+\begin{enumerate}
+\item \textbf{String configuration callbacks} (\texttt{set\_config},
+  \texttt{get\_config}) --- a filter can accept a human-readable
+  key--value parameter string and, optionally, reconstruct it for
+  introspection.
+
+\item \textbf{Extended filter callback} --- the filter function used by
+  \texttt{H5Z\_class3\_t} receives the active data-transfer property list
+  (\texttt{dxpl\_id}) and the chunk's scaled coordinates (\texttt{scaled},
+  \texttt{ndims}) as additional parameters at I/O time, enabling access to
+  non-serializable runtime handles and spatially-aware compression.
+
+\item \textbf{Reserved in-file binary config fields} (\texttt{write\_opaque},
+  \texttt{read\_opaque}, \texttt{close\_opaque}) --- set to \texttt{NULL};
+  reserved for activation by a follow-on RFC.
+\end{enumerate}
 
 \subsection{Version Numbering}
 \label{sec:version-numbering}
@@ -793,6 +808,20 @@ typedef herr_t (*H5Z_get_config_func_t)(
     size_t           *buf_size
 );
 
+/* Extended filter callback for H5Z_class3_t.
+ * Adds dxpl_id (active DXPL) and scaled[]/ndims (chunk coordinates)
+ * to the existing H5Z_func_t parameter list.  H5Z_class2_t continues
+ * to use H5Z_func_t; only class3 filters use this type. */
+typedef size_t (*H5Z_func2_t)(unsigned int        flags,
+                              size_t              cd_nelmts,
+                              const unsigned int  cd_values[],
+                              hid_t               dxpl_id,
+                              const hsize_t      *scaled,
+                              size_t              ndims,
+                              size_t              nbytes,
+                              size_t             *buf_size,
+                              void              **buf);
+
 typedef herr_t (*H5Z_write_opaque_func_t)(hid_t file_id, const void *buf,
                                           size_t size, haddr_t *addr_out);
 typedef herr_t (*H5Z_read_opaque_func_t) (hid_t file_id, haddr_t addr,
@@ -808,7 +837,7 @@ typedef struct H5Z_class3_t {
     const char                 *description;
     H5Z_can_apply_func_t        can_apply;
     H5Z_set_local_func_t        set_local;
-    H5Z_func_t                  filter;
+    H5Z_func2_t                 filter;    /* extended: dxpl_id + scaled */
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
     /* Reserved: set to NULL — activated by RFC-HDFG-2026-002 */
@@ -1153,6 +1182,43 @@ remains the recommended path for plugins that want a short, bare name.
 
 \subsection{Callback Specifications}
 \label{sec:callback-specs}
+
+\verysubsection{\texttt{H5Z\_func2\_t} --- Extended filter callback}
+
+\texttt{H5Z\_class3\_t} uses \texttt{H5Z\_func2\_t} rather than the
+existing \texttt{H5Z\_func\_t}.  \texttt{H5Z\_class2\_t} filters are
+unaffected.
+
+\begin{itemize}
+\item \texttt{flags}, \texttt{cd\_nelmts}, \texttt{cd\_values},
+  \texttt{nbytes}, \texttt{buf\_size}, \texttt{buf}---Same semantics as
+  \texttt{H5Z\_func\_t}.
+
+\item \texttt{dxpl\_id}---The active data-transfer property list for the
+  current \texttt{H5Dread} or \texttt{H5Dwrite} call.  Filters that need
+  non-serializable runtime handles (e.g., \texttt{MPI\_Comm},
+  \texttt{cudaStream\_t}, per-read quality parameters) obtain them by
+  calling \texttt{H5Pget()} on this DXPL.  The caller registers a custom
+  property on the DXPL with \texttt{H5Pinsert2} or \texttt{H5Pregister2}
+  and sets it before each I/O call.  Filters that do not use the DXPL may
+  ignore this parameter.
+
+\item \texttt{scaled}---Array of \texttt{ndims} scaled chunk coordinates
+  (chunk offset in chunk units, not element units).  This is the same
+  \texttt{scaled[]} array present at every internal pipeline call site.
+  Filters performing spatially-aware compression (e.g., ROIBIN-SZ spatial
+  masks, GPU tile routing) use these coordinates to determine which region
+  of the dataset they are operating on.  Filters that do not need spatial
+  information may ignore this parameter.
+
+\item \texttt{ndims}---Number of elements in \texttt{scaled[]};
+  equals the dataset's chunk rank.
+\end{itemize}
+
+\noindent Passing the DXPL and chunk coordinates as parameters to the
+existing callback rather than via a separate callback or a new public
+accessor function avoids call-ordering hazards under multithreading
+and does not require a new public API function.
 
 \verysubsection{\texttt{H5Z\_set\_config\_func\_t}}
 

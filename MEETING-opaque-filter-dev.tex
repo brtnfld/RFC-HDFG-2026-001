@@ -1,0 +1,216 @@
+\documentclass[11pt,letterpaper]{article}
+
+\usepackage[T1]{fontenc}
+\usepackage[margin=1in]{geometry}
+\usepackage{parskip}
+\usepackage{booktabs}
+\usepackage{enumitem}
+\usepackage{microtype}
+\usepackage[hidelinks]{hyperref}
+\usepackage{minted}
+
+\renewcommand{\texttt}[1]{\begingroup\small\ttfamily\hyphenchar\font=45
+  \spaceskip=.4em plus .2em minus .15em #1\endgroup}
+\let\oldtextunderscore\_
+\renewcommand{\_}{\oldtextunderscore\allowbreak}
+
+\setminted[c]{fontsize=\small,breaklines,frame=leftline,framesep=2mm,linenos,numbersep=4pt}
+
+\setlength{\parskip}{6pt}
+
+\begin{document}
+
+\begin{center}
+  {\LARGE\bfseries Large Binary Filter Configuration}\\[4pt]
+  {\large Filter Plugin Developer Preview --- RFC-HDFG-2026-*}\\[6pt]
+  {\small M.\ Scot Breitenfeld \quad\textbullet\quad The HDF Group \quad\textbullet\quad 2026-06-10}
+\end{center}
+
+\bigskip
+
+R.~Underwood (LibPressio) raised three issues during the
+RFC-HDFG-2026-001 community review:
+
+\begin{enumerate}[noitemsep]
+  \item \textbf{Large configuration values} --- some compressors need
+        multi-megabyte configuration data that cannot fit in the
+        current \texttt{cd\_values} mechanism.
+  \item \textbf{Non-serializable runtime settings} --- filters need
+        access to process-local handles (\texttt{MPI\_Comm},
+        \texttt{cudaStream\_t}, per-read quality parameters) at I/O
+        time.
+  \item \textbf{Chunk coordinates} --- filters need to know which
+        chunk they are operating on for spatially-aware compression or
+        GPU tile routing.
+\end{enumerate}
+
+\begin{center}
+\small
+\begin{tabular}{@{}cll@{}}
+\toprule
+\textbf{Issue} & \textbf{Addressed in} & \textbf{Status} \\
+\midrule
+1 & RFC-HDFG-2026-* (this document) & Design in progress \\
+2 & RFC-HDFG-2026-001                 & In progress \\
+3 & RFC-HDFG-2026-001                 & In progress \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%%------------------------------------------------------------------
+\section*{The Problem Being Solved}
+
+HDF5 filter parameters are stored as an array of unsigned 32-bit integers
+(\texttt{cd\_values}), capping configuration data at a few kilobytes in
+practice.
+
+RFC-HDFG-2026-001 (shipping) introduced \texttt{H5Pappend\_filter} with a
+human-readable key--value string; the filter's \texttt{set\_config} callback
+translates that string into \texttt{cd\_values} stored on disk as before.
+This removes the serialisation burden on the filter author but does not raise
+the on-disk size limit.
+
+RFC-HDFG-2026-* removes the size limit entirely for binary payloads.
+The bytes are stored in the file alongside the dataset; the library retrieves
+them automatically on open and hands them back to the filter.
+
+%%------------------------------------------------------------------
+\section*{Proposed Creation API}
+
+\begin{minted}{c}
+herr_t H5Pappend_filter_<name>(hid_t        dcpl,
+                               H5Z_filter_t filter_id,
+                               unsigned int flags,
+                               const void  *buf,
+                               size_t       size);
+\end{minted}
+
+\noindent\textit{Note: the final function name is under discussion.
+``Opaque'' is avoided because \texttt{H5T\_OPAQUE} already carries that
+term in HDF5 with a distinct meaning (tagged arbitrary bytes as a
+datatype).}
+
+\medskip
+Call this when the filter configuration is a raw byte buffer of any size.
+The bytes are stored in the file alongside the dataset (via the heap,
+similar to variable-length data) and recovered automatically on open.
+The performance impact is a one-time read at \texttt{H5Dopen}; the
+chunk I/O path is unchanged.
+
+\paragraph{SZ4 JIT example:}
+\begin{minted}{c}
+void  *jit_buf;
+size_t jit_size;
+sz4_preprocess_jit_module(source_file, &jit_buf, &jit_size);
+
+H5Pappend_filter_<name>(dcpl, SZ4_FILTER_ID, H5Z_FLAG_MANDATORY,
+                        jit_buf, jit_size);
+free(jit_buf);   /* library holds its own copy */
+
+H5Dcreate2(file, "mydata", dtype, space,
+            H5P_DEFAULT, dcpl, H5P_DEFAULT);
+\end{minted}
+
+%%------------------------------------------------------------------
+\section*{Dataset Lifecycle}
+
+\begin{center}
+\small
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Event} & \textbf{What happens} \\
+\midrule
+\texttt{H5Dcreate} & Library writes bytes to the file \\
+\texttt{H5Dopen}   & Library reads bytes back; filter restores internal state \\
+\texttt{H5Dread}/\texttt{H5Dwrite} & Unchanged --- no impact on the I/O path \\
+\texttt{H5Dclose}  & Library frees the in-memory copy \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+%%------------------------------------------------------------------
+\section*{What the Library Handles}
+
+Filter authors do not need to consider:
+
+\begin{itemize}[noitemsep]
+  \item Writing and reading bytes to/from the file
+  \item Parallel HDF5
+  \item \texttt{h5repack} copying bytes to a new file
+  \item \texttt{H5Pencode}/\texttt{H5Pdecode} portability
+  \item Backward compatibility with older HDF5 files
+\end{itemize}
+
+%%------------------------------------------------------------------
+\section*{Use Cases}
+
+\paragraph{Use Case A --- SZ4 JIT compiler (primary).}
+SZ4 needs to store multi-megabyte pre-processed source code with the dataset.
+This is a pure size limitation with no viable workaround under the current API.
+\texttt{H5Pappend\_filter\_opaque} solves it directly; the bytes travel with
+the dataset and are recovered on open.
+
+\paragraph{Use Case B --- ROIBIN-SZ spatial mask (secondary).}
+ROIBIN-SZ stores a binary spatial mask indicating which values use lossless
+compression.  The preferred design is a reference to a user-visible HDF5
+dataset containing the mask.  Storing the mask bytes directly (the opaque
+approach) makes the file self-contained but the bytes are not
+user-inspectable.  Solving the reference case requires a file handle inside
+the filter at open time; options are under discussion in RFC-HDFG-2026-*.
+
+%%------------------------------------------------------------------
+\section*{Issues 2 and 3 --- Addressed in RFC-HDFG-2026-001}
+
+Issues 2 and 3 both involve information that is available at I/O time
+and must reach the filter callback.  The cleanest solution for both is
+to extend the filter function signature used by \texttt{H5Z\_class3\_t}
+rather than add a new public API function or a separate callback.
+Because \texttt{H5Z\_class3\_t} is a new class, this does not affect
+existing \texttt{H5Z\_class2\_t} filters.
+
+\paragraph{Issue 2 --- Non-serializable runtime settings.}
+Filters such as LibPressio need \texttt{MPI\_Comm}, \texttt{cudaStream\_t},
+or per-read quality parameters that cannot be stored in \texttt{cd\_values}
+because they are process-local and change between calls.
+
+The DXPL is passed directly as a parameter to the \texttt{H5Z\_class3\_t}
+filter callback.  The caller stores handles in the DXPL before I/O using
+\texttt{H5Pinsert2}/\texttt{H5Pregister2} and \texttt{H5Pset}; the filter
+retrieves them with \texttt{H5Pget}.  No new public API function is
+required, and no file-format change is required.
+
+\paragraph{Issue 3 --- Chunk coordinates.}
+Filters need to know which chunk they are compressing or decompressing
+(e.g., for spatially-varying compression or GPU tile routing).
+
+The chunk's scaled coordinates are added as parameters to the same
+extended filter callback, alongside the DXPL.  A separate callback
+would introduce call-ordering hazards under multithreading; adding the
+coordinates to the existing callback avoids this entirely.
+No file-format change is required.
+
+%%------------------------------------------------------------------
+\section*{Status}
+
+\begin{tabular}{@{}ll@{}}
+\toprule
+\textbf{Item} & \textbf{Status} \\
+\midrule
+String config API --- \texttt{H5Pappend\_filter} (RFC-HDFG-2026-001)
+  & Done \\
+DXPL passed to filter callback (Issue~2, RFC-HDFG-2026-001)
+  & In progress \\
+Chunk coordinates in filter callback (Issue~3, RFC-HDFG-2026-001)
+  & In progress \\
+Large binary config API, name TBD (Issue~1, RFC-HDFG-2026-*)
+  & Proposed; design in progress \\
+RFC-HDFG-2026-*
+  & Working-group discussion \\
+\bottomrule
+\end{tabular}
+
+\medskip
+Existing filter registrations will require \textbf{no changes} when
+RFC-HDFG-2026-* lands.
+
+\end{document}
