@@ -46,27 +46,19 @@ RFC-HDFG-2026-001 adds three **reserved, NULL-initialized** callbacks to
 `H5Z_class3_t` and one reserved enum value to `H5Z_params_type_t`:
 
 ```c
-/* In H5Z_class3_t (H5Zdevelop.h) — added by RFC-HDFG-2026-001, activated here */
-H5Z_write_opaque_func_t  write_opaque;  /* NULL until this RFC lands */
-H5Z_read_opaque_func_t   read_opaque;   /* NULL until this RFC lands */
-H5Z_close_opaque_func_t  close_opaque;  /* NULL until this RFC lands */
+/* In H5Z_class3_t (H5Zdevelop.h) — added by RFC-HDFG-2026-001 as void*, activated here */
+void *write_blob;  /* NULL until this RFC lands */
+void *read_blob;   /* NULL until this RFC lands */
+void *close_blob;  /* NULL until this RFC lands */
 
 /* In H5Z_params_type_t (H5Zpublic.h) — reserved by RFC-HDFG-2026-001 */
-H5Z_PARAMS_OPAQUE = 2   /* H5Pappend_filter returns H5E_UNSUPPORTED until this RFC */
+H5Z_PARAMS_BLOB = 2   /* H5Pappend_filter returns H5E_UNSUPPORTED until this RFC */
 ```
 
 This RFC activates those hooks.  No new struct version (`H5Z_class4_t`) is
 required because the callbacks were added to `H5Z_class3_t` before it shipped.
 
-The callback signatures (established by RFC-HDFG-2026-001) are:
-
-```c
-typedef herr_t (*H5Z_write_opaque_func_t)(hid_t file_id, const void *buf,
-                                         size_t size, haddr_t *addr_out);
-typedef herr_t (*H5Z_read_opaque_func_t) (hid_t file_id, haddr_t addr,
-                                         void **buf_out, size_t *size_out);
-typedef herr_t (*H5Z_close_opaque_func_t)(void *buf, size_t size);
-```
+The callback types are defined in §3.3.1.
 
 All three are NULL-able.  When NULL, the library uses default heap-object
 (`H5HG`) I/O.  Plugins implement them only when custom on-disk layout is needed
@@ -109,7 +101,7 @@ The opaque bytes are stored at `aux_addr` as an `H5HG` global heap object
 message records only the address; the bytes are not inlined.
 
 `H5O_pline_ver_bounds[]` maps `H5F_libver_t` to the pipeline message version.
-Files that use `H5Z_PARAMS_OPAQUE` require at least the version bound that
+Files that use `H5Z_PARAMS_BLOB` require at least the version bound that
 enables `H5O_PLINE_VERSION_3`.
 
 ### 3.3 New public API
@@ -121,20 +113,47 @@ herr_t H5Pappend_filter_blob(hid_t plist_id, H5Z_filter_t id,
                               const void *buf, size_t size);
 ```
 
+#### 3.3.1 Blob callback typedefs (activate the reserved fields in `H5Z_class3_t`)
+
+These typedefs are defined in this RFC and replace the `void *` placeholders
+reserved in RFC-HDFG-2026-001:
+
+```c
+/* Called at H5Dcreate time to write the blob to the file.
+ * Returns the file address via addr_out.
+ * If NULL, the library uses H5HG_insert (default heap writer). */
+typedef herr_t (*H5Z_write_blob_func_t)(hid_t        file_id,
+                                        const void  *buf,
+                                        size_t       size,
+                                        haddr_t     *addr_out);
+
+/* Called at H5Dopen time to read the blob back from the file.
+ * Allocates *buf_out; caller frees via close_blob (or free if NULL).
+ * If NULL, the library uses H5HG_read (default heap reader). */
+typedef herr_t (*H5Z_read_blob_func_t)(hid_t    file_id,
+                                       haddr_t  addr,
+                                       void   **buf_out,
+                                       size_t  *size_out);
+
+/* Called at H5Dclose time to release the in-memory blob buffer.
+ * If NULL, the library calls free(). */
+typedef herr_t (*H5Z_close_blob_func_t)(void *buf, size_t size);
+```
+
 This is the primary creation entry point for Use Case A.  Activating
-`H5Z_PARAMS_OPAQUE` via `H5Pappend_filter` remains reserved; callers use
+`H5Z_PARAMS_BLOB` via `H5Pappend_filter` remains reserved; callers use
 `H5Pappend_filter_blob` directly.
 
 > **Open question OQ-4** (see §4): whether to also activate
-> `H5Pappend_filter(..., H5Z_PARAMS_OPAQUE, ...)` as a second entry point or
-> keep `H5Z_PARAMS_OPAQUE` perpetually unsupported in `H5Pappend_filter`.
+> `H5Pappend_filter(..., H5Z_PARAMS_BLOB, ...)` as a second entry point or
+> keep `H5Z_PARAMS_BLOB` perpetually unsupported in `H5Pappend_filter`.
 
 ### 3.4 Dataset create / open lifecycle
 
 **Dataset create** (`H5D__create`), after `H5Z_set_local` runs:
 1. For each filter with `aux_data != NULL`, call
-   `filter->cls->write_opaque(file_id, aux_data, aux_size, &aux_addr)` (or the
-   default `H5HG` writer if `write_opaque` is NULL).
+   `filter->cls->write_blob(file_id, aux_data, aux_size, &aux_addr)` (or the
+   default `H5HG` writer if `write_blob` is NULL).
 2. Store `aux_addr` in `H5Z_filter_info_t.aux_addr`.
 3. Encode the pipeline message at version 3 with the `has_aux`/`aux_addr`
    fields populated.
@@ -142,14 +161,14 @@ This is the primary creation entry point for Use Case A.  Activating
 **Dataset open** (`H5D__open`):
 1. Decode the version-3 pipeline message; for each filter with `has_aux`,
    read `aux_addr`.
-2. Call `filter->cls->read_opaque(file_id, aux_addr, &aux_data, &aux_size)` (or
-   the default `H5HG` reader if `read_opaque` is NULL).
+2. Call `filter->cls->read_blob(file_id, aux_addr, &aux_data, &aux_size)` (or
+   the default `H5HG` reader if `read_blob` is NULL).
 3. Populate `aux_data`/`aux_size` in `H5Z_filter_info_t`.
 4. Call `set_config(aux_data_as_string_or_raw)` so the filter restores its
    internal state.
 
 **Dataset close**:
-Call `close_opaque(aux_data, aux_size)` (or `free()` if `close_opaque` is NULL) and
+Call `close_blob(aux_data, aux_size)` (or `free()` if `close_blob` is NULL) and
 zero the fields.
 
 ### 3.5 Runtime I/O path is unchanged
@@ -203,7 +222,7 @@ When h5repack copies a dataset whose filter has a opaque configuration:
   File is self-contained after repack.
 - Copy the `aux_addr` reference (only valid if src and dst are the same file or
   the address is meaningful in the new file — generally not the case).
-- Call `read_opaque` on the source, then `write_opaque` on the destination.
+- Call `read_blob` on the source, then `write_blob` on the destination.
   Clean; handles cross-file copies correctly.
 
 The third option is almost certainly correct but requires h5repack to be aware
@@ -279,11 +298,11 @@ point release of this RFC or deferred to RFC-HDFG-2026-003.
 
 | File | Change |
 |---|---|
-| `src/H5Zpublic.h` | Activate `H5Z_PARAMS_OPAQUE = 2` (remove unsupported note) |
-| `src/H5Zdevelop.h` | Document `write_opaque`/`read_opaque`/`close_opaque` as active |
+| `src/H5Zpublic.h` | Activate `H5Z_PARAMS_BLOB = 2` (remove unsupported note) |
+| `src/H5Zdevelop.h` | Replace `void *` placeholders with `H5Z_write_blob_func_t`/`H5Z_read_blob_func_t`/`H5Z_close_blob_func_t` |
 | `src/H5Zprivate.h` | Add `aux_data`, `aux_size`, `aux_addr` to `H5Z_filter_info_t` |
 | `src/H5Zpkg.h` | Already has opaque callback fields in `H5Z_entry_t` (RFC-HDFG-2026-001) |
-| `src/H5Z.c` | Wire up opaque write/read/close in create/open/close paths |
+| `src/H5Z.c` | Wire up `write_blob`/`read_blob`/`close_blob` in create/open/close paths |
 | `src/H5Pocpl.c` | Remove `H5E_UNSUPPORTED` guard; implement `H5Pappend_filter_blob` |
 | `src/H5Opline.c` | `H5O_PLINE_VERSION_3` encode/decode with `has_aux`/`aux_addr` |
 | `src/H5Dchunk.c` | No changes — hot path is unchanged |
