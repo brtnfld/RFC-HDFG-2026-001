@@ -115,15 +115,15 @@ enables `H5O_PLINE_VERSION_3`.
 ### 3.3 New public API
 
 ```c
-/* Append a filter with a large binary configuration opaque */
-herr_t H5Pappend_filter_opaque(hid_t plist_id, H5Z_filter_t id,
+/* Append a filter with a large binary (blob) configuration */
+herr_t H5Pappend_filter_blob(hid_t plist_id, H5Z_filter_t id,
                               unsigned int flags,
                               const void *buf, size_t size);
 ```
 
 This is the primary creation entry point for Use Case A.  Activating
 `H5Z_PARAMS_OPAQUE` via `H5Pappend_filter` remains reserved; callers use
-`H5Pappend_filter_opaque` directly.
+`H5Pappend_filter_blob` directly.
 
 > **Open question OQ-4** (see §4): whether to also activate
 > `H5Pappend_filter(..., H5Z_PARAMS_OPAQUE, ...)` as a second entry point or
@@ -284,7 +284,7 @@ point release of this RFC or deferred to RFC-HDFG-2026-003.
 | `src/H5Zprivate.h` | Add `aux_data`, `aux_size`, `aux_addr` to `H5Z_filter_info_t` |
 | `src/H5Zpkg.h` | Already has opaque callback fields in `H5Z_entry_t` (RFC-HDFG-2026-001) |
 | `src/H5Z.c` | Wire up opaque write/read/close in create/open/close paths |
-| `src/H5Pocpl.c` | Remove `H5E_UNSUPPORTED` guard; implement `H5Pappend_filter_opaque` |
+| `src/H5Pocpl.c` | Remove `H5E_UNSUPPORTED` guard; implement `H5Pappend_filter_blob` |
 | `src/H5Opline.c` | `H5O_PLINE_VERSION_3` encode/decode with `has_aux`/`aux_addr` |
 | `src/H5Dchunk.c` | No changes — hot path is unchanged |
 | `tools/src/h5repack/` | Opaque-aware copy (OQ-3) |

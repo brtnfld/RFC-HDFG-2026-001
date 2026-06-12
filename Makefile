@@ -6,6 +6,7 @@ LATEXMK=latexmk -bibtex
 
 MAIN=RFC-HDFG-2026-001
 COMMUNITY=RFC-HDFG-2026-001-community
+MEETING=MEETING-opaque-filter-dev
 # Require latexdiff >= 1.1.0 to run properly
 REVDIFF=6254
 
@@ -14,6 +15,10 @@ TEXFILES=$(wildcard *.tex)
 all: $(TEXFILES)
 	@$(LATEXMK) -e '$$pdflatex=q/pdflatex %O -shell-escape %S/' -pdf $(MAIN)
 	@$(LATEXMK) -e '$$pdflatex=q/pdflatex %O -shell-escape %S/' -pdf $(COMMUNITY)
+	@$(LATEXMK) -e '$$pdflatex=q/pdflatex %O -shell-escape %S/' -pdf $(MEETING)
+
+meeting: $(MEETING).tex
+	@$(LATEXMK) -e '$$pdflatex=q/pdflatex %O -shell-escape %S/' -pdf $(MEETING)
 
 diff:	$(TEXFILES)
 	latexdiff-vc --config="\"PICTUREENV=(?:picture|DIFnomarkup|figure|lstlisting)[\w\d*@]*\"" -t CCHANGEBAR --driver=pdftex --flatten=keep-intermediate --force --svn -r $(REVDIFF) $(MAIN).tex
@@ -43,8 +48,9 @@ community: $(COMMUNITY).tex
 
 help:
 	@echo -e "Usage : make [target]\n\
-	all		produce both PDFs (default)\n\
+	all		produce all PDFs (default)\n\
 	community	produce community edition PDF only\n\
+	meeting		produce filter-developer meeting brief PDF only\n\
 	markdown	produce AI-friendly Markdown ($(MAIN)-ai.md)\n\
 	force		force compilation if possible\n\
 	clean		clean  unnecessary files\n\
