@@ -663,8 +663,8 @@ ways:
   \texttt{ndims}) as additional parameters at I/O time, enabling access to
   non-serializable runtime handles and spatially-aware compression.
 
-\item \textbf{Reserved in-file binary config fields} (\texttt{write\_opaque},
-  \texttt{read\_opaque}, \texttt{close\_opaque}) --- set to \texttt{NULL};
+\item \textbf{Reserved in-file binary config fields} (\texttt{write\_blob},
+  \texttt{read\_blob}, \texttt{close\_blob}) --- set to \texttt{NULL};
   reserved for activation by a follow-on RFC.
 \end{enumerate}
 
@@ -822,11 +822,11 @@ typedef size_t (*H5Z_func2_t)(unsigned int        flags,
                               size_t             *buf_size,
                               void              **buf);
 
-typedef herr_t (*H5Z_write_opaque_func_t)(hid_t file_id, const void *buf,
+typedef herr_t (*H5Z_write_blob_func_t)(hid_t file_id, const void *buf,
                                           size_t size, haddr_t *addr_out);
-typedef herr_t (*H5Z_read_opaque_func_t) (hid_t file_id, haddr_t addr,
+typedef herr_t (*H5Z_read_blob_func_t) (hid_t file_id, haddr_t addr,
                                           void **buf_out, size_t *size_out);
-typedef herr_t (*H5Z_close_opaque_func_t)(void *buf, size_t size);
+typedef herr_t (*H5Z_close_blob_func_t)(void *buf, size_t size);
 
 typedef struct H5Z_class3_t {
     int                         version;
@@ -841,9 +841,9 @@ typedef struct H5Z_class3_t {
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
     /* Reserved: set to NULL — activated by RFC-HDFG-2026-002 */
-    H5Z_write_opaque_func_t     write_opaque;
-    H5Z_read_opaque_func_t      read_opaque;
-    H5Z_close_opaque_func_t     close_opaque;
+    H5Z_write_blob_func_t     write_blob;
+    H5Z_read_blob_func_t      read_blob;
+    H5Z_close_blob_func_t     close_blob;
 } H5Z_class3_t;
 \end{minted}
 
@@ -1005,7 +1005,7 @@ typedef struct H5Z_class_info_t {
     const char   *description;
     hbool_t       has_set_config;
     hbool_t       has_get_config;
-    hbool_t       has_opaque_callbacks; /* reserved; true iff write_opaque != NULL */
+    hbool_t       has_blob_callbacks; /* reserved; true iff write_blob != NULL */
 } H5Z_class_info_t;
 
 herr_t H5Zget_filter_info2(H5Z_filter_t filter,
@@ -1030,11 +1030,11 @@ stored in a dataset's pipeline) are obtained via
 \texttt{H5Zget\_filter\_info(filter, *flags)} remains available for callers
 that only need the encode/decode bits.
 
-\subsection{Reserved Fields: In-File Opaque Configuration Data}
-\label{sec:opaque-reserved}
+\subsection{Reserved Fields: In-File Blob Configuration Data}
+\label{sec:blob-reserved}
 
 \begin{outofscope}
-Full activation of \texttt{H5Z\_PARAMS\_OPAQUE} and the three opaque callbacks
+Full activation of \texttt{H5Z\_PARAMS\_BLOB} and the three opaque callbacks
 is out of scope for this RFC.  This subsection documents the reserved fields so
 that their presence in \texttt{H5Z\_class3\_t} is not a surprise to reviewers,
 and establishes the forward-compatibility intent.
@@ -1045,22 +1045,22 @@ limit or the 65535-element \texttt{cd\_values} limit.  Representative cases
 include spatial masks for region-of-interest compression (multi-megabyte byte
 arrays) and pre-processed source code for JIT-compiled filter modules (raised by
 @robertu94 in the community review of this RFC via HDFGroup/hdf5\_plugins\#255).
-The long-term solution is to store such data as \emph{opaque} auxiliary data
-inside the HDF5 file alongside the dataset's pipeline message.
+The long-term solution is to store such data as a binary blob alongside the
+dataset's pipeline message inside the HDF5 file.
 
 Three NULL-initialized callbacks are reserved in \texttt{H5Z\_class3\_t} now,
 before the struct ships, so that no new class version (\texttt{H5Z\_class4\_t})
 will be required when the feature is activated:
 
 \begin{itemize}
-  \item \texttt{write\_opaque}---Called at dataset-create time to write the
-    filter's opaque configuration data to the file and return a file address.
+  \item \texttt{write\_blob}---Called at dataset-create time to write the
+    filter's blob configuration data to the file and return a file address.
     If \texttt{NULL}, the library uses a default heap-object writer.
-  \item \texttt{read\_opaque}---Called at dataset-open time to read the opaque
+  \item \texttt{read\_blob}---Called at dataset-open time to read the blob
     data back from the file address stored in the pipeline message.
     If \texttt{NULL}, the library uses a default heap-object reader.
-  \item \texttt{close\_opaque}---Called at dataset-close time to release the
-    in-memory copy of the opaque data.
+  \item \texttt{close\_blob}---Called at dataset-close time to release the
+    in-memory copy of the blob data.
     If \texttt{NULL}, the library calls \texttt{free()}.
 \end{itemize}
 
@@ -1075,11 +1075,11 @@ static const H5Z_class3_t my_filter = {
     NULL, NULL,          /* can_apply, set_local */
     my_filter_func,
     my_set_config, my_get_config,
-    NULL, NULL, NULL,    /* write_opaque, read_opaque, close_opaque (reserved) */
+    NULL, NULL, NULL,    /* write_blob, read_blob, close_blob (reserved) */
 };
 \end{minted}
 
-\noindent The enum value \texttt{H5Z\_PARAMS\_OPAQUE~=~2} is likewise reserved
+\noindent The enum value \texttt{H5Z\_PARAMS\_BLOB~=~2} is likewise reserved
 in \texttt{H5Z\_params\_type\_t}; \texttt{H5Pappend\_filter} returns
 \texttt{H5E\_UNSUPPORTED} if it is passed until the feature is activated.
 
@@ -1480,7 +1480,7 @@ filter ID formatted as a decimal string.
 typedef enum {
     H5Z_PARAMS_CDVALUES = 0,  /* raw cd_values array (same as H5Pset_filter) */
     H5Z_PARAMS_STRING   = 1,  /* human-readable key=value string              */
-    H5Z_PARAMS_OPAQUE   = 2,  /* reserved: in-file opaque config data;
+    H5Z_PARAMS_BLOB   = 2,  /* reserved: in-file blob config data;
                                  H5Pappend_filter returns H5E_UNSUPPORTED     */
 } H5Z_params_type_t;
 
