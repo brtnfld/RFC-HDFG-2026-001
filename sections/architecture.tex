@@ -822,12 +822,6 @@ typedef size_t (*H5Z_func2_t)(unsigned int        flags,
                               size_t             *buf_size,
                               void              **buf);
 
-typedef herr_t (*H5Z_write_blob_func_t)(hid_t file_id, const void *buf,
-                                          size_t size, haddr_t *addr_out);
-typedef herr_t (*H5Z_read_blob_func_t) (hid_t file_id, haddr_t addr,
-                                          void **buf_out, size_t *size_out);
-typedef herr_t (*H5Z_close_blob_func_t)(void *buf, size_t size);
-
 typedef struct H5Z_class3_t {
     int                         version;
     H5Z_filter_t                id;
@@ -840,10 +834,10 @@ typedef struct H5Z_class3_t {
     H5Z_func2_t                 filter;    /* extended: dxpl_id + scaled */
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
-    /* Reserved: set to NULL — activated by RFC-HDFG-2026-002 */
-    H5Z_write_blob_func_t     write_blob;
-    H5Z_read_blob_func_t      read_blob;
-    H5Z_close_blob_func_t     close_blob;
+    /* Reserved: must be NULL; callback signatures defined in RFC-HDFG-2026-* */
+    void                       *write_blob;
+    void                       *read_blob;
+    void                       *close_blob;
 } H5Z_class3_t;
 \end{minted}
 
@@ -1005,7 +999,7 @@ typedef struct H5Z_class_info_t {
     const char   *description;
     hbool_t       has_set_config;
     hbool_t       has_get_config;
-    hbool_t       has_blob_callbacks; /* reserved; true iff write_blob != NULL */
+    hbool_t       has_blob_callbacks; /* reserved; always false in this RFC */
 } H5Z_class_info_t;
 
 herr_t H5Zget_filter_info2(H5Z_filter_t filter,
@@ -1048,21 +1042,10 @@ arrays) and pre-processed source code for JIT-compiled filter modules (raised by
 The long-term solution is to store such data as a binary blob alongside the
 dataset's pipeline message inside the HDF5 file.
 
-Three NULL-initialized callbacks are reserved in \texttt{H5Z\_class3\_t} now,
+Three \texttt{void~*} fields are reserved in \texttt{H5Z\_class3\_t} now,
 before the struct ships, so that no new class version (\texttt{H5Z\_class4\_t})
-will be required when the feature is activated:
-
-\begin{itemize}
-  \item \texttt{write\_blob}---Called at dataset-create time to write the
-    filter's blob configuration data to the file and return a file address.
-    If \texttt{NULL}, the library uses a default heap-object writer.
-  \item \texttt{read\_blob}---Called at dataset-open time to read the blob
-    data back from the file address stored in the pipeline message.
-    If \texttt{NULL}, the library uses a default heap-object reader.
-  \item \texttt{close\_blob}---Called at dataset-close time to release the
-    in-memory copy of the blob data.
-    If \texttt{NULL}, the library calls \texttt{free()}.
-\end{itemize}
+will be required when the blob feature is activated.
+Their callback signatures, types, and semantics are defined in RFC-HDFG-2026-*.
 
 \noindent Plugin authors writing \texttt{H5Z\_class3\_t} initialisers must set
 all three fields to \texttt{NULL}:
