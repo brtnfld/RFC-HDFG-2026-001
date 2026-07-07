@@ -696,7 +696,6 @@ The version constants are:
 
 \begin{minted}{c}
 #define H5Z_CLASS_T_VERS      1   /* Unchanged -- existing constant for H5Z_class2_t  */
-#define H5Z_CLASS3_T_VERS     2   /* Version constant for H5Z_class3_t (H5Zdevelop.h) */
 #define H5Z_CLASS_T_VERS_MAX  2   /* Highest accepted version field value (currently  *
                                    * H5Z_class3_t).  Used by the library for sanity   *
                                    * checking; plugin authors should not reference it *
@@ -704,13 +703,20 @@ The version constants are:
                                    * struct generations are added.                    */
 \end{minted}
 
-Note that \texttt{H5Z\_CLASS\_T\_VERS} remains at \texttt{1} for backward
-compatibility with code that already references it.  \texttt{H5Z\_CLASS3\_T\_VERS}
-is defined in \texttt{H5Zdevelop.h} as a convenience constant for plugin authors
-using \texttt{H5Z\_class3\_t}; it equals the literal value \texttt{2}.
+There is deliberately no \texttt{H5Z\_CLASS3\_T\_VERS} (or similarly-named)
+convenience constant: a separate macro per struct generation looks like an
+independent version counter rather than a shared \texttt{version} field, and
+its value would need to be renumbered if it were ever reused as a default.
+\texttt{H5Z\_CLASS\_T\_VERS} remains at \texttt{1} for backward compatibility
+with code that already references it; \texttt{H5Z\_class3\_t} plugin authors
+set the field to the literal value \texttt{2}, per the dispatch logic below.
 \texttt{H5Z\_CLASS\_T\_VERS\_MAX} is reserved for library sanity checking and
 should not be referenced by plugin authors directly, since its value increases as
-new struct generations are added.
+new struct generations are added. The library's own internal dispatch in
+\texttt{H5Z.c} uses a package-private constant (not exposed in
+\texttt{H5Zdevelop.h}) pinned to \texttt{2}, so that constant's meaning can't
+drift if \texttt{H5Z\_CLASS\_T\_VERS\_MAX} is later bumped for a future struct
+generation.
 
 \textbf{Future class versions:} Other in-progress HDF5 work (e.g.,
 Accelerator-native I/O Pipeline) may also need to extend
@@ -1052,7 +1058,7 @@ all three fields to \texttt{NULL}:
 
 \begin{minted}{c}
 static const H5Z_class3_t my_filter = {
-    H5Z_CLASS3_T_VERS,
+    2, /* version */
     MY_FILTER_ID, 1, 1,
     "my_filter", "My filter description",
     NULL, NULL,          /* can_apply, set_local */
