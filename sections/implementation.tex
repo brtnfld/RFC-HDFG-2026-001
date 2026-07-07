@@ -298,9 +298,13 @@ A new form is added that accepts a filter ID and parameter string:
 
 \begin{Verbatim}[fontsize=\scriptsize]
     h5repack -f 'UD=1,0,level=6' input.h5 output.h5
-    h5repack -f 'UD=32013,0,mode=rate,rate=3.5' input.h5 output.h5
-    h5repack -f '/group/dataset:UD=32013,0,mode=rate,rate=3.5' input.h5 output.h5
+    h5repack -f 'UD=32013,0,mode="rate",rate=3.5' input.h5 output.h5
+    h5repack -f '/group/dataset:UD=32013,0,mode="rate",rate=3.5' input.h5 output.h5
 \end{Verbatim}
+
+Note: \texttt{mode} is a TOML string value here, so it must be quoted
+(\texttt{mode="rate"}); an unquoted \texttt{mode=rate} is not valid TOML and
+is rejected by the parser.
 
 The existing \texttt{UD=id,flags,...} syntax is extended to accept a parameter
 string in place of the raw \texttt{cd\_values} sequence when the filter is a v3
@@ -354,6 +358,38 @@ they implement \texttt{get\_config}.
 
 The format change is confined to the \texttt{FILTERS} block; all other
 \texttt{h5dump} output is unaffected.
+
+\verysubsection{DESCRIPTION}
+
+When \texttt{-p} is active, a \texttt{DESCRIPTION} line is appended after
+\texttt{PARAMS\_STRING} for filters whose class registration supplies a
+non-NULL \texttt{description} (via \texttt{H5Zget\_filter\_info2}):
+
+\begin{verbatim}
+    FILTERS {
+      USER_DEFINED_FILTER {
+        FILTER_ID 32013
+        COMMENT zfp
+        PARAMS { ... }
+      }
+      PARAMS_STRING "mode=rate,rate=3.5"
+      DESCRIPTION "ZFP compression"
+    }
+\end{verbatim}
+
+Unlike \texttt{COMMENT} (the filter's canonical name, which is persisted in
+the pipeline message and always displays) and \texttt{PARAMS\_STRING} (which
+falls back to a raw \texttt{cd\_values} listing when \texttt{get\_config} is
+unavailable), \texttt{DESCRIPTION} has no on-disk fallback: it is a
+best-effort, registry-sourced label read from the filter class's in-memory
+registration at the time \texttt{h5dump} runs. If the filter plugin is not
+registered or loadable on the machine running \texttt{h5dump}, the
+\texttt{DESCRIPTION} line is omitted entirely. Running \texttt{h5dump -p} on
+the same file on two machines -- one with the plugin installed, one without
+-- can therefore produce different output for this line. Applications and
+scripts that parse \texttt{h5dump -p} output must treat \texttt{DESCRIPTION}
+as optional and machine-dependent, and should rely on \texttt{COMMENT}
+instead for a stable, plugin-independent label.
 
 
 %% ======================================================================
