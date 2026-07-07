@@ -648,7 +648,7 @@ not present in the HDF5 source tree.
 
 \subsection{Rationale}
 
-Version~3 of the filter class extends \texttt{H5Z\_class2\_t} in three
+Version~3 of the filter class extends \texttt{H5Z\_class2\_t} in two
 ways:
 
 \begin{enumerate}
@@ -662,10 +662,6 @@ ways:
   (\texttt{dxpl\_id}) and the chunk's scaled coordinates (\texttt{scaled},
   \texttt{ndims}) as additional parameters at I/O time, enabling access to
   non-serializable runtime handles and spatially-aware compression.
-
-\item \textbf{Reserved in-file binary config fields} (\texttt{write\_blob},
-  \texttt{read\_blob}, \texttt{close\_blob}) --- set to \texttt{NULL};
-  reserved for activation by a follow-on RFC.
 \end{enumerate}
 
 \subsection{Version Numbering}
@@ -834,10 +830,6 @@ typedef struct H5Z_class3_t {
     H5Z_func2_t                 filter;    /* extended: dxpl_id + scaled */
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
-    /* Reserved: must be NULL; callback signatures defined in RFC-HDFG-2026-* */
-    void                       *write_blob;
-    void                       *read_blob;
-    void                       *close_blob;
 } H5Z_class3_t;
 \end{minted}
 
@@ -999,7 +991,6 @@ typedef struct H5Z_class_info_t {
     const char   *description;
     bool          has_set_config;
     bool          has_get_config;
-    bool          has_blob_callbacks; /* reserved; always false in this RFC */
 } H5Z_class_info_t;
 
 herr_t H5Zget_filter_class_info(H5Z_filter_t filter,
@@ -1023,53 +1014,6 @@ stored in a dataset's pipeline) are obtained via
 \texttt{H5Pget\_filter\_params\_by\_idx}.  The original
 \texttt{H5Zget\_filter\_info(filter, *flags)} remains available for callers
 that only need the encode/decode bits.
-
-\subsection{Reserved Fields: In-File Blob Configuration Data}
-\label{sec:blob-reserved}
-
-\begin{outofscope}
-Full activation of \texttt{H5Z\_PARAMS\_BLOB} and the three opaque callbacks
-is out of scope for this RFC.  This subsection documents the reserved fields so
-that their presence in \texttt{H5Z\_class3\_t} is not a surprise to reviewers,
-and establishes the forward-compatibility intent.
-\end{outofscope}
-
-Some compressors require configuration data larger than the 4096-byte string
-limit or the 65535-element \texttt{cd\_values} limit.  Representative cases
-include spatial masks for region-of-interest compression (multi-megabyte byte
-arrays) and pre-processed source code for JIT-compiled filter modules (raised by
-@robertu94 in the community review of this RFC via HDFGroup/hdf5\_plugins\#255).
-The long-term solution is to store such data as a binary blob alongside the
-dataset's pipeline message inside the HDF5 file.
-
-Three \texttt{void~*} fields are reserved in \texttt{H5Z\_class3\_t} now,
-before the struct ships, so that no new class version (\texttt{H5Z\_class4\_t})
-will be required when the blob feature is activated.
-Their callback signatures, types, and semantics are defined in RFC-HDFG-2026-*.
-
-\noindent Plugin authors writing \texttt{H5Z\_class3\_t} initialisers must set
-all three fields to \texttt{NULL}:
-
-\begin{minted}{c}
-static const H5Z_class3_t my_filter = {
-    2, /* version */
-    MY_FILTER_ID, 1, 1,
-    "my_filter", "My filter description",
-    NULL, NULL,          /* can_apply, set_local */
-    my_filter_func,
-    my_set_config, my_get_config,
-    NULL, NULL, NULL,    /* write_blob, read_blob, close_blob (reserved) */
-};
-\end{minted}
-
-\noindent The enum value \texttt{H5Z\_PARAMS\_BLOB~=~2} is likewise reserved
-in \texttt{H5Z\_params\_type\_t}; \texttt{H5Pappend\_filter} returns
-\texttt{H5E\_UNSUPPORTED} if it is passed until the feature is activated.
-
-The four open design questions that must be resolved before activation---parallel
-I/O write protocol, \texttt{H5Pencode}/\texttt{H5Pdecode} policy,
-\texttt{h5repack} behaviour, and on-disk storage format---are documented in
-RFC-HDFG-2026-002.
 
 \subsection{Identity Allocation and Uniqueness}
 \label{sec:identity-allocation}
@@ -1463,8 +1407,6 @@ filter ID formatted as a decimal string.
 typedef enum {
     H5Z_PARAMS_CDVALUES = 0,  /* raw cd_values array (same as H5Pset_filter) */
     H5Z_PARAMS_STRING   = 1,  /* human-readable key=value string              */
-    H5Z_PARAMS_BLOB   = 2,  /* reserved: in-file blob config data;
-                                 H5Pappend_filter returns H5E_UNSUPPORTED     */
 } H5Z_params_type_t;
 
 typedef struct {
