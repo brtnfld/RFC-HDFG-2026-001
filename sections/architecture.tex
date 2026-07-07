@@ -997,13 +997,13 @@ typedef struct H5Z_class_info_t {
     unsigned int  config_flags;
     const char   *name;
     const char   *description;
-    hbool_t       has_set_config;
-    hbool_t       has_get_config;
-    hbool_t       has_blob_callbacks; /* reserved; always false in this RFC */
+    bool          has_set_config;
+    bool          has_get_config;
+    bool          has_blob_callbacks; /* reserved; always false in this RFC */
 } H5Z_class_info_t;
 
-herr_t H5Zget_filter_info2(H5Z_filter_t filter,
-                           H5Z_class_info_t *info);
+herr_t H5Zget_filter_class_info(H5Z_filter_t filter,
+                                H5Z_class_info_t *info);
 \end{minted}
 
 \noindent returns the same flag bits \emph{plus} the canonical \texttt{name},

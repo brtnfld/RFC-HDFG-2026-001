@@ -343,18 +343,25 @@ sub-fields:
 
 \begin{verbatim}
     FILTERS {
-      COMPRESSION DEFLATE { LEVEL 6 }
-      PARAMS_STRING "level=6"
+      COMPRESSION DEFLATE {
+        LEVEL 6
+        PARAMS_STRING 'level=6'
+      }
     }
 \end{verbatim}
 
-The value is the literal output of \texttt{get\_config} enclosed in double quotes.
-If the string returned by \texttt{get\_config} contains a double-quote character,
-it is escaped as \texttt{\textbackslash\textquotedbl} in the h5dump output. For filters that do not implement \texttt{get\_config},
-\texttt{H5Pget\_filter\_params\_by\_idx} provides a fallback string that formats the
-raw \texttt{cd\_values} as a colon-separated list (see \SectionRef{sec:introspection}),
-so \texttt{PARAMS\_STRING} can be displayed for all filters regardless of whether
-they implement \texttt{get\_config}.
+The value is the literal output of \texttt{get\_config}, enclosed in single
+quotes rather than double quotes: the value is TOML text, whose own string
+values are double-quoted (e.g. \texttt{mode = "rate"}), so wrapping in
+single quotes avoids escaping the common case. A TOML double-quoted string
+value may itself contain a literal single quote (e.g. \texttt{"it's"}); if
+the string returned by \texttt{get\_config} contains one, it is escaped as
+\texttt{\textbackslash\textquotesingle} in the h5dump output. For filters
+that do not implement \texttt{get\_config}, \texttt{H5Pget\_filter\_params\_by\_idx}
+provides a fallback string that formats the raw \texttt{cd\_values} as a
+colon-separated list (see \SectionRef{sec:introspection}), so
+\texttt{PARAMS\_STRING} can be displayed for all filters regardless of
+whether they implement \texttt{get\_config}.
 
 The format change is confined to the \texttt{FILTERS} block; all other
 \texttt{h5dump} output is unaffected.
@@ -362,8 +369,9 @@ The format change is confined to the \texttt{FILTERS} block; all other
 \verysubsection{DESCRIPTION}
 
 When \texttt{-p} is active, a \texttt{DESCRIPTION} line is appended after
-\texttt{PARAMS\_STRING} for filters whose class registration supplies a
-non-NULL \texttt{description} (via \texttt{H5Zget\_filter\_info2}):
+\texttt{PARAMS\_STRING}, nested inside the entry of the filter it describes,
+for filters whose class registration supplies a non-NULL \texttt{description}
+(via \texttt{H5Zget\_filter\_class\_info}):
 
 \begin{verbatim}
     FILTERS {
@@ -371,9 +379,9 @@ non-NULL \texttt{description} (via \texttt{H5Zget\_filter\_info2}):
         FILTER_ID 32013
         COMMENT zfp
         PARAMS { ... }
+        PARAMS_STRING 'mode=rate,rate=3.5'
+        DESCRIPTION "ZFP compression"
       }
-      PARAMS_STRING "mode=rate,rate=3.5"
-      DESCRIPTION "ZFP compression"
     }
 \end{verbatim}
 
