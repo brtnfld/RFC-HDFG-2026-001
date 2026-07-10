@@ -2254,6 +2254,52 @@ invocations.  No per-chunk file access and no additional public API are
 required; the same callback signature already specified for Use Case A
 covers both use cases.
 
+\subsection{Under Discussion: Retrieving a Default-Stored Blob}
+\label{sec:blob-getter}
+
+Prototype experience surfaced a gap in the default-storage path: a blob
+written through the default \texttt{H5HG} writer is currently
+\emph{write-only}.  The library recovers the bytes into the pipeline at
+\texttt{H5Dopen}, and they propagate correctly through \texttt{H5Pcopy},
+\texttt{H5Pencode}/\texttt{H5Pdecode}, and \texttt{h5repack} --- but no
+public API exposes them.  An application cannot read a blob back from a
+dataset's DCPL, and a filter cannot consume its own blob unless it
+implements \emph{both} \texttt{write\_blob} and \texttt{read\_blob}: a
+class that implements only \texttt{read\_blob} cannot interpret the
+default writer's locator, because \texttt{H5HG} is library-private.  Both
+use cases in \SectionRef{sec:blob-motivation} therefore require custom
+callbacks today, which makes the default storage path considerably less
+useful than it appears.
+
+\noindent\textbf{Option under discussion:} a public accessor,
+
+\begin{minted}{c}
+herr_t H5Pget_filter_blob(
+    hid_t     plist_id,
+    unsigned  idx,        /* pipeline index, as in H5Pget_filter2       */
+    void     *buf,        /* NULL for a size query                      */
+    size_t   *size        /* in: capacity of buf; out: blob byte count */
+);
+\end{minted}
+
+\noindent following the same size-query convention as
+\texttt{H5Pget\_filter\_params\_by\_idx}.  This would let applications
+and tools (e.g., an \texttt{h5dump~-p} annotation that a blob is present
+and its size) retrieve default-stored blobs, and --- notably --- would let
+a \emph{filter} consume its blob without implementing any storage
+callbacks: the \texttt{set\_local} callback already receives the
+dataset's \texttt{dcpl\_id} and could fetch and cache the blob there.
+That combination (default storage + \texttt{set\_local} retrieval) would
+cover Use Case A with no filter-side storage code at all.
+
+Alternatives considered but not currently favoured: keeping the status quo
+(filters that consume blobs must implement both storage callbacks), or
+passing the blob into the filter callback through a new context parameter
+(rejected earlier in this RFC's history for widening the hot-path
+signature).  No decision is recorded here; this subsection exists to
+solicit review feedback before the accessor is added to the
+implementation.
+
 \subsection{Out of Scope}
 
 \begin{outofscope}
