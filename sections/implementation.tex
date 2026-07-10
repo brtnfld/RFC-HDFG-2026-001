@@ -326,6 +326,17 @@ preserved: entries are written to the output DCPL in the order they appear
 in the source pipeline, followed by any new entries added via \texttt{-f}.
 No new behaviour is introduced for this edge case.
 
+\verysubsection{Blob-configured filters}
+\texttt{h5repack} requires no code changes to correctly copy a dataset
+whose filter carries a blob (\SectionRef{sec:blob}).  It already copies
+DCPLs exclusively via \texttt{H5Pcopy}; once that function's pipeline-copy
+callback is extended to deep-copy \texttt{aux\_data}
+(\SectionRef{sec:blob-repack}), the existing
+\texttt{H5Dopen}/\texttt{H5Pcopy}/\texttt{H5Dcreate} lifecycle moves the
+blob's bytes to the destination file automatically, with a new on-disk
+locator assigned by \texttt{write\_blob} at the destination
+\texttt{H5Dcreate}.
+
 \subsection{h5dump}
 
 The \texttt{PARAMS\_STRING} field is displayed only when \texttt{h5dump} is invoked
@@ -398,6 +409,57 @@ the same file on two machines -- one with the plugin installed, one without
 scripts that parse \texttt{h5dump -p} output must treat \texttt{DESCRIPTION}
 as optional and machine-dependent, and should rely on \texttt{COMMENT}
 instead for a stable, plugin-independent label.
+
+
+%% ======================================================================
+%%  Section – Blob Storage Implementation Notes
+%% ======================================================================
+\section{Blob Storage Implementation Notes}
+\label{sec:blob-impl}
+
+This section maps the design in \SectionRef{sec:blob} to the library source
+files it touches.
+
+\begin{center}
+\small
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{lX}
+\toprule
+\textbf{File} & \textbf{Change} \\
+\midrule
+\texttt{src/H5Zdevelop.h} & Add \texttt{H5Z\_blob\_loc\_t} and the three
+  blob callback typedefs; add the three fields to \texttt{H5Z\_class3\_t}
+  (\SectionRef{sec:class3-struct}). \\
+\texttt{src/H5Zprivate.h} & Add \texttt{aux\_data}, \texttt{aux\_size},
+  \texttt{aux\_loc} to \texttt{H5Z\_filter\_info\_t}
+  (\SectionRef{sec:blob-internal-state}). \\
+\texttt{src/H5Z.c} & Wire up \texttt{write\_blob}/\texttt{read\_blob}/
+  \texttt{close\_blob} (or the default \texttt{H5HG}-based
+  implementation) into the create/open/close paths
+  (\SectionRef{sec:blob-lifecycle}); implement the rank-0-write-and-broadcast
+  protocol for parallel jobs (\SectionRef{sec:blob-parallel}). \\
+\texttt{src/H5Pocpl.c} & Implement \texttt{H5Pappend\_filter\_blob}
+  (\SectionRef{sec:append-filter-blob}); extend
+  \texttt{H5P\_\_ocrt\_pipeline\_enc}/\texttt{\_dec} to serialize
+  \texttt{aux\_data} inline (\SectionRef{sec:blob-encode-decode}); extend
+  the pipeline-copy callback to deep-copy \texttt{aux\_data}
+  (\SectionRef{sec:blob-repack}). \\
+\texttt{src/H5Opline.c} & \texttt{H5O\_PLINE\_VERSION\_3} encode/decode of
+  \texttt{has\_aux}/\texttt{aux\_loc} (\SectionRef{sec:blob-format}); the
+  \texttt{delete} handler calls \texttt{H5HG\_remove} to reclaim heap
+  space when a blob-bearing filter entry or dataset is deleted. \\
+\texttt{src/H5Dchunk.c} & No changes.  The runtime chunk I/O path
+  (\texttt{H5Z\_pipeline}) is unaffected; the blob is configuration data
+  loaded once at open time. \\
+\texttt{tools/src/h5repack/} & No changes needed; see the
+  \textit{Blob-configured filters} note in \SectionRef{sec:cli-tools}. \\
+\texttt{test/} & New tests: create/open/close, parallel write/broadcast,
+  \texttt{H5Pencode}/\texttt{H5Pdecode} round-trip, and \texttt{h5repack}
+  cross-file copy for a blob-configured filter
+  (\SectionRef{sec:test-blob}). \\
+\bottomrule
+\end{tabularx}
+\end{center}
 
 
 %% ======================================================================

@@ -31,6 +31,13 @@ This design covers:
   \texttt{h5zconfig\_get\_param\_f} for Fortran; two overloaded
   \texttt{H5Pappend\_filter} methods and
   \texttt{H5Pget\_filter\_params\_by\_idx} for Java.
+\item In-file blob configuration storage (\SectionRef{sec:blob}): three new
+  optional callbacks on \texttt{H5Z\_class3\_t}
+  (\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}), the new
+  \texttt{H5Pappend\_filter\_blob} API, and the associated
+  \texttt{H5O\_PLINE\_VERSION\_3} on-disk format for filters whose
+  configuration data is too large for \texttt{cd\_values} or the parameter
+  string.
 \end{itemize}
 
 This design does not cover:
