@@ -2300,9 +2300,14 @@ signature).  No decision is recorded here; this subsection exists to
 solicit review feedback before the accessor is added to the
 implementation.
 
-\subsection{Out of Scope}
+\subsection{Boundaries of This Design}
 
-\begin{outofscope}
+The in-file blob feature specified above (\SectionRef{sec:blob}) is fully
+in scope for this RFC: the callbacks, on-disk format, public API, and
+parallel/encode/repack semantics are all part of what this RFC delivers.
+Three narrow items are deliberately not addressed by this design, and are
+not required for either Use Case A or Use Case B:
+
 \begin{itemize}
 \item Changes to \texttt{H5Z\_func\_t}, the runtime I/O callback used by
   \texttt{H5Z\_class1\_t}/\texttt{H5Z\_class2\_t} filters --- the hot path
@@ -2311,7 +2316,6 @@ implementation.
 \item Multi-file blob sharing (a blob in file~A referenced by a dataset
   in file~B).
 \end{itemize}
-\end{outofscope}
 
 
 %% ======================================================================
