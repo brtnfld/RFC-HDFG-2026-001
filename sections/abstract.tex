@@ -28,15 +28,6 @@ both the stable string identifier and the display name.  The library
 writes this name into the filter-pipeline message at filter-add time
 so it is available to tools even when the plugin is not installed.
 Existing call sites compile and function without modification; files written by a v3-aware library are readable by older libraries through v2 plugins that tolerate extra trailing \texttt{cd\_values} slots (see \S\ref{sec:class3-struct}).
-
-For configuration data too large for \texttt{cd\_values} or the parameter
-string --- e.g., pre-processed source for a JIT-compiled filter, or a
-reference to a spatial mask stored as a separate dataset --- this RFC also
-adds in-file blob configuration storage: three new \texttt{H5Z\_class3\_t}
-callbacks (\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}),
-the \texttt{H5Pappend\_filter\_blob} API, and a corresponding
-\texttt{H5O\_PLINE\_VERSION\_3} on-disk format used only by datasets that
-opt into it (see \S\ref{sec:blob}).
 \end{abstract}
 
 \vfill

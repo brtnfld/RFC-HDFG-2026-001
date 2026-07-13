@@ -31,13 +31,6 @@ This design covers:
   \texttt{h5zconfig\_get\_param\_f} for Fortran; two overloaded
   \texttt{H5Pappend\_filter} methods and
   \texttt{H5Pget\_filter\_params\_by\_idx} for Java.
-\item In-file blob configuration storage (\SectionRef{sec:blob}): three new
-  optional callbacks on \texttt{H5Z\_class3\_t}
-  (\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}), the new
-  \texttt{H5Pappend\_filter\_blob} API, and the associated
-  \texttt{H5O\_PLINE\_VERSION\_3} on-disk format for filters whose
-  configuration data is too large for \texttt{cd\_values} or the parameter
-  string.
 \end{itemize}
 
 This design does not cover:
@@ -59,6 +52,12 @@ This design does not cover:
   as forward-looking context.  The VFD/VOL configuration API changes
   (\texttt{H5FDconfig\_get\_subtable\_str}, profile constants, etc.) are
   explicitly out of scope for this RFC.
+\item In-file blob configuration storage for filters whose configuration
+  data is too large for \texttt{cd\_values} or the parameter string (e.g.,
+  pre-processed source for a JIT-compiled filter module, or a reference to
+  a spatial mask stored as a separate dataset).  This is addressed by a
+  follow-on RFC, RFC-HDFG-2026-003, summarized as forward-looking context
+  in \SectionRef{sec:blob-future}.
 \end{itemize}
 
 
