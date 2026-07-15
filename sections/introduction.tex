@@ -23,6 +23,11 @@ This design covers:
   \texttt{H5Z\_params\_t} tagged union type.
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
+\item An on-disk format change: a new version~3 of the filter-pipeline
+  object-header message (\texttt{H5O\_PLINE\_VERSION\_3},
+  \SectionRef{sec:pline-v3}) that persists the validated parameter string
+  verbatim alongside \texttt{cd\_values}, gated by
+  \texttt{H5Pset\_libver\_bounds}.
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The Fortran and Java bindings that ship with HDF5
   (\SectionRef{sec:bindings}): a generic
@@ -105,7 +110,9 @@ no standard way to recover the original intent of the configuration (e.g.,
 \item Users can configure any filter using human-readable named
    parameters.
 \item Configured filter pipelines are introspectable in human-readable form,
-   with labels that persist in the file independent of plugin availability.
+   with both the filter's label and its configuration string persisting in
+   the file independent of plugin availability, and round-tripping without
+   loss.
 \item All existing APIs, plugins, and call sites continue to work without
    modification.
 \item The design supports both built-in and dynamically loaded plugin

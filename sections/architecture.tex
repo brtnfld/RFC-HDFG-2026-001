@@ -127,6 +127,16 @@ decimal string may produce a slightly different numeral.  Passing such a
 reconstructed string back to \texttt{set\_config} may therefore yield a
 different binary value, breaking compression reproducibility.
 
+Because the configuration string is persisted verbatim on disk
+(\SectionRef{sec:pline-v3}), serialization precision is \emph{not}
+load-bearing for round-trip fidelity of string-configured pipelines: what
+the user typed is what introspection returns.  The requirements in this
+subsection govern the remaining places where the library or a callback
+\emph{produces} a float numeral --- chiefly \texttt{get\_config}
+reconstruction for entries that carry no stored string
+(\SectionRef{sec:introspection}) --- so that those strings, too, round-trip
+exactly when fed back to \texttt{set\_config}.
+
 \textbf{Input (accepted by the library):} Both decimal float literals
 (e.g., \texttt{rate = 3.5}) and C99 hexadecimal float literals
 (e.g., \texttt{rate = 0x1.cp+1}) are valid in parameter strings.
@@ -1235,11 +1245,17 @@ round-trip correctness. Document this requirement in
 
 \begin{itemize}
 \item Provides a best-effort human-readable representation of the filter
-  configuration encoded in \texttt{cd\_values}.  Due to the lossy nature of the
+  configuration encoded in \texttt{cd\_values}.  With the parameter string
+  persisted on disk (\SectionRef{sec:pline-v3}), this callback is a
+  \emph{fallback}: the library invokes it only for pipeline entries that
+  carry no stored string (raw \texttt{cd\_values} configuration, pre-RFC
+  files, or libver-forced version-2 messages), and for the runtime
+  ``effective configuration'' view of what the filter actually applied.
+  Due to the lossy nature of the
   \texttt{cd\_values} encoding (e.g., floating-point values quantised to integers,
   information collapsed during the \texttt{set\_config} conversion), the output
   cannot in general be guaranteed to round-trip back to an identical
-  configuration.  See the note on string reconstruction in
+  configuration.  See the note on reconstructed strings in
   \SectionRef{sec:introspection}.
 \item Follows the standard HDF5 buffer-size query pattern: \texttt{buf\_size} is
   an in/out parameter. On entry, \texttt{*buf\_size} is the total capacity of
@@ -1351,10 +1367,12 @@ only the plugin body is missing at I/O time---those semantics remain
 unchanged for ID-based callers.
 
 True soft-failure semantics for missing name-based filters require a
-future format extension (provisionally
-\texttt{H5O\_PLINE\_VERSION\_3}, \SectionRef{sec:pline-v3}) capable
-of storing name-only pipeline entries that carry a canonical name
-without a resolved numeric \texttt{id}.
+format extension capable of storing name-only pipeline entries that
+carry a canonical name without a resolved numeric \texttt{id}.  The
+version-3 pipeline message defined by this RFC
+(\SectionRef{sec:pline-v3}) does \emph{not} add such entries --- every
+entry still requires a numeric \texttt{id} --- so this remains future
+work for a subsequent message revision.
 Such entries would be resolved at open time on systems where the
 plugin is installed and gracefully skipped where it is not.  Until
 that format is available, callers that need optional name-based
@@ -1382,8 +1400,17 @@ slot -- the same on-disk slot existing v2 plugins have always used.
 No extra \texttt{cd\_values} slots are appended, so \texttt{cd\_nelmts}
 as seen by the plugin's execution callback is exactly what
 \texttt{set\_config} (or the caller of \texttt{H5Pset\_filter})
-produced.  Older HDF5 libraries reading these files via existing v2
-plugins encounter no new \texttt{cd\_nelmts} surprises.
+produced, regardless of the pipeline-message version.
+
+Readability by older HDF5 \emph{libraries} is governed by the
+pipeline-message version (\SectionRef{sec:pline-v3-gating}): pipelines
+configured without parameter strings are written as version-2 messages,
+byte-identical to pre-RFC output and readable everywhere.  Pipelines that
+carry stored configuration strings are written as version-3 messages,
+which pre-RFC libraries reject at dataset-open time; callers who need
+old-reader compatibility bound the file format with
+\texttt{H5Pset\_libver\_bounds}, which drops the stored strings and
+reverts to version-2 output (\SectionRef{sec:pline-v3-gating}).
 
 When \texttt{H5Pget\_filter2} is called for a v3 filter, it returns
 the canonical name (\texttt{name}) from the runtime registry if the
@@ -1486,6 +1513,10 @@ in the DCPL without invoking any plugin callback.
 When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
 loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
 translate the parameter string into \texttt{cd\_values}, and stores the result.
+In addition, the validated parameter string is retained verbatim in the DCPL
+pipeline entry and persisted to the file in the version-3 pipeline message
+(\SectionRef{sec:pline-v3}), making the configuration introspectable without
+the plugin and round-trippable without loss.
 
 \textbf{Empty-string handling:} If \texttt{u.str} is \texttt{NULL} or the empty
 string \texttt{""}, \texttt{H5Pappend\_filter} treats the call as ``no
@@ -1625,30 +1656,44 @@ herr_t H5Pget_filter_params_by_idx(
 
 \verysubsection{Description}
 Returns the human-readable parameter string for the filter at position
-\texttt{filter\_idx} in the pipeline. For filters that implement \texttt{get\_config},
-the callback's output is used. For filters that do not implement
-\texttt{get\_config}, the raw \texttt{cd\_values} are formatted as a fallback string
-using colon separators (e.g., \texttt{"cd\_values=1:0:0:1074921472"}). The colon
-separator avoids ambiguity with the comma-separated key=value grammar defined in
-\SectionRef{sec:param-format}---the fallback is a single key=value pair whose
-value contains colons, which is valid under the grammar.
+\texttt{filter\_idx} in the pipeline.  Three sources are consulted in
+order of decreasing fidelity:
 
-\verysubsection{Note on string reconstruction}
-The DCPL does not retain the original parameter string. After
-\texttt{H5Pappend\_filter} resolves the string into \texttt{cd\_values}, only
-the \texttt{cd\_values} are stored in the property list (identical to
-\texttt{H5Pset\_filter}). This function relies on the filter's \texttt{get\_config}
-callback to reconstruct a human-readable string from the stored \texttt{cd\_values}.
+\begin{enumerate}
+\item \textbf{The stored configuration string.}  If the entry carries a
+  persisted parameter string (\SectionRef{sec:config-storage-rules}) ---
+  retained in the DCPL at \texttt{H5Pappend\_filter} time, or decoded from
+  a version-3 pipeline message --- that string is returned verbatim.  This
+  is exact and requires no plugin.
+\item \textbf{\texttt{get\_config} reconstruction.}  For entries without a
+  stored string (raw \texttt{cd\_values} configuration, files written
+  before this RFC, or files written under a libver bound that forced the
+  version-2 message), the filter's \texttt{get\_config} callback
+  reconstructs a best-effort string from \texttt{cd\_values}.
+\item \textbf{Raw \texttt{cd\_values} formatting.}  When neither source is
+  available, the raw \texttt{cd\_values} are formatted as a fallback string
+  using colon separators (e.g., \texttt{"cd\_values=1:0:0:1074921472"}).
+  The colon separator avoids ambiguity with the comma-separated key=value
+  grammar defined in \SectionRef{sec:param-format}---the fallback is a
+  single key=value pair whose value contains colons, which is valid under
+  the grammar.
+\end{enumerate}
 
-This reconstruction is inherently limited. The \texttt{cd\_values} encoding was
-designed to carry opaque integer data, not to serve as a lossless serialisation
-of a key-value string. For some filters (e.g., ZFP), floating-point
-configuration values are quantised during conversion to unsigned integers; the
-original value cannot be exactly recovered from the stored integer, and the
-reconstructed string will reflect the rounded value rather than what the user
-originally typed. Consumers should not rely on exact string equality between
-input and output, and should treat the reconstructed string as informational
-only.
+\verysubsection{Note on reconstructed strings (sources 2 and 3)}
+\texttt{get\_config} reconstruction is inherently limited. The
+\texttt{cd\_values} encoding carries opaque integer data, not a lossless
+serialisation of a key-value string. For some filters (e.g., ZFP),
+floating-point configuration values are quantised during conversion to
+unsigned integers; the original value cannot be exactly recovered from the
+stored integer, and the reconstructed string will reflect the rounded
+value rather than what the user originally typed. Consumers should treat
+reconstructed strings as informational only.  These caveats do \emph{not}
+apply to source~1: a stored string is returned byte-for-byte as the user
+supplied it.  Callers that need to distinguish an authoritative stored
+string from a reconstruction can compare against
+\texttt{H5Pget\_filter2} output or note whether the plugin was required;
+the common case --- pipelines configured through the string API and
+written without a restrictive libver bound --- always yields source~1.
 
 \verysubsection{Note on \texttt{H5Pget\_filter2}}
 The existing \texttt{H5Pget\_filter2} function returns the class
@@ -1725,44 +1770,35 @@ These functions are placed in \texttt{H5Zdevelop.h} to limit the public API
 surface.
 
 
-\subsection{Normative \texttt{cd\_values} Packing Convention}
+\subsection{\texttt{cd\_values} Encoding Is Filter-Private (Non-Normative)}
 \label{sec:cd-packing-convention}
 
-For \texttt{set\_config} and \texttt{get\_config} callbacks to round-trip
-correctly across plugins and tools, typed parameters wider than a single
-\texttt{unsigned int} must be packed into \texttt{cd\_values} using a
-consistent layout.  The following convention is normative; built-in filter
-callbacks that handle floating-point or string parameters use it, and
-third-party filters are strongly encouraged to do the same.
+Because the authoritative configuration is the parameter string persisted
+on disk (\SectionRef{sec:pline-v3}), this RFC imposes \emph{no} normative
+packing convention on \texttt{cd\_values}.  How a filter encodes typed
+parameters into \texttt{unsigned int} slots is a private contract between
+its \texttt{set\_config} and its execution callback; no other component
+needs to decode it.  Earlier drafts of this RFC --- written under a
+no-format-change constraint --- specified a normative cross-plugin slot
+layout (little-endian split \texttt{double}s, length-prefixed string
+chunks) so that \texttt{get\_config} could losslessly reconstruct the
+configuration from \texttt{cd\_values} alone.  With the string stored
+verbatim, that machinery is unnecessary and has been withdrawn
+(\SectionRef{sec:type-tags-superseded}).
 
-\begin{center}
-\renewcommand{\arraystretch}{1.2}
-\begin{tabularx}{\textwidth}{llX}
-\toprule
-\textbf{C type} & \textbf{Slots} & \textbf{Encoding} \\
-\midrule
-\texttt{unsigned int} & 1 & direct store \\
-\texttt{int32\_t}     & 1 & two's-complement bitcast to \texttt{uint32} \\
-\texttt{float}        & 1 & IEEE\,754 \texttt{memcpy} into one slot \\
-\texttt{double}       & 2 & IEEE\,754 \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits \\
-\texttt{int64\_t}     & 2 & two's-complement \texttt{memcpy}; slot[0]\,=\,low\,32\,bits (LE), slot[1]\,=\,high\,32\,bits \\
-\texttt{char[]}       & $1{+}\lceil\text{len}/4\rceil$ &
-                          slot[0]\,=\,byte length; remaining slots hold 4-byte null-padded chunks \\
-\bottomrule
-\end{tabularx}
-\end{center}
+Two non-normative recommendations remain for filter authors:
 
-For \texttt{double} and \texttt{int64\_t} the two-slot layout is always
-little-endian regardless of the host platform; on big-endian hosts the
-plugin must perform the necessary byte swap, matching the existing HDF5
-convention that all \texttt{cd\_values} are stored in little-endian order.
-The convention assumes IEEE\,754 \texttt{float} (32~bits) and \texttt{double}
-(64~bits); types not enumerated above (e.g., \texttt{long double}) are out
-of scope for this encoding and must be reduced to one of the listed types
-by the plugin.
-
-Plugin authors implement this convention directly using \texttt{memcpy} and
-the byte layout above.
+\begin{itemize}
+\item Encode wide values with \texttt{memcpy} of the IEEE\,754 or
+  two's-complement representation rather than through lossy integer
+  quantisation, so that \texttt{get\_config} can produce a faithful
+  fallback string for entries configured through the raw
+  \texttt{cd\_values} path (which stores no string,
+  \SectionRef{sec:config-storage-rules}).
+\item Keep the encoding stable across plugin versions, since
+  \texttt{cd\_values} written by older releases of the plugin persist in
+  existing files.
+\end{itemize}
 
 
 \subsection{Canonical \texttt{set\_config} Implementation Template}
@@ -1844,55 +1880,196 @@ future release.  The semicolon character is reserved outside of quoted strings
 
 
 %% ======================================================================
-%%  Section – Current Limitations and Future On-Disk Format Work
+%%  Section – On-Disk Configuration Storage
 %% ======================================================================
-\section{Current Limitations and Future On-Disk Format Work}
+\section{On-Disk Configuration Storage}
 \label{sec:pline-v3}
 
-This RFC introduces \textbf{no on-disk format change}.  Files written via
-\texttt{H5Pappend\_filter} are byte-identical to files written via
-\texttt{H5Pset\_filter}: \texttt{cd\_values} are stored in the existing
-\texttt{H5O\_PLINE\_VERSION\_2} object-header message.  The parameter string
-is consumed at API call time and is not stored on disk.
+This RFC introduces an on-disk format change: the validated parameter
+string is persisted \emph{verbatim} --- first in the DCPL, then in a new
+version~3 of the filter-pipeline object-header message
+(\texttt{H5O\_PLINE\_VERSION\_3}) --- alongside the \texttt{cd\_values}
+produced by \texttt{set\_config}.  The stored string, not a reconstruction
+from \texttt{cd\_values}, is the authoritative human-readable
+representation of a filter's configuration.  \texttt{cd\_values} remain
+exactly what they are today: the execution encoding consumed by the
+filter callback.  Because the string is persisted independently,
+\texttt{cd\_values} carry no round-trip obligation, and their internal
+layout stays a private matter between a filter's \texttt{set\_config}
+and its execution callback (\SectionRef{sec:cd-packing-convention}).
 
-\subsection{Limitations of the \texttt{cd\_values}-only Approach}
-
-Without typed on-disk metadata, two limitations apply:
+Storing the string directly removes the two limitations that shaped
+earlier drafts of this design, which were constrained to introduce no
+format change:
 
 \begin{enumerate}
-\item \textbf{Plugin-dependent introspection.}  Tools such as \texttt{h5dump}
-  must load the filter plugin and call \texttt{get\_config} to produce a
-  human-readable representation of \texttt{cd\_values}.  When the plugin is
-  unavailable, the stored array appears as opaque integers.
-
-\item \textbf{Best-effort round-trip.}  \texttt{get\_config} reconstructs a
-  parameter string from \texttt{cd\_values}, but this reconstruction may be
-  lossy for filters that store only a quantised approximation of a
-  floating-point value (e.g., ZFP mode encoded as a packed integer).
-  Consumers must treat \texttt{get\_config} output as informational and must
-  not rely on exact string equality with the original \texttt{H5Pappend\_filter}
-  input.  Filters that use the \texttt{cd\_values} packing convention
-  (\SectionRef{sec:cd-packing-convention}) \emph{and} format floating-point
-  keys with \texttt{\%a} (\SectionRef{sec:float-precision}) achieve exact
-  lossless round-trips: the reconstructed string, when passed back to
-  \texttt{H5Pappend\_filter}, produces an identical filter configuration.
+\item \textbf{Plugin-free introspection.}  Tools such as \texttt{h5dump}
+  read the stored string straight out of the pipeline message.  No plugin
+  needs to be located, loaded, or trusted to reconstruct the
+  configuration; a file is self-describing on any machine.
+\item \textbf{Exact round-trip.}  The stored string is byte-for-byte the
+  string the user passed to \texttt{H5Pappend\_filter}.  Floating-point
+  formatting precision, quantisation inside \texttt{set\_config}, and
+  packing-layout conventions no longer have any bearing on what
+  introspection returns.
 \end{enumerate}
 
-These limitations are shared with the existing \texttt{H5Pset\_filter} API.
+\subsection{What Is Stored, and When}
+\label{sec:config-storage-rules}
 
-\subsection{Future Work: Typed On-Disk Storage}
+\begin{itemize}
+\item \texttt{H5Pappend\_filter} with \texttt{H5Z\_PARAMS\_STRING}: after
+  \texttt{set\_config} validates the string and produces
+  \texttt{cd\_values}, the library retains the caller's parameter string
+  verbatim in the DCPL pipeline entry.  A \texttt{NULL} or empty string
+  (``no parameters'') stores nothing.
+\item \texttt{H5Pappend\_filter} with \texttt{H5Z\_PARAMS\_CDVALUES},
+  \texttt{H5Pset\_filter}, and all other legacy configuration paths: no
+  string is stored.  Introspection for such entries falls back to
+  \texttt{get\_config} reconstruction exactly as for files written before
+  this RFC (\SectionRef{sec:introspection}).
+\end{itemize}
 
-A future RFC targeting HDF5~3.0 will propose a typed on-disk storage
-extension---provisionally \texttt{H5O\_PLINE\_VERSION\_3}---that appends
-per-slot type tags alongside \texttt{cd\_values}.  The
-\texttt{cd\_values} packing convention defined in this RFC
-(\SectionRef{sec:cd-packing-convention}) is the normative foundation:
-filters that adopt it today will be forward-compatible with that extension
-without changes to their callbacks.
+\verysubsection{Why the verbatim user string, and not a normalised or
+post-processed form}
 
-The format extension is deferred because the primary value of this RFC---human-readable
-filter configuration at the API level---is fully realised without a format
-change, and requiring a new libver upper bound would slow adoption.
+Three candidate representations were considered for the stored string:
+
+\begin{enumerate}
+\item \textbf{The raw user string (chosen).}  Lossless by construction,
+  requires no callback in the persistence path, and preserves exactly what
+  the user expressed --- including hex-float literals and formatting.
+\item \textbf{A parser-normalised re-serialisation} (keys lowercased,
+  values re-emitted).  Rejected: re-serialising floating-point values
+  reintroduces the very decimal-precision machinery
+  (\SectionRef{sec:float-precision}) that storing the string is meant to
+  make non-load-bearing.
+\item \textbf{The post-processing \texttt{get\_config} output} (``what the
+  filter actually applied,'' including defaults).  Rejected as the
+  \emph{stored} form: it depends on the quality of a plugin callback and is
+  lossy for filters that quantise parameters.  That view remains available
+  at runtime by calling \texttt{get\_config} when the plugin is loaded, so
+  choosing the verbatim string forfeits nothing.
+\end{enumerate}
+
+Defaults not present in the user's string are intentionally not baked into
+the stored form: which defaults apply is a property of the filter version
+that executes, and recording user intent verbatim keeps the stored
+configuration meaningful across plugin upgrades.
+
+\subsection{DCPL Retention and Property-List Machinery}
+\label{sec:dcpl-retention}
+
+The internal pipeline property gains a per-entry configuration string.
+All property-list machinery handles it uniformly:
+
+\begin{itemize}
+\item \texttt{H5Pcopy} duplicates the string with the entry.
+\item \texttt{H5Pencode}/\texttt{H5Pdecode} serialise and restore it, so
+  the broadcast pattern recommended for Parallel HDF5
+  (\SectionRef{sec:thread-safety}) preserves it.
+\item \texttt{H5Pmodify\_filter} \emph{clears} the stored string for the
+  modified entry: the caller has replaced \texttt{cd\_values} directly, so
+  the string no longer describes the entry's configuration.  Introspection
+  for that entry reverts to \texttt{get\_config} fallback.
+\item \texttt{H5Premove\_filter} discards the string with the entry.
+\item \texttt{H5Ocopy} deep-copies the string alongside \texttt{cd\_values}
+  when copying a dataset's pipeline message.
+\end{itemize}
+
+\subsection{Pipeline Message Version 3}
+\label{sec:pline-v3-layout}
+
+Each filter entry in the version-3 pipeline message carries the existing
+version-2 fields followed by an optional configuration-string block:
+
+\begin{Verbatim}[fontsize=\scriptsize]
+[existing v2 per-filter layout]
+  UINT16  filter_id
+  UINT16  name_length        (third-party filters only, as in v2)
+  char    name[]             (third-party filters only, as in v2)
+  UINT16  flags
+  UINT16  cd_nelmts
+  UINT32  cd_values[cd_nelmts]
+
+[new in v3]
+  UINT16  config_length      (byte length of the string; 0 = no string)
+  char    config[config_length]   (UTF-8, not NUL-terminated)
+\end{Verbatim}
+
+\texttt{config\_length} is bounded by \texttt{H5Z\_CONFIG\_STRING\_MAX}
+(4096, \SectionRef{sec:param-overview}), which fits comfortably in the
+16-bit field.  Configuration data too large for an inline string is the
+domain of the follow-on blob RFC (\SectionRef{sec:blob-future}).  All
+other message fields, including the name-slot rules for built-in versus
+third-party filters (\SectionRef{sec:class3-struct}), are unchanged from
+version~2.
+
+\subsection{When Version 3 Is Written}
+\label{sec:pline-v3-gating}
+
+The message version is selected per pipeline message at object-header
+encode time (e.g., \texttt{H5Dcreate}), following the standard
+\texttt{H5Pset\_libver\_bounds} gating used by every versioned HDF5
+format feature:
+
+\begin{enumerate}
+\item If \emph{no} entry in the pipeline has a stored configuration
+  string, the library writes version~2 (or version~1, per the existing
+  rules) --- byte-identical to the output of an equivalent
+  \texttt{H5Pset\_filter} program, at any libver bound.
+\item If at least one entry has a stored string \emph{and} the file's
+  libver upper bound admits the release that ships this feature
+  (provisionally \texttt{H5F\_LIBVER\_V200}; the constant tracks the
+  actual shipping release), the library writes version~3.
+\item If a stored string is present but the libver upper bound is below
+  that release, the library writes version~2 and omits the strings.  The
+  file is byte-identical to pre-RFC output; execution semantics are
+  unaffected because \texttt{cd\_values} are complete on their own, and
+  introspection degrades to the \texttt{get\_config} fallback.  The
+  downgrade is silent, consistent with how libver bounds gate other
+  format features; applications can detect it by re-opening the dataset
+  and querying \texttt{H5Pget\_filter\_params\_by\_idx}.
+\end{enumerate}
+
+Rule~1 preserves the adoption story that motivated earlier drafts:
+existing programs, and new programs that use only the raw
+\texttt{cd\_values} form, produce files indistinguishable from today's.
+Only callers who opt into string configuration --- and do not bound the
+file format below the shipping release --- produce version-3 messages.
+
+\subsection{Reader Compatibility}
+\label{sec:pline-v3-readers}
+
+A library that predates version~3 fails to decode a version-3 pipeline
+message: the existing version check in the pipeline-message decoder
+rejects unknown versions, surfacing as a clear dataset-open error.  This
+is the standard consequence of opting into a newer format feature (as
+with, e.g., virtual datasets), and \texttt{H5Pset\_libver\_bounds} is the
+standard user-controlled escape hatch for producing files that older
+readers must open.  No superblock feature flag is required; the message
+version field carries the signal.
+
+Within a v3-capable library, the stored string places no new demands on
+plugins: a dataset whose pipeline message is version~3 is filtered by v2
+plugins exactly as before, since \texttt{cd\_nelmts} and
+\texttt{cd\_values} are precisely what \texttt{set\_config} (or the
+caller) produced.
+
+\subsection{Superseded Alternative: Per-Slot Type Tags}
+\label{sec:type-tags-superseded}
+
+An earlier design direction kept \texttt{cd\_values} as the only
+persisted configuration and appended a per-slot type-tag array
+(\texttt{uint8} per slot) to the pipeline message so that readers could
+reconstruct typed values from packed slots without the plugin.  That
+approach required a normative cross-plugin packing convention, byte-order
+rules for split 64-bit values, schema plumbing to emit correct tags, and
+still yielded only a reconstructed --- not authoritative ---
+configuration.  Since it costs a format change either way, this RFC
+stores the self-describing string instead; the type-tag design is
+superseded and no packing convention is normative
+(\SectionRef{sec:cd-packing-convention}).
 
 \subsection{Future Work: In-File Blob Configuration Storage}
 \label{sec:blob-future}

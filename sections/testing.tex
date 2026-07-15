@@ -77,13 +77,21 @@ formatted as a decimal string.
 
 \subsection{On-Disk Format}
 
-This RFC introduces no on-disk format changes.  The string configuration
-is resolved at configuration time into \texttt{cd\_values} using the
-existing \texttt{H5O\_PLINE\_VERSION\_2} format---output is byte-identical
-to an equivalent \texttt{H5Pset\_filter} call.  Typed on-disk parameter
-storage (per-slot type tags, which would enable exact round-trip of
-floating-point parameters) is deferred to a follow-on RFC that would
-extend \texttt{H5O\_PLINE\_VERSION}.
+This RFC introduces a versioned, opt-in on-disk format change
+(\SectionRef{sec:pline-v3}).  Pipelines configured without parameter
+strings --- including everything written through \texttt{H5Pset\_filter}
+and the raw \texttt{cd\_values} form of \texttt{H5Pappend\_filter} ---
+continue to be written as \texttt{H5O\_PLINE\_VERSION\_2} messages,
+byte-identical to pre-RFC output at any libver bound.  Pipelines carrying
+stored configuration strings are written as \texttt{H5O\_PLINE\_VERSION\_3}
+messages, which persist each entry's parameter string verbatim alongside
+\texttt{cd\_values}; libraries predating version~3 reject such messages
+with a clear dataset-open error, and callers who need old-reader
+compatibility bound the file format with \texttt{H5Pset\_libver\_bounds},
+which reverts to version-2 output without the strings.  Because the
+string is stored directly, no typed per-slot tagging of \texttt{cd\_values}
+is needed; the previously considered type-tag extension is superseded
+(\SectionRef{sec:type-tags-superseded}).
 
 \subsection{Source Compatibility}
 
@@ -124,20 +132,27 @@ demonstrates the safe pattern; and the callback contract tests
 (\texttt{cb-02}, \texttt{cb-03}) exercise mismatch detection.  Documentation
 in \texttt{H5Zdevelop.h} explicitly warns against stateful parsing.
 
-\verysubsection{Lossy round-trip user expectations}
-Users and test suites often expect strict string equality after a
-set-then-get round trip (\texttt{set\_config(s)} $\rightarrow$
-\texttt{get\_config()} $\rightarrow$ $s' = s$).  Because
-\texttt{cd\_values} is a lossy encoding for floating-point parameters
-(e.g., a \texttt{double} rate quantised through \texttt{unsigned int}
-slots), the reconstructed string $s'$ may differ from $s$ in decimal
-representation even when the configuration is semantically identical.
-The RFC addresses this in two places: the introspection note in
+\verysubsection{Lossy round-trip expectations (fallback paths only)}
+For pipelines configured through the string API and written without a
+restrictive libver bound, \texttt{H5Pget\_filter\_params\_by\_idx} returns
+the stored string byte-for-byte, so strict string equality after a
+set-then-get round trip \emph{does} hold --- this RFC's primary path has
+no lossy round-trip.  The residual risk is confined to the fallback
+paths: entries configured via raw \texttt{cd\_values}, pre-RFC files, and
+files written under a libver bound that forced the version-2 message.
+There, \texttt{get\_config} reconstructs the string from
+\texttt{cd\_values}, which is a lossy encoding for floating-point
+parameters (e.g., a \texttt{double} rate quantised through
+\texttt{unsigned int} slots), so the reconstructed string $s'$ may differ
+from $s$ in decimal representation even when the configuration is
+semantically identical.  The introspection note in
 \SectionRef{sec:introspection} states that reconstructed strings are
-informational only, and the round-trip tests (\SectionRef{sec:test-builtin-roundtrip})
-verify \texttt{cd\_values} equality rather than string equality.  The
-API documentation for \texttt{H5Pget\_filter\_params\_by\_idx} repeats
-this caveat so that callers are not surprised.
+informational only; the round-trip tests
+(\SectionRef{sec:test-builtin-roundtrip}) verify \texttt{cd\_values}
+equality on the fallback path and string equality on the stored-string
+path (\SectionRef{sec:test-ondisk}).  The API documentation for
+\texttt{H5Pget\_filter\_params\_by\_idx} distinguishes the two cases so
+that callers are not surprised.
 
 \verysubsection{Grammar maintenance}
 The TOML inline table subset defined in \SectionRef{sec:param-overview}
@@ -411,21 +426,70 @@ These tests confirm that no existing behavior is broken.
   syntax (\texttt{GZIP}, \texttt{SHUF}, \texttt{FLET}, \texttt{UD=id,...}) produce
   output files byte-identical to those produced by the pre-feature version of
   \texttt{h5repack}.
-\item \texttt{reg-06} (\textbf{cross-version read}): Write a dataset
-  using a v3-registered plugin.  Read the file using a build of the
-  library that presents only a v2 version of the same plugin.  Verify
-  that the dataset is read correctly.  Because the v3 path writes
-  the plugin's \texttt{name} into the pipeline-message name slot
-  (already a v2 on-disk feature) and adds no trailing
-  \texttt{cd\_values} slots, the v2 plugin sees exactly the
-  \texttt{cd\_nelmts} it would have seen for an
-  \texttt{H5Pset\_filter}-written dataset.
+\item \texttt{reg-06} (\textbf{cross-plugin-version read}): Write a dataset
+  using a v3-registered plugin and a string configuration (producing a
+  version-3 pipeline message).  Read the file using a v3-capable build of
+  the library that presents only a v2 version of the same plugin.  Verify
+  that the dataset is read correctly: the stored configuration string
+  places no demands on the plugin, and the v2 plugin sees exactly the
+  \texttt{cd\_nelmts} and \texttt{cd\_values} that \texttt{set\_config}
+  produced, as it would for an \texttt{H5Pset\_filter}-written dataset.
+  (Readability by pre-v3 \emph{libraries} is covered by \texttt{fmt-04},
+  \SectionRef{sec:test-ondisk}.)
 \item \texttt{reg-07} (\textbf{DCPL encode/decode round-trip}): Create a DCPL, append a
   v3 filter via \texttt{H5Pappend\_filter} with a string parameter, then
   \texttt{H5Pencode} the DCPL to a buffer.  \texttt{H5Pdecode} the buffer into a new
-  DCPL.  Verify that the decoded DCPL contains identical filter ID, flags, and
-  \texttt{cd\_values}---confirming that \texttt{set\_config} is not re-invoked on
-  decode.
+  DCPL.  Verify that the decoded DCPL contains identical filter ID, flags,
+  \texttt{cd\_values}, \emph{and} stored configuration string
+  (\SectionRef{sec:dcpl-retention})---confirming that \texttt{set\_config} is
+  not re-invoked on decode and that the string survives serialisation.
+\end{itemize}
+
+
+\subsection{On-Disk Format Tests}
+\label{sec:test-ondisk}
+
+These tests exercise the version-3 pipeline message
+(\SectionRef{sec:pline-v3}) and its libver gating.
+
+\begin{itemize}
+\item \texttt{fmt-01} (\textbf{stored-string round-trip}): Create a dataset
+  with a filter configured via \texttt{H5Pappend\_filter} and a parameter
+  string containing a float with many significant digits (e.g.,
+  \texttt{rate = 3.5555555555555554}) and a quoted string value.  Close and
+  reopen the file; verify \texttt{H5Pget\_filter\_params\_by\_idx} returns
+  the input string byte-for-byte, with the plugin \emph{not} loaded
+  (e.g., \texttt{HDF5\_PLUGIN\_PATH} unset).
+\item \texttt{fmt-02} (\textbf{version selection, strings present}): With
+  default libver bounds, verify the pipeline message is written as
+  version~3 (via \texttt{h5debug} or direct message decode) when at least
+  one entry carries a stored string.
+\item \texttt{fmt-03} (\textbf{version downgrade, no strings}): Configure the
+  same pipeline via the raw \texttt{cd\_values} form only; verify the
+  message is written as version~2 and the file is byte-identical to the
+  output of an equivalent \texttt{H5Pset\_filter} program.
+\item \texttt{fmt-04} (\textbf{old-library read}): Open a file containing a
+  version-3 pipeline message with a pre-v3 library build; verify
+  dataset-open fails with a clear unknown-message-version error rather
+  than crashing or misreading.
+\item \texttt{fmt-05} (\textbf{libver-bound fallback}): Set
+  \texttt{H5Pset\_libver\_bounds} with an upper bound below the shipping
+  release, configure via string, and verify: the message is version~2, the
+  file is readable by old libraries, and
+  \texttt{H5Pget\_filter\_params\_by\_idx} on reopen returns the
+  \texttt{get\_config} reconstruction (not the original string).
+\item \texttt{fmt-06} (\textbf{\texttt{H5Ocopy}}): Copy a dataset carrying a
+  version-3 pipeline message to another file; verify the stored string is
+  preserved in the copy.
+\item \texttt{fmt-07} (\textbf{\texttt{H5Pmodify\_filter} clears the
+  string}): Append a filter via the string form, call
+  \texttt{H5Pmodify\_filter} with altered \texttt{cd\_values}, and verify
+  the stored string is cleared and introspection reverts to the
+  \texttt{get\_config} fallback (\SectionRef{sec:dcpl-retention}).
+\item \texttt{fmt-08} (\textbf{h5dump without plugin}): Run
+  \texttt{h5dump~-p} on a version-3 file on a system without the plugin
+  installed; verify \texttt{PARAMS\_STRING} shows the stored string
+  verbatim.
 \end{itemize}
 
 

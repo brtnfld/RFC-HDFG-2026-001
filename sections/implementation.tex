@@ -196,10 +196,11 @@ A further concern specific to floating-point parameters is
 CPU architectures (e.g., x86\_64 and ARM64), the conversion of a decimal
 string such as \texttt{"rate=3.55555555"} to a \texttt{double} may produce
 different bit patterns if the platform \texttt{strtod} implementations are
-not both correctly-rounded per IEEE~754.  Because the
-\texttt{cd\_values} packing convention is layout-deterministic only
-after the \texttt{double} value is in hand, a per-rank difference in
-the string-to-double conversion step propagates into
+not both correctly-rounded per IEEE~754.  The stored configuration string
+(\SectionRef{sec:pline-v3}) is identical across ranks by construction, but
+the \texttt{cd\_values} produced by each rank's \texttt{set\_config} become
+deterministic only after the string-to-\texttt{double} conversion is in
+hand, so a per-rank difference in that conversion step propagates into
 \texttt{cd\_values} and causes a DCPL mismatch at the collective
 \texttt{H5Dcreate} call.  Applications running on heterogeneous clusters
 with floating-point filter parameters should obtain a single parsed DCPL on
@@ -270,16 +271,23 @@ H5Pappend_filter(plist_id, H5Z_FILTER_DEFLATE,
 
 No changes to the VOL connector interface are required.
 \texttt{H5Pappend\_filter} resolves any parameter string into standard
-\texttt{cd\_values} before modifying the DCPL, so VOL connectors see filter
-entries indistinguishable from those set via \texttt{H5Pset\_filter}, and
-\texttt{H5Pget\_filter2} returns the same raw \texttt{cd\_values}.
+\texttt{cd\_values} before modifying the DCPL, so the execution-relevant
+view seen by VOL connectors --- filter ID, flags, \texttt{cd\_values} via
+\texttt{H5Pget\_filter2} --- is identical to an entry set via
+\texttt{H5Pset\_filter}.  The DCPL additionally retains the parameter
+string (\SectionRef{sec:dcpl-retention}); connectors that serialise
+property lists via \texttt{H5Pencode}/\texttt{H5Pdecode} carry it
+transparently, and connectors that ignore it lose only introspection
+fidelity, not correctness.
 
 Thin-client architectures that proxy dataset creation to a remote server
-(e.g., REST~VOL) and have no local copy of the filter plugin cannot recover
-the original parameter string after \texttt{H5Pappend\_filter} returns. This
-is the trade-off of resolving strings at property-list configuration time;
-such applications should use \texttt{H5Pset\_filter} with raw \texttt{cd\_values}
-or negotiate string-form parameters out-of-band with the server.
+(e.g., REST~VOL) can recover the original parameter string from the DCPL
+at any time via \texttt{H5Pget\_filter\_params\_by\_idx}
+(\SectionRef{sec:introspection}), since the string is retained rather than
+discarded after \texttt{set\_config} resolution.  An earlier draft of this
+design, which did not retain the string, required such clients to
+negotiate string-form parameters out-of-band; that limitation no longer
+applies.
 
 
 %% ======================================================================
@@ -336,8 +344,8 @@ accepted in prior major releases, no additional command-line flag is required.
 
 \verysubsection{Normative output format (with \texttt{-p})}
 
-When \texttt{-p} is active, for each filter in the pipeline that
-implements \texttt{get\_config}, a \texttt{PARAMS\_STRING} line is appended immediately
+When \texttt{-p} is active, for each filter in the pipeline, a
+\texttt{PARAMS\_STRING} line is appended immediately
 after the existing filter line, indented to the same level as other filter
 sub-fields:
 
@@ -350,18 +358,20 @@ sub-fields:
     }
 \end{verbatim}
 
-The value is the literal output of \texttt{get\_config}, enclosed in single
+The value is the literal output of
+\texttt{H5Pget\_filter\_params\_by\_idx}, which follows the source
+precedence of \SectionRef{sec:introspection}: the configuration string
+stored in the version-3 pipeline message when present (exact, and
+displayable \emph{without loading the plugin}), otherwise the plugin's
+\texttt{get\_config} reconstruction, otherwise the raw \texttt{cd\_values}
+formatted as a colon-separated list.  \texttt{PARAMS\_STRING} is therefore
+displayed for every filter entry.  The value is enclosed in single
 quotes rather than double quotes: the value is TOML text, whose own string
 values are double-quoted (e.g. \texttt{mode = "rate"}), so wrapping in
 single quotes avoids escaping the common case. A TOML double-quoted string
 value may itself contain a literal single quote (e.g. \texttt{"it's"}); if
-the string returned by \texttt{get\_config} contains one, it is escaped as
-\texttt{\textbackslash\textquotesingle} in the h5dump output. For filters
-that do not implement \texttt{get\_config}, \texttt{H5Pget\_filter\_params\_by\_idx}
-provides a fallback string that formats the raw \texttt{cd\_values} as a
-colon-separated list (see \SectionRef{sec:introspection}), so
-\texttt{PARAMS\_STRING} can be displayed for all filters regardless of
-whether they implement \texttt{get\_config}.
+the parameter string contains one, it is escaped as
+\texttt{\textbackslash\textquotesingle} in the h5dump output.
 
 The format change is confined to the \texttt{FILTERS} block; all other
 \texttt{h5dump} output is unaffected.
