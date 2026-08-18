@@ -1,0 +1,24 @@
+sections/testing.tex
+  s_2dcd805dd0ed75::t_6b4ad8c8e603dd 202-203
+sections/architecture.tex
+  s_2dcd805dd0ed75::t_6b4ad8c8e603dd 1000,1246-1247,1249-1251,1860,2361
+  s_2dcd805dd0ed75::t_c81d00dddad5d2 2309-2310,2312-2313,2379-2383,2385-2389,2391-2396,2479-2484
+support/revisions.tex
+  s_2dcd805dd0ed75::t_e08d882b40384f 8
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "5db2aecea8cacddd8703c7bc7476c0be2d8bb1d4",
+  "prompts": {},
+  "sessions": {
+    "s_2dcd805dd0ed75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0737e9df-fe8a-4672-8e5d-7c47d4d16c5e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
