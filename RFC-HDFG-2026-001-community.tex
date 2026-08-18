@@ -47,10 +47,13 @@ opaque to command-line tools and high-level language bindings.
 The proposed design introduces \texttt{H5Pappend\_filter}, which accepts a
 filter ID and either a raw \texttt{cd\_values} array or a TOML inline table
 parameter string~\cite{toml10}. String parameters are resolved into standard
-\texttt{cd\_values} at configuration time; the on-disk format is
-\textbf{unchanged}. Filters opt in via an updated plugin class
-(\texttt{H5Z\_class3\_t}) with two optional callbacks. Existing call sites
-compile and function without modification.
+\texttt{cd\_values} at configuration time, and the validated string is also
+stored verbatim in a new version~3 of the filter-pipeline message, so tools
+can read a filter's configuration without loading its plugin. Filters opt in
+via an updated plugin class (\texttt{H5Z\_class3\_t}) with two optional
+callbacks. Existing call sites compile and function without modification, and
+pipelines configured without parameter strings are still written in the old
+format.
 
 This edition is intended for community review. The full technical specification
 is available in the tagged release \texttt{v1.0-full}.
@@ -378,10 +381,12 @@ FILTERS {
 Existing v1/v2 plugins
   & Load and function without modification \\
 On-disk format
-  & \textbf{No change} — files written by \texttt{H5Pappend\_filter}
-    are byte-identical to equivalent \texttt{H5Pset\_filter} output \\
+  & New pipeline-message version~3, written only when a parameter string
+    is stored.  Without one, output is byte-identical to equivalent
+    \texttt{H5Pset\_filter} output \\
 Files from \texttt{H5Pappend\_filter}
-  & Readable by all existing HDF5 readers \\
+  & Readable by all existing readers unless a parameter string was stored;
+    \texttt{H5Pset\_libver\_bounds} forces the old format when needed \\
 ABI
   & New functions added; no existing signatures changed
     (minor version bump) \\
@@ -394,10 +399,12 @@ Fortran and Java bindings
 \end{tabularx}
 \end{center}
 
-A future RFC targeting HDF5~3.0 will explore typed on-disk parameter storage
-(\texttt{H5O\_PLINE\_VERSION\_3}).  The \texttt{cd\_values} packing convention
-introduced by this RFC is designed as its foundation; plugins that adopt it now
-will be forward-compatible without changes to their callbacks.
+Version~3 is defined as an extensible record: each filter entry ends in a list
+of typed, length-delimited extension blocks, and a reader skips blocks it does
+not recognise unless they are marked critical.  The stored parameter string is
+the first such block.  Follow-on work --- notably the large-configuration blob
+channel of RFC-HDFG-2026-003 --- therefore adds block types rather than further
+message versions, and remains readable by libraries that ship only this RFC.
 
 %% =================================================================
 \newpage

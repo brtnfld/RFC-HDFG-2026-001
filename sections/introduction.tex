@@ -19,15 +19,20 @@ This design covers:
 
 \begin{itemize}
 \item New public API functions in the \texttt{H5P} and \texttt{H5Z} modules for
-  filter configuration, including \texttt{H5Pappend\_filter} and the
-  \texttt{H5Z\_params\_t} tagged union type.
+  filter configuration, including \texttt{H5Pappend\_filter},
+  \texttt{H5Pmodify\_filter\_by\_idx}, and the \texttt{H5Z\_params\_t} tagged
+  union type.
 \item A new version of the filter plugin class (\texttt{H5Z\_class3\_t}) with optional
   string-configuration callbacks.
 \item An on-disk format change: a new version~3 of the filter-pipeline
   object-header message (\texttt{H5O\_PLINE\_VERSION\_3},
   \SectionRef{sec:pline-v3}) that persists the validated parameter string
   verbatim alongside \texttt{cd\_values}, gated by
-  \texttt{H5Pset\_libver\_bounds}.
+  \texttt{H5Pset\_libver\_bounds}.  Version~3 is defined as an extensible
+  record: each entry ends in a list of typed, length-delimited extension
+  blocks that unknown readers skip or reject by an explicit critical bit,
+  so subsequent per-entry additions do not require a version~4
+  (\SectionRef{sec:pline-v3-layout}).
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The Fortran and Java bindings that ship with HDF5
   (\SectionRef{sec:bindings}): a generic
@@ -35,7 +40,9 @@ This design covers:
   \texttt{h5pget\_filter\_params\_by\_idx\_f} and
   \texttt{h5zconfig\_get\_param\_f} for Fortran; two overloaded
   \texttt{H5Pappend\_filter} methods and
-  \texttt{H5Pget\_filter\_params\_by\_idx} for Java.
+  \texttt{H5Pget\_filter\_params\_by\_idx} for Java.  Both languages also
+  expose \texttt{H5Pmodify\_filter\_by\_idx} through the same pattern
+  (\SectionRef{sec:modify-bindings}).
 \end{itemize}
 
 This design does not cover:
@@ -47,10 +54,11 @@ This design does not cover:
 \item Data-attribute-dependent compression strategies (e.g., choosing different
   filters based on dimensionality or datatype), which could be layered on top
   of this feature in the future.
-\item A string-based equivalent of \texttt{H5Pmodify\_filter}. Users who need
-  to update the parameters of an existing filter entry in a copied DCPL should
-  retrieve the current \texttt{cd\_values} via \texttt{H5Pget\_filter\_by\_id2}
-  and call \texttt{H5Pmodify\_filter} directly.
+\item Deprecating or changing \texttt{H5Pmodify\_filter}.  Its raw
+  \texttt{cd\_values} semantics are unchanged, including the fact that it
+  clears any stored configuration string.  Callers who want an edit that
+  preserves the string use \texttt{H5Pmodify\_filter\_by\_idx}
+  (\SectionRef{sec:modify-filter}), which this RFC adds.
 \item VFD and VOL connector string configuration.  The TOML-based parameter
   string grammar defined here is designed to extend naturally to VFD/VOL
   configuration, and \SectionRef{sec:vfd-use-cases} documents that design

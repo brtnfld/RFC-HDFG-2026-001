@@ -170,6 +170,7 @@ table insertion---would benefit throughput if the library moves toward
 finer-grained concurrency.
 
 \subsection{Parallel HDF5 (MPI) Considerations}
+\label{sec:parallel}
 
 In Parallel HDF5, all MPI ranks participating in collective dataset creation
 present identical dataset creation property lists (DCPLs). Non-deterministic
@@ -619,5 +620,21 @@ H5.H5Pappend_filter(plist, HDF5Constants.H5Z_FILTER_DEFLATE,
                          new int[]{ 6 });
 \end{minted}
 
+
+\subsection{\texttt{H5Pmodify\_filter\_by\_idx} in the Bindings}
+\label{sec:modify-bindings}
+
+\texttt{H5Pmodify\_filter\_by\_idx} (\SectionRef{sec:modify-filter}) takes
+the same \texttt{H5Z\_params\_t} as \texttt{H5Pappend\_filter} and needs no
+new binding machinery.  Fortran gains
+\texttt{h5pmodify\_filter\_by\_idx\_f} as a generic interface over the same
+two specific procedures --- one per calling mode --- backed by two more
+thin \texttt{H5Zf.c} helpers built on the identical field-by-field struct
+construction shown above.  Java gains two overloads of
+\texttt{H5Pmodify\_filter\_by\_idx}, taking a \texttt{String} and an
+\texttt{int[]} respectively, mirroring the \texttt{H5Pappend\_filter}
+overloads.  In both languages the additional argument relative to append is
+the \texttt{filter\_idx}, and in both the raw form clears any stored
+configuration string exactly as the C API does.
 
 \end{document}

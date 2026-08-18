@@ -1,5 +1,6 @@
 *.tex~
 _minted/
+_minted-*/
 *.aux
 *.bbl
 *.bcf

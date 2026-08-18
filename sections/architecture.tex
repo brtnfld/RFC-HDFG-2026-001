@@ -932,13 +932,23 @@ typedef struct H5Z_class3_t {
   nbit, scale-offset), the V2 encoder and decoder
   (\texttt{H5O\_\_pline\_encode} / \texttt{H5O\_\_pline\_decode}) omit
   the name length field and name bytes entirely; no slot is reserved.
-  Consequently, \texttt{name} for built-ins is \emph{not} persisted to
-  disk.  This is harmless: built-in filters are unconditionally
-  present in every HDF5 build, so the runtime registry always supplies
-  their \texttt{name} to \texttt{H5Pget\_filter2}, and the ``plugin
-  unloaded, read name from disk'' fallback path never engages for
-  them.  The disk-slot mechanism is therefore the persistence channel
-  for third-party filters; built-ins rely on the runtime registry only.
+  Consequently \texttt{name} for built-ins has no version-2 slot on
+  disk.  For the runtime API this is harmless: built-in filters are
+  present in every HDF5 build, so the registry always supplies their
+  \texttt{name} to \texttt{H5Pget\_filter2}, and the ``plugin unloaded,
+  read name from disk'' fallback never engages for them.
+
+  It stops being harmless once configuration strings are persisted.  A
+  tool reading a version-3 file without the HDF5 library --- or any
+  reader working directly from the message bytes --- recovers
+  \texttt{level~=~6} for a built-in entry with no name attached to it,
+  which undercuts the self-describing property that motivated storing
+  the string.  Version~3 therefore carries the canonical name for
+  built-in entries in an \texttt{H5O\_PLINE\_EXT\_NAME} extension block
+  (\SectionRef{sec:pline-v3-layout}), written only when the entry also
+  stores a configuration string (\SectionRef{sec:config-storage-rules}).
+  Third-party filters keep using the version-2 slot, so the name is
+  never written twice and the version-2 encoding is untouched.
 
   \textbf{Pre-existing \texttt{H5Pequal} behavior.}  The pipeline
   property's comparison callback (\texttt{H5P\_\_pline\_cmp}) does a
@@ -1370,9 +1380,17 @@ True soft-failure semantics for missing name-based filters require a
 format extension capable of storing name-only pipeline entries that
 carry a canonical name without a resolved numeric \texttt{id}.  The
 version-3 pipeline message defined by this RFC
-(\SectionRef{sec:pline-v3}) does \emph{not} add such entries --- every
-entry still requires a numeric \texttt{id} --- so this remains future
-work for a subsequent message revision.
+(\SectionRef{sec:pline-v3}) does not define such entries --- every entry
+it writes still carries a numeric \texttt{id} --- but it does define the
+framing they need.  A name-only entry is a critical extension block: an
+entry whose identity lives in the block rather than in the
+\texttt{filter\_id} field cannot be interpreted by a reader that ignores
+the block, which is exactly what the critical bit expresses
+(\SectionRef{sec:pline-v3-layout}).  When that mechanism is specified,
+it therefore arrives as a new block type within version~3 --- readable
+by libraries that shipped this RFC, which will reject precisely the
+name-only entries and nothing else --- rather than as a version~4 that
+those libraries could not open at all.
 Such entries would be resolved at open time on systems where the
 plugin is installed and gracefully skipped where it is not.  Until
 that format is available, callers that need optional name-based
@@ -1502,9 +1520,10 @@ Passing \texttt{NULL} for \texttt{params} is equivalent to
 filters that take no parameters.
 
 The name \texttt{H5Pappend\_filter} reflects its semantics: each call appends
-a new entry to the filter pipeline.  Modifying the parameters of an existing
-pipeline entry is handled by \texttt{H5Pmodify\_filter} (see the out-of-scope
-note in \SectionRef{sec:intro}).
+a new entry to the filter pipeline.  Changing the parameters of an entry that
+is already present is handled by \texttt{H5Pmodify\_filter\_by\_idx}
+(\SectionRef{sec:modify-filter}), which accepts the same
+\texttt{H5Z\_params\_t} and preserves the entry's position.
 
 When \texttt{type} is \texttt{H5Z\_PARAMS\_CDVALUES}, the function behaves
 identically to \texttt{H5Pset\_filter}: the \texttt{cd\_values} array is stored
@@ -1640,6 +1659,98 @@ H5Pappend_filter(plist, H5Z_FILTER_DEFLATE,    H5Z_FLAG_MANDATORY,
 H5Pappend_filter(plist, H5Z_FILTER_FLETCHER32, H5Z_FLAG_MANDATORY, NULL);
 \end{minted}
 
+
+\subsection{Modifying an Existing Entry}
+\label{sec:modify-filter}
+
+\begin{minted}{c}
+herr_t H5Pmodify_filter_by_idx(
+    hid_t                plist_id,
+    unsigned             filter_idx,
+    unsigned             flags,
+    const H5Z_params_t  *params
+);
+\end{minted}
+
+\verysubsection{Description}
+Replaces the configuration of the filter already at position
+\texttt{filter\_idx} in \texttt{plist\_id}'s pipeline, leaving its position
+and filter ID unchanged.  \texttt{params} is interpreted exactly as
+\texttt{H5Pappend\_filter} interprets it (\SectionRef{sec:append-filter}):
+
+\begin{itemize}
+\item \texttt{H5Z\_PARAMS\_STRING}: the string is validated and resolved
+  through the filter's \texttt{set\_config} callback --- the same two-pass
+  protocol \texttt{H5Pappend\_filter} uses --- and both the resulting
+  \texttt{cd\_values} and the verbatim string replace the entry's current
+  ones.  The entry keeps a stored configuration string.
+\item \texttt{H5Z\_PARAMS\_CDVALUES}: the \texttt{cd\_values} array
+  replaces the entry's current one and any stored string is cleared,
+  matching \texttt{H5Pmodify\_filter} exactly
+  (\SectionRef{sec:dcpl-retention}).
+\end{itemize}
+
+\verysubsection{Why this function exists}
+
+Without it, the only way to change a filter's parameters is
+\texttt{H5Pmodify\_filter}, which takes raw \texttt{cd\_values} and
+therefore clears the stored string.  That makes the documented editing
+pattern --- read \texttt{cd\_values}, mutate, write back --- silently
+downgrade an entry from an exact, plugin-free configuration string to
+\texttt{get\_config} reconstruction, with no error and no diagnostic.  The
+loss is invisible until someone inspects the file on a machine without the
+plugin installed and finds a dataset that reports less than its siblings.
+
+The asymmetry is the problem.  Expressing a configuration as
+\texttt{"level = 6"} at append time produces a self-describing entry;
+expressing the same intent as an edit produces one that is not, and no API
+short of \texttt{H5Premove\_filter} plus a fresh \texttt{H5Pappend\_filter}
+restores it.  Remove-and-re-append is not an acceptable substitute: it
+moves the entry to the end of the pipeline, silently changing filter order
+and, for order-sensitive pipelines such as shuffle-then-deflate, the
+compressed result.  A caller should not have to choose between preserving
+introspectability and preserving pipeline order.
+
+\verysubsection{Why by index, not by filter ID}
+
+\texttt{H5Pmodify\_filter} addresses entries by filter ID and resolves to
+the \emph{first} matching entry.  HDF5 pipelines legally contain the same
+filter ID more than once (\SectionRef{sec:append-filter}), so an
+ID-addressed modify silently edits the wrong entry in exactly those
+pipelines.  This function indexes instead, which removes the ambiguity and
+matches \texttt{H5Pget\_filter\_params\_by\_idx}
+(\SectionRef{sec:introspection}): the index a caller reads a configuration
+with is the index it writes one back with.
+
+\verysubsection{Parameters}
+\begin{itemize}
+\item \texttt{plist\_id} --- Dataset or group creation property list.
+\item \texttt{filter\_idx} --- Zero-based position in the pipeline, in the
+  same numbering \texttt{H5Pget\_filter2} and
+  \texttt{H5Pget\_filter\_params\_by\_idx} use.
+\item \texttt{flags} --- Replaces the entry's flags, subject to the same
+  \texttt{set\_config} adjustment rules as \texttt{H5Pappend\_filter}
+  (\SectionRef{sec:set-config-template}); passing the value previously
+  returned by \texttt{H5Pget\_filter2} leaves them effectively unchanged.
+\item \texttt{params} --- New configuration, or \texttt{NULL} for a
+  parameterless filter.
+\end{itemize}
+
+\verysubsection{Returns and errors}
+Returns a non-negative value on success, negative on failure.  It is an
+error if \texttt{filter\_idx} is out of range, if \texttt{params} uses
+\texttt{H5Z\_PARAMS\_STRING} for a filter whose registered class does not
+implement \texttt{set\_config}, or if \texttt{set\_config} rejects the
+string.  On any failure the entry is left exactly as it was: the new
+\texttt{cd\_values} and string are staged and swapped in only after
+\texttt{set\_config} succeeds, so a rejected edit cannot leave an entry
+holding a string that disagrees with its \texttt{cd\_values}.
+
+\verysubsection{Relationship to \texttt{H5Pmodify\_filter}}
+\texttt{H5Pmodify\_filter} is unchanged and undeprecated.  Existing callers
+keep working, including the read-mutate-write pattern; the only difference
+is that its string-clearing behaviour is now a documented consequence with
+a documented alternative rather than the only available path.
 
 \subsection{Pipeline Introspection}
 \label{sec:introspection}
@@ -1898,6 +2009,14 @@ filter callback.  Because the string is persisted independently,
 layout stays a private matter between a filter's \texttt{set\_config}
 and its execution callback (\SectionRef{sec:cd-packing-convention}).
 
+Because a format change is being made, it is made once and made
+extensible: the version-3 entry ends in a list of self-describing
+extension blocks (\SectionRef{sec:pline-v3-layout}), of which the
+configuration string is the first.  Later attachments to a pipeline entry
+--- the blob channel of RFC-HDFG-2026-003, name-only entries for
+name-based lookup --- are new block types read by any version-3 library,
+not new message versions that older libraries must reject wholesale.
+
 Storing the string directly removes the two limitations that shaped
 earlier drafts of this design, which were constrained to introduce no
 format change:
@@ -1928,6 +2047,17 @@ format change:
   string is stored.  Introspection for such entries falls back to
   \texttt{get\_config} reconstruction exactly as for files written before
   this RFC (\SectionRef{sec:introspection}).
+\item \textbf{Canonical name.}  An entry that stores a configuration
+  string also stores the filter's canonical name if --- and only if ---
+  the version-2 name slot cannot carry it, i.e.\ for HDF~Group built-ins
+  (\texttt{id < 256}), whose name the version-2 encoder omits.  For
+  third-party filters the version-2 slot already holds the name, so no
+  \texttt{H5O\_PLINE\_EXT\_NAME} block is written and the name is never
+  stored twice.  Entries with no stored string get no name block either:
+  the pairing is deliberate, since a name without a configuration adds
+  nothing a loaded plugin or the numeric ID does not already supply, and
+  writing one unconditionally would push every filtered file to
+  version~3 (\SectionRef{sec:pline-v3-gating}).
 \end{itemize}
 
 \verysubsection{Why the verbatim user string, and not a normalised or
@@ -1971,17 +2101,40 @@ All property-list machinery handles it uniformly:
 \item \texttt{H5Pmodify\_filter} \emph{clears} the stored string for the
   modified entry: the caller has replaced \texttt{cd\_values} directly, so
   the string no longer describes the entry's configuration.  Introspection
-  for that entry reverts to \texttt{get\_config} fallback.
+  for that entry reverts to \texttt{get\_config} fallback.  Clearing is
+  mandatory --- retaining a string that disagrees with the entry's
+  \texttt{cd\_values} would make introspection actively wrong rather than
+  merely approximate --- which is why
+  \texttt{H5Pmodify\_filter\_by\_idx} (\SectionRef{sec:modify-filter})
+  exists: it is the edit path that supplies a replacement string instead of
+  discarding the old one.  Its \texttt{H5Z\_PARAMS\_CDVALUES} form clears
+  the string for the same reason and on the same terms.
 \item \texttt{H5Premove\_filter} discards the string with the entry.
 \item \texttt{H5Ocopy} deep-copies the string alongside \texttt{cd\_values}
   when copying a dataset's pipeline message.
+\item \texttt{H5Pequal} (via the pipeline property's comparison callback
+  \texttt{H5P\_\_pline\_cmp}) does \emph{not} compare stored configuration
+  strings.  Two entries with identical \texttt{id}, \texttt{flags}, and
+  \texttt{cd\_values} compare equal whether or not either carries a
+  string, and regardless of the strings' contents.  The rationale is that
+  \texttt{cd\_values} determine I/O behaviour completely: two pipelines
+  that agree on them will filter data identically, and reporting them
+  unequal because one was configured as \texttt{"level=6"} and the other
+  as \texttt{"level = 6"} would make \texttt{H5Pequal} sensitive to
+  formatting.  This also keeps a round-tripped DCPL --- encoded, decoded,
+  or read back from a file written under a restrictive libver bound ---
+  equal to the original.  It is consistent with the existing treatment of
+  \texttt{cd\_nelmts}-equivalent pipelines and deliberately inconsistent
+  with the name slot, whose \texttt{strcmp} is pre-existing behaviour this
+  RFC does not change (\SectionRef{sec:class3-struct}).
 \end{itemize}
 
 \subsection{Pipeline Message Version 3}
 \label{sec:pline-v3-layout}
 
 Each filter entry in the version-3 pipeline message carries the existing
-version-2 fields followed by an optional configuration-string block:
+version-2 fields followed by a list of self-describing \emph{extension
+blocks}:
 
 \begin{Verbatim}[fontsize=\scriptsize]
 [existing v2 per-filter layout]
@@ -1992,18 +2145,150 @@ version-2 fields followed by an optional configuration-string block:
   UINT16  cd_nelmts
   UINT32  cd_values[cd_nelmts]
 
-[new in v3]
-  UINT16  config_length      (byte length of the string; 0 = no string)
-  char    config[config_length]   (UTF-8, not NUL-terminated)
+[new in v3: per-entry extension block list]
+  UINT16  ext_count          (number of blocks that follow; 0 = none)
+
+  ext_count repetitions of:
+    UINT16  ext_type         (registered block type; see table below)
+    UINT8   ext_flags        (bit 0 = critical; bits 1-7 reserved, zero)
+    UINT8   reserved         (must be written as zero)
+    UINT32  ext_length       (byte length of ext_data)
+    uint8   ext_data[ext_length]
 \end{Verbatim}
 
-\texttt{config\_length} is bounded by \texttt{H5Z\_CONFIG\_STRING\_MAX}
-(4096, \SectionRef{sec:param-overview}), which fits comfortably in the
-16-bit field.  Configuration data too large for an inline string is the
-domain of the follow-on blob RFC (\SectionRef{sec:blob-future}).  All
-other message fields, including the name-slot rules for built-in versus
-third-party filters (\SectionRef{sec:class3-struct}), are unchanged from
-version~2.
+All other message fields --- including the version-2 name-slot rules for
+built-in versus third-party filters (\SectionRef{sec:class3-struct}) ---
+are unchanged from version~2.  An entry with \texttt{ext\_count = 0} is a
+version-2 entry with two extra bytes.
+
+\verysubsection{Why a block list rather than a fixed field}
+
+The obvious encoding for this RFC in isolation appends two fields to each
+version-2 entry: a length and the configuration string.  That encoding is
+rejected because the configuration string is demonstrably not the last
+thing that will need to be attached to a pipeline entry.  Two further
+attachments are already specified or designed --- the binary blob channel
+of RFC-HDFG-2026-003 (\SectionRef{sec:blob-future}) and the name-only
+pipeline entries that soft-failure semantics for name-based filter lookup
+require (\SectionRef{sec:future-name-lookup}) --- and under a fixed
+layout each one costs a further message version.  Version~4 and version~5
+would each be a fresh compatibility cliff: a library that shipped
+version~3 support could not read a file that used only the later feature,
+even though it understands everything else in the message.
+
+Since this RFC pays for a format change once, it pays for an extensible
+one.  A version-3 reader parses any block it does not recognise by length
+alone and moves on, so a feature added later is readable by every library
+that shipped version-3 support --- not only by libraries that shipped the
+later feature.  The follow-on work named above therefore lands as new
+block types within version~3.  No version~4 of the filter-pipeline message
+is anticipated.
+
+\verysubsection{Unknown block handling (normative)}
+
+Bit~0 of \texttt{ext\_flags} is the \emph{critical} bit.  It tells a
+reader that does not recognise \texttt{ext\_type} what to do:
+
+\begin{itemize}
+\item \textbf{Critical clear (0).}  Skip \texttt{ext\_length} bytes and
+  continue.  The entry stays fully usable; only the information carried by
+  that one block is unavailable, and introspection for it degrades exactly
+  as it does for a version-2 entry.  Blocks carrying descriptive or
+  introspective data --- both types defined by this RFC --- clear the bit.
+\item \textbf{Critical set (1).}  Fail the dataset open with an error
+  naming the unsupported block type and filter ID.  The reader must
+  \emph{not} skip the block and proceed to filter data: the entry's
+  configuration is incomplete without it, and falling back to
+  \texttt{cd\_values} alone would silently produce wrong results.  A
+  configuration payload stored out of line (\SectionRef{sec:blob-future})
+  is the motivating case.
+\end{itemize}
+
+The critical bit is a property of the block type, fixed by whichever
+specification defines that type; it is not a per-file choice, and a given
+\texttt{ext\_type} is always written with the same value of bit~0.  The
+bit exists so that a reader can make the correct decision about a type it
+has never heard of --- which is the whole point of the framing.
+
+Two further rules keep the list unambiguous.  Blocks are written in
+ascending \texttt{ext\_type} order, so an encoder produces byte-identical
+output for a given entry regardless of the order in which the library
+populated it (this matters for the collective-write determinism
+requirement in \SectionRef{sec:parallel}).  A block type not marked as
+repeatable by its defining specification appears at most once per entry;
+a decoder that sees a duplicate rejects the message as malformed rather
+than silently taking the first or last.
+
+\verysubsection{Registered block types}
+
+Type codes are assigned centrally by The HDF~Group and recorded in
+\texttt{H5Oprivate.h}:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Code} & \textbf{Name} & \textbf{Critical} & \textbf{Defined by} \\
+\midrule
+\texttt{0x0001} & \texttt{H5O\_PLINE\_EXT\_CONFIG} & no  & this RFC \\
+\texttt{0x0002} & \texttt{H5O\_PLINE\_EXT\_NAME}   & no  & this RFC \\
+\texttt{0x0003} & \texttt{H5O\_PLINE\_EXT\_BLOB}   & yes & reserved for RFC-HDFG-2026-003 \\
+\texttt{0x0004}--\texttt{0xFFFF} & --- & --- & unassigned \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There is deliberately no private or experimental range.  A file carrying a
+privately chosen code is indistinguishable from one carrying a code
+assigned officially later, and the resulting collision would be
+undiagnosable in the field --- the reader would parse foreign bytes as a
+type it thinks it knows.  Projects that need a block type request one; the
+cost of assignment is a line in a header.
+
+\texttt{H5O\_PLINE\_EXT\_CONFIG} carries the verbatim parameter string as
+UTF-8, not NUL-terminated and with no trailing NUL counted in
+\texttt{ext\_length}.  At most one appears per entry.
+
+\texttt{H5O\_PLINE\_EXT\_NAME} carries the filter's canonical name, also
+UTF-8 and not NUL-terminated.  It exists because the version-2 name slot
+is present only for filters in the third-party ID range
+(\SectionRef{sec:class3-struct}): for the HDF~Group built-ins
+(\texttt{id < 256}) the version-2 encoder omits the name field entirely.
+
+The beneficiary is specifically a reader that does \emph{not} use the HDF5
+library.  Any libhdf5-based tool, \texttt{h5dump} included, already knows
+every built-in filter's name --- built-ins are compiled in, so the runtime
+registry supplies the name whether or not anything is on disk, and no
+plugin is involved to be missing.  For those tools this block is redundant.
+It matters to the growing set of readers that parse HDF5 files directly
+--- independent implementations in other languages, and metadata
+extractors that index datasets without opening them through libhdf5.  For
+those, a version-3 built-in entry would otherwise yield
+\texttt{level~=~6} with no indication of what it configures, which is a
+thin version of self-describing.
+
+The cost is bounded and paid only where the benefit applies: eight bytes
+of framing plus the name, on built-in entries that already store a
+configuration string, in files already committed to version~3.  Entries
+without a stored string, and third-party filters whose version-2 slot
+already carries the name, pay nothing
+(\SectionRef{sec:config-storage-rules}).
+
+\verysubsection{Size bounds}
+
+\texttt{ext\_length} is 32-bit so that the framing is never itself the
+binding limit on a future block type.  The effective ceiling is imposed
+from outside: the object-header message size field is 16-bit, so an entire
+pipeline message --- every entry, every block --- must fit within
+64\,KiB.  A payload larger than that cannot live inline in any version of
+this message and must be stored elsewhere in the file and referenced from
+a block, which is precisely the shape the blob channel takes
+(\SectionRef{sec:blob-future}).
+
+One consequence worth stating plainly: \texttt{H5Z\_CONFIG\_STRING\_MAX}
+(4096, \SectionRef{sec:param-overview}) is now an API-level policy cap
+alone.  The earlier 16-bit \texttt{config\_length} field made 4096 look
+format-imposed; it never was, and under this framing the limit can be
+raised later without touching the on-disk encoding.
 
 \subsection{When Version 3 Is Written}
 \label{sec:pline-v3-gating}
@@ -2014,16 +2299,15 @@ encode time (e.g., \texttt{H5Dcreate}), following the standard
 format feature:
 
 \begin{enumerate}
-\item If \emph{no} entry in the pipeline has a stored configuration
-  string, the library writes version~2 (or version~1, per the existing
-  rules) --- byte-identical to the output of an equivalent
-  \texttt{H5Pset\_filter} program, at any libver bound.
-\item If at least one entry has a stored string \emph{and} the file's
-  libver upper bound admits the release that ships this feature
-  (provisionally \texttt{H5F\_LIBVER\_V200}; the constant tracks the
-  actual shipping release), the library writes version~3.
-\item If a stored string is present but the libver upper bound is below
-  that release, the library writes version~2 and omits the strings.  The
+\item If \emph{no} entry in the pipeline carries an extension block, the
+  library writes version~2 (or version~1, per the existing rules) ---
+  byte-identical to the output of an equivalent \texttt{H5Pset\_filter}
+  program, at any libver bound.
+\item If at least one entry carries an extension block \emph{and} the
+  file's libver upper bound admits version~3 (the bound is a release-timing
+  choice, resolved below), the library writes version~3.
+\item If an extension block is present but the libver upper bound is below
+  that release, the library writes version~2 and omits the blocks.  The
   file is byte-identical to pre-RFC output; execution semantics are
   unaffected because \texttt{cd\_values} are complete on their own, and
   introspection degrades to the \texttt{get\_config} fallback.  The
@@ -2037,6 +2321,81 @@ existing programs, and new programs that use only the raw
 \texttt{cd\_values} form, produce files indistinguishable from today's.
 Only callers who opt into string configuration --- and do not bound the
 file format below the shipping release --- produce version-3 messages.
+
+Stating the rules in terms of extension blocks rather than stored strings
+is what lets a later block type inherit this gating unchanged.  A future
+feature that attaches a block to an entry makes that pipeline message
+version~3 by the same Rule~2, and is suppressed by the same Rule~3 under a
+restrictive libver bound, without any new gating logic.  Rule~3's silent
+downgrade is safe only for non-critical blocks, however: a critical block
+(\SectionRef{sec:pline-v3-layout}) carries information the entry cannot be
+interpreted without, so dropping it would corrupt the caller's intent
+rather than merely degrade introspection.  The specification that defines
+a critical block type must therefore state that a restrictive libver bound
+is a hard error for entries carrying it, not a silent downgrade.  Both
+block types defined by this RFC are non-critical and downgrade silently.
+
+\verysubsection{Where the gating lives}
+
+The three rules above are not a new mechanism.  HDF5 already selects the
+pipeline-message version through a table and a setter in
+\texttt{src/H5Opline.c}:
+
+\begin{minted}{c}
+/* Existing: maps each libver bound to the maximum pipeline message
+ * version it admits.  One row per H5F_libver_t. */
+static const unsigned H5O_pline_ver_bounds[] = {
+    H5O_PLINE_VERSION_1,       /* H5F_LIBVER_EARLIEST */
+    H5O_PLINE_VERSION_2,       /* H5F_LIBVER_V18     */
+    H5O_PLINE_VERSION_2,       /* H5F_LIBVER_V110    */
+    H5O_PLINE_VERSION_2,       /* H5F_LIBVER_V112    */
+    H5O_PLINE_VERSION_2,       /* H5F_LIBVER_V114    */
+    H5O_PLINE_VERSION_2,       /* H5F_LIBVER_V200    */
+    H5O_PLINE_VERSION_LATEST   /* H5F_LIBVER_LATEST  */
+};
+\end{minted}
+
+\texttt{H5O\_\_pline\_set\_version()} raises the message version to the
+file's \emph{low} bound, then errors if the result exceeds the \emph{high}
+bound (\texttt{``Filter pipeline version out of bounds''}).  This RFC
+changes that function in exactly two ways:
+
+\begin{enumerate}
+\item The version required by content is computed as version~3 if any
+  entry will emit at least one extension block, and by the existing rules
+  otherwise.
+\item When the required version exceeds the high bound, the function no
+  longer errors unconditionally.  It first drops the blocks that are
+  droppable --- every non-critical block --- and recomputes.  If the
+  requirement falls to version~2, encoding proceeds with the blocks
+  omitted (Rule~3).  If a critical block remains, the existing
+  out-of-bounds error stands, because that block cannot be dropped
+  without changing what the file means.
+\end{enumerate}
+
+The row that admits version~3 belongs to whichever release ships this
+feature, and this RFC deliberately does not hard-code which one.  Note
+that \texttt{H5F\_LIBVER\_V200} already exists and is currently equal to
+\texttt{H5F\_LIBVER\_LATEST}; this RFC introduces no libver constant of
+its own.  Two cases:
+
+\begin{itemize}
+\item \textbf{The 2.0 format is not yet frozen.}  Change
+  \texttt{H5O\_pline\_ver\_bounds[H5F\_LIBVER\_V200]} to
+  \texttt{H5O\_PLINE\_VERSION\_3} and bump
+  \texttt{H5O\_PLINE\_VERSION\_LATEST} to~3.  No new constant, no new row.
+\item \textbf{The 2.0 format is frozen.}  Leave the \texttt{V200} row at
+  version~2 --- changing it would retroactively alter what a bound already
+  in released files admits --- and add the version~3 row against the
+  next format bound (\texttt{H5F\_LIBVER\_V300}), which that release
+  introduces for its own reasons.
+\end{itemize}
+
+The choice is a release-timing question for the library team, not a design
+question: both cases use the same table, the same setter, and the same
+three rules above.  Everything else in this RFC is written against ``the
+bound that admits version~3'' rather than against a specific constant, so
+the outcome changes one table row and nothing else.
 
 \subsection{Reader Compatibility}
 \label{sec:pline-v3-readers}
@@ -2055,6 +2414,26 @@ plugins: a dataset whose pipeline message is version~3 is filtered by v2
 plugins exactly as before, since \texttt{cd\_nelmts} and
 \texttt{cd\_values} are precisely what \texttt{set\_config} (or the
 caller) produced.
+
+\verysubsection{Forward compatibility within version~3}
+
+The version check above is a cliff, and it is the only one this design
+accepts.  Beyond it, compatibility is per-block rather than per-version.
+A library that ships version-3 support reads every later version-3 file:
+block types it knows it interprets, non-critical block types it has never
+heard of it skips by length, and critical block types it does not
+recognise it rejects with a specific error.  Concretely, a library
+shipping only this RFC opens a file written by a library that also ships
+the blob follow-on: it reads the configuration strings and names, and ---
+because the blob block is critical --- fails cleanly and informatively on
+exactly those datasets whose filters genuinely need the blob, rather than
+failing on the whole file or, worse, filtering data with an incomplete
+configuration.
+
+This is the property that a fixed-field layout could not provide: there,
+the same file would have been version~4, and the version check would have
+rejected it outright even though the reader understood everything in it
+that mattered.
 
 \subsection{Superseded Alternative: Per-Slot Type Tags}
 \label{sec:type-tags-superseded}
@@ -2084,8 +2463,30 @@ during the community review of this RFC (HDFGroup/hdf5\_plugins\#255; see
 follow-on RFC (RFC-HDFG-2026-003), which specifies a binary blob channel:
 three new \texttt{H5Z\_class3\_t} callbacks
 (\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}), a new
-\texttt{H5Pappend\_filter\_blob} API, and an on-disk format extension to
-carry the blob alongside the dataset's pipeline message.  Because
+\texttt{H5Pappend\_filter\_blob} API, and on-disk storage for the blob
+alongside the dataset's pipeline message.
+
+That storage is the first consumer of the extension framing defined here.
+The blob bytes live in a global-heap object; the pipeline entry carries
+only a locator, as the reserved critical block type
+\texttt{H5O\_PLINE\_EXT\_BLOB} (0x0003,
+\SectionRef{sec:pline-v3-layout}).  Three consequences follow, and they
+are the reason the framing is worth its two-byte-per-entry overhead:
+
+\begin{itemize}
+\item \textbf{No version~4.}  RFC-HDFG-2026-003 adds a block type, not a
+  message version.  It inherits this RFC's encoder/decoder branching,
+  \texttt{H5O\_pline\_ver\_bounds[]} row, libver gating, and copy/delete
+  handling unchanged.
+\item \textbf{Independent release timing.}  The blob feature need not ship
+  in the same release as the version-3 message.  Its \emph{callbacks} must
+  ship with its \emph{block type} --- they are useless apart --- but
+  neither is coupled to the release that introduces version~3.
+\item \textbf{Safe partial readers.}  A library with version~3 but without
+  blob support reads the configuration strings in such a file and rejects
+  only the blob-bearing entries, by the critical-bit rule
+  (\SectionRef{sec:pline-v3-readers}).
+\end{itemize}  Because
 \texttt{H5Z\_class3\_t} has not yet shipped as of this RFC, no fields are
 reserved for it here; an earlier draft reserved three \texttt{void~*}
 placeholders for this purpose, but that approach was dropped because

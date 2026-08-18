@@ -10,6 +10,16 @@
 
 The following items were raised during review and have been resolved.
 
+\begin{notebox}
+\textbf{Status.} This section is not currently included in the built
+document (its \texttt{\textbackslash subfile} line in
+\texttt{RFC-HDFG-2026-001.tex} is commented out): the decisions it records
+were folded into the body sections as of revision~v2, and the body is
+normative wherever the two differ.  It is retained as a decision-history
+record.  Entries below have been kept in sync with the body through
+revision~v6.
+\end{notebox}
+
 \verysubsection{R1}
 Introspection API naming and signature. The introspection API went through
 several iterations: (1) a single \texttt{ssize\_t}-returning function with two
@@ -194,10 +204,12 @@ See \SectionRef{sec:param-overview}.
 \texttt{h5repack} \texttt{UD=} disambiguation. When parsing the new
 \textit{filtername}\texttt{=}\textit{params} syntax, a filter name of exactly \texttt{UD}
 (case-insensitive) is ambiguous because the legacy \texttt{UD=id,flags,n,v1,...}
-syntax uses the same prefix. A precedence rule is added: if the text
-following \texttt{UD=} begins with a decimal digit, the specification is parsed
-as the legacy syntax; otherwise it is treated as new-syntax where \texttt{UD} is a
-registered canonical filter name. See \SectionRef{sec:cli-tools}.
+syntax uses the same prefix.  \emph{Resolved differently in the body:} no
+name-based \texttt{-f} syntax was adopted, so the ambiguity never arises and
+the digit-precedence rule was dropped.  \texttt{UD=} always takes a numeric
+filter ID and flags first; the new form only replaces the trailing raw
+\texttt{cd\_values} sequence with a parameter string
+(\texttt{UD=32013,0,mode="rate"}).  See \SectionRef{sec:cli-tools}.
 
 \verysubsection{R27}
 \texttt{h5dump} \texttt{PARAMS\_STRING} format change. The addition of
@@ -282,16 +294,21 @@ also considered and rejected as redundant.  See
 discussion at \SectionRef{sec:future-name-lookup}.
 
 \verysubsection{R35}
-No on-disk format change.  Files written via \texttt{H5Pappend\_filter} are
-byte-identical to \texttt{H5Pset\_filter} output at any libver bound.  The
-parameter string is resolved to \texttt{cd\_values} at API call time and is
-not stored on disk.  The known limitation---that \texttt{cd\_values} are opaque
-to tools that cannot load the plugin---is documented but does not affect filter
-correctness or interoperability.  A future RFC targeting HDF5~3.0 will address
-typed on-disk storage; the \texttt{cd\_values} packing convention defined in
-this RFC (\SectionRef{sec:cd-packing-convention}) is the normative
-foundation for that extension.
-See \SectionRef{sec:pline-v3} and \SectionRef{sec:introspection}.
+On-disk format change.  \emph{Superseded as of revision~v5.}  Revisions v1--v4
+resolved this item as ``no on-disk format change'': the parameter string was
+resolved to \texttt{cd\_values} at API call time and discarded, files were
+byte-identical to \texttt{H5Pset\_filter} output at any libver bound, and a
+normative \texttt{cd\_values} packing convention existed so that a future RFC
+could add typed on-disk storage.  That decision was reversed.  This RFC now
+introduces \texttt{H5O\_PLINE\_VERSION\_3}, which stores the validated
+parameter string verbatim, gated by \texttt{H5Pset\_libver\_bounds}; the
+packing convention is no longer normative and \texttt{cd\_values} encoding is
+filter-private.  Revision~v6 further made version~3 extensible, so that
+follow-on per-entry features add extension block types rather than a
+version~4.  The byte-identical-output property survives for pipelines
+configured without parameter strings.
+See \SectionRef{sec:pline-v3}, \SectionRef{sec:pline-v3-layout}, and
+\SectionRef{sec:introspection}.
 
 \verysubsection{R36}
 \texttt{H5Pget\_filter2} semantics for v3 plugins.  For v3 plugins,

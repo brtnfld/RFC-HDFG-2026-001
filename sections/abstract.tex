@@ -31,7 +31,13 @@ The validated parameter string is itself persisted verbatim in a new
 version~3 of the filter-pipeline message, making configurations
 introspectable without the plugin and round-trippable without loss;
 \texttt{cd\_values} remain the filter-private execution encoding, with
-no cross-plugin packing convention required.
+no cross-plugin packing convention required.  Version~3 encodes the
+string as one entry in a per-filter list of self-describing extension
+blocks, each carrying a type, a length, and a bit stating whether a
+reader that does not recognise it may skip it.  Planned follow-on work
+--- the binary blob channel of RFC-HDFG-2026-003 and name-only pipeline
+entries --- therefore adds block types rather than message versions, and
+remains readable by libraries that ship only this RFC.
 Existing call sites compile and function without modification.  Pipelines
 configured without parameter strings continue to be written as version-2
 messages, byte-identical to pre-RFC output; pipelines carrying stored

@@ -93,6 +93,17 @@ string is stored directly, no typed per-slot tagging of \texttt{cd\_values}
 is needed; the previously considered type-tag extension is superseded
 (\SectionRef{sec:type-tags-superseded}).
 
+Version~3 is itself extensible: each entry ends in a list of typed,
+length-delimited blocks, and a version-3 reader skips unknown
+non-critical blocks and rejects unknown critical ones with a specific
+error (\SectionRef{sec:pline-v3-layout}).  The compatibility cliff is
+therefore taken once, at the version~2/3 boundary.  Files written by
+later libraries that add block types --- the blob channel of
+RFC-HDFG-2026-003 in particular --- remain readable by libraries shipping
+only this RFC, which recover every configuration string in such a file
+and reject only those entries that genuinely depend on a block type they
+lack.
+
 \subsection{Source Compatibility}
 
 All existing public APIs are unchanged and not deprecated. Application code
@@ -320,18 +331,37 @@ These tests verify the two-pass \texttt{set\_config} contract
   length without writing any bytes.
 \item \texttt{cb-07}: \texttt{get\_config} output is a valid \texttt{set\_config} input (round-trip
   grammar check: parse the output and confirm it tokenizes without error).
-\item \texttt{cb-08} (\textbf{modify-filter pattern}): Since no \texttt{H5Pmodify\_filter2}
-  exists, users who need to update parameters of an existing filter in a copied
-  DCPL must retrieve the current \texttt{cd\_values} via \texttt{H5Pget\_filter\_by\_id2}
-  and call \texttt{H5Pmodify\_filter} directly.  Verify the pattern:
+\item \texttt{cb-08} (\textbf{legacy modify pattern still works}): The
+  raw-\texttt{cd\_values} edit path is unchanged by this RFC.  Verify:
   \begin{enumerate}
     \item Create a DCPL and append deflate with \texttt{level=6} via
           \texttt{H5Pappend\_filter}.
     \item Copy the DCPL (\texttt{H5Pcopy}) to simulate a caller who received it.
     \item Call \texttt{H5Pget\_filter\_by\_id2} and confirm \texttt{cd\_values[0] == 6}.
     \item Set \texttt{cd\_values[0] = 9} and call \texttt{H5Pmodify\_filter}.
-    \item Call \texttt{H5Pget\_filter\_by\_id2} again and confirm \texttt{cd\_values[0] == 9}.
+    \item Call \texttt{H5Pget\_filter\_by\_id2} again and confirm \texttt{cd\_values[0] == 9},
+          and that \texttt{H5Pget\_filter\_params\_by\_idx} has reverted to the
+          \texttt{get\_config} reconstruction (\SectionRef{sec:dcpl-retention}).
   \end{enumerate}
+\item \texttt{cb-09} (\textbf{string-preserving modify}): The same edit via
+  \texttt{H5Pmodify\_filter\_by\_idx} (\SectionRef{sec:modify-filter}).
+  Append deflate with \texttt{"level = 6"}, then modify entry~0 with
+  \texttt{H5Z\_PARAMS\_STR("level = 9")}.  Verify \texttt{cd\_values[0] == 9},
+  that \texttt{H5Pget\_filter\_params\_by\_idx} returns \texttt{"level = 9"}
+  verbatim, and that the filter's position and ID are unchanged.  Repeat with
+  a three-filter pipeline (shuffle, deflate, fletcher32), modifying the middle
+  entry, and verify the order is preserved --- the property that
+  remove-and-re-append would destroy.
+\item \texttt{cb-10} (\textbf{modify error paths leave the entry intact}):
+  Call \texttt{H5Pmodify\_filter\_by\_idx} with (a) an out-of-range
+  \texttt{filter\_idx}, (b) a malformed parameter string, and (c) a string
+  targeting a filter whose class implements no \texttt{set\_config}.  Verify
+  each fails, and that after each failure the entry's \texttt{cd\_values},
+  flags, and stored string are byte-for-byte what they were beforehand.
+\item \texttt{cb-11} (\textbf{modify with raw \texttt{cd\_values} clears the
+  string}): Append with \texttt{"level = 6"}, then call
+  \texttt{H5Pmodify\_filter\_by\_idx} with \texttt{H5Z\_PARAMS\_RAW}.  Verify
+  the stored string is cleared, matching \texttt{H5Pmodify\_filter}.
 \end{itemize}
 
 
@@ -481,15 +511,62 @@ These tests exercise the version-3 pipeline message
 \item \texttt{fmt-06} (\textbf{\texttt{H5Ocopy}}): Copy a dataset carrying a
   version-3 pipeline message to another file; verify the stored string is
   preserved in the copy.
-\item \texttt{fmt-07} (\textbf{\texttt{H5Pmodify\_filter} clears the
-  string}): Append a filter via the string form, call
-  \texttt{H5Pmodify\_filter} with altered \texttt{cd\_values}, and verify
-  the stored string is cleared and introspection reverts to the
-  \texttt{get\_config} fallback (\SectionRef{sec:dcpl-retention}).
+\item \texttt{fmt-07} (\textbf{modify and the on-disk string}): Append a
+  filter via the string form, call \texttt{H5Pmodify\_filter} with altered
+  \texttt{cd\_values}, create a dataset, and verify the entry carries no
+  \texttt{H5O\_PLINE\_EXT\_CONFIG} block on disk and that introspection
+  reverts to the \texttt{get\_config} fallback
+  (\SectionRef{sec:dcpl-retention}).  Repeat via
+  \texttt{H5Pmodify\_filter\_by\_idx} with a replacement string and verify
+  the opposite: the block is present and carries the \emph{new} string, not
+  the one the entry was appended with (\SectionRef{sec:modify-filter}).
 \item \texttt{fmt-08} (\textbf{h5dump without plugin}): Run
   \texttt{h5dump~-p} on a version-3 file on a system without the plugin
   installed; verify \texttt{PARAMS\_STRING} shows the stored string
   verbatim.
+\end{itemize}
+
+\verysubsection{Extension block framing}
+
+These tests cover the block list itself
+(\SectionRef{sec:pline-v3-layout}).  Because no unassigned block type
+exists in a shipping library by construction, \texttt{fmt-09} through
+\texttt{fmt-11} operate on hand-constructed message bytes: the test
+writes a normal version-3 file, then splices a synthetic block into the
+pipeline message with a small helper that fixes up the entry's
+\texttt{ext\_count} and the object-header message size.
+
+\begin{itemize}
+\item \texttt{fmt-09} (\textbf{unknown non-critical block is skipped}):
+  Splice a block with an unassigned \texttt{ext\_type} and the critical
+  bit clear, positioned both before and after the
+  \texttt{H5O\_PLINE\_EXT\_CONFIG} block in separate variants.  Verify in
+  both that the dataset opens, filters run normally, and
+  \texttt{H5Pget\_filter\_params\_by\_idx} still returns the stored
+  string --- i.e.\ the decoder resynchronised on \texttt{ext\_length}
+  alone.
+\item \texttt{fmt-10} (\textbf{unknown critical block is rejected}): The
+  same splice with the critical bit set.  Verify the dataset open fails,
+  the error stack names both the unrecognised type code and the filter
+  ID, and no filtered read occurs.  Verify that a sibling dataset in the
+  same file without the synthetic block still opens --- the failure is
+  scoped to the entry, not the file.
+\item \texttt{fmt-11} (\textbf{block ordering and duplicates}): Verify
+  blocks are encoded in ascending \texttt{ext\_type} order regardless of
+  the order the library populated them, and that two DCPLs configured by
+  different call orders produce byte-identical messages.  Splice a
+  duplicate \texttt{H5O\_PLINE\_EXT\_CONFIG} block and verify the decoder
+  rejects the message as malformed rather than accepting either copy.
+\item \texttt{fmt-12} (\textbf{built-in canonical name block}): Configure
+  deflate via \texttt{H5Pappend\_filter} with \texttt{level = 6}; verify
+  the entry carries an \texttt{H5O\_PLINE\_EXT\_NAME} block containing
+  \texttt{"deflate"}, and that \texttt{h5dump~-p} reports both the name
+  and \texttt{PARAMS\_STRING} with no plugin path configured.  Configure
+  a third-party filter the same way and verify it carries \emph{no} name
+  block --- its name is in the version-2 slot and must not be duplicated
+  (\SectionRef{sec:config-storage-rules}).  Configure deflate via raw
+  \texttt{cd\_values} and verify the entry carries no blocks at all and
+  the message is version~2.
 \end{itemize}
 
 

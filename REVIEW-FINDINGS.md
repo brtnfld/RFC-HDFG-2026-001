@@ -1,5 +1,22 @@
 # RFC-HDFG-2026-001 — Technical Review Findings
 
+**Status as of 2026-08-18 (RFC revision v6): closed.** Every F/I/C item below
+was verified against the current `sections/` text and is resolved. Spot checks:
+`H5Pset_filter2`, `H5Pset_filter_by_name`, `H5Pget_filter_name_by_idx`,
+`H5PL__open`, and the invented libver-gating mechanism no longer appear
+anywhere in the document. C2 (describe the real `H5O_pline_ver_bounds[]` /
+`H5O__pline_set_version` mechanism rather than inventing one) was the last
+item open; it is addressed in architecture.tex §"Where the gating lives",
+which also resolves F2 by noting that `H5F_LIBVER_V200` already exists and
+that this RFC introduces no libver constant of its own. C1 was resolved by
+dropping name-based `-f` syntax from h5repack entirely, so the `UD=`
+ambiguity never arises.
+
+This file is retained as a record of the April 2026 review. It is **not** a
+live punch list; do not treat the items below as open work.
+
+---
+
 Reviewed against the HDF5 `develop` branch at
 `/home/brtnfld_2025/brtnfld/packages/hdf5` on 2026-04-23.
 
