@@ -2139,12 +2139,12 @@ version-2 fields followed by a list of self-describing \emph{extension
 blocks}:
 
 \begin{Verbatim}[fontsize=\scriptsize]
-[existing v2 per-filter layout]
+[existing v2 per-filter layout, field order unchanged]
   UINT16  filter_id
-  UINT16  name_length        (third-party filters only, as in v2)
-  char    name[]             (third-party filters only, as in v2)
+  UINT16  name_length        (third-party filters only; includes the NUL)
   UINT16  flags
   UINT16  cd_nelmts
+  char    name[name_length]  (third-party filters only; NUL-terminated)
   UINT32  cd_values[cd_nelmts]
 
 [new in v3: per-entry extension block list]
@@ -2162,6 +2162,14 @@ All other message fields --- including the version-2 name-slot rules for
 built-in versus third-party filters (\SectionRef{sec:class3-struct}) ---
 are unchanged from version~2.  An entry with \texttt{ext\_count = 0} is a
 version-2 entry with two extra bytes.
+
+Note that the version-2 field order interleaves the name: the name
+\emph{length} is written immediately after \texttt{filter\_id}, but the
+name \emph{bytes} come after \texttt{cd\_nelmts}, and
+\texttt{name\_length} counts the trailing NUL.  That ordering is a
+property of the existing format, not a choice this RFC makes; it is
+reproduced above so that the extension list is understood to follow
+\texttt{cd\_values} and nothing else.
 
 \verysubsection{Why a block list rather than a fixed field}
 
