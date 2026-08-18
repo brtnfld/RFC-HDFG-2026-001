@@ -997,7 +997,7 @@ typedef struct H5Z_class3_t {
   cleanly.
 \end{itemize}
 
-\verysubsection{Retrieval: \texttt{H5Zget\_filter\_info2}}
+\verysubsection{Retrieval: \texttt{H5Zget\_filter\_class\_info}}
 \label{sec:H5Zget-filter-info2}
 
 The legacy \texttt{H5Zget\_filter\_info(filter, *flags)} returns only the
@@ -1243,10 +1243,12 @@ string (e.g., converting a rate or tolerance to \texttt{double}) use
 C-locale numeric conversion. Process-wide locale settings (e.g., a
 comma-decimal locale) do not affect parameter interpretation. In practice,
 this means using \texttt{strtod} under \texttt{uselocale(newlocale(LC\_NUMERIC\_MASK,
-"C", 0))} or a locale-independent equivalent. The library-provided helper
-\texttt{H5Zconfig\_get\_param} (\SectionRef{sec:config-get-param}) returns raw
+"C", 0))} or a locale-independent equivalent. The library-provided
+\texttt{H5Zconfig\_get\_str} (\SectionRef{sec:config-get-param}) returns raw
 string values; it is the callback's responsibility to convert them to numeric
-types in a locale-safe manner. This requirement mirrors the output-side locale
+types in a locale-safe manner.  The numeric accessors
+(\texttt{H5Zconfig\_get\_int}, \texttt{H5Zconfig\_get\_double}) perform the
+conversion inside the library and are locale-safe already. This requirement mirrors the output-side locale
 requirement on \texttt{get\_config} (\SectionRef{sec:callback-specs}) and ensures
 round-trip correctness. Document this requirement in
 \texttt{H5Zdevelop.h} as part of the \texttt{H5Z\_set\_config\_func\_t} specification.
@@ -1855,7 +1857,7 @@ htri_t H5Zconfig_get_int    (const char *params, const char *key,
 htri_t H5Zconfig_get_double (const char *params, const char *key,
                               double   *out);
 htri_t H5Zconfig_get_bool   (const char *params, const char *key,
-                              hbool_t  *out);
+                              bool     *out);
 htri_t H5Zconfig_get_str    (const char *params, const char *key,
                               char *buf, size_t *buf_size);
 \end{minted}
@@ -2304,10 +2306,11 @@ format feature:
   byte-identical to the output of an equivalent \texttt{H5Pset\_filter}
   program, at any libver bound.
 \item If at least one entry carries an extension block \emph{and} the
-  file's libver upper bound admits version~3 (the bound is a release-timing
-  choice, resolved below), the library writes version~3.
+  file's libver upper bound admits version~3 (i.e.\ is at least
+  \texttt{H5F\_LIBVER\_V300}), the library writes version~3.
 \item If an extension block is present but the libver upper bound is below
-  that release, the library writes version~2 and omits the blocks.  The
+  \texttt{H5F\_LIBVER\_V300}, the library writes version~2 and omits the
+  blocks.  The
   file is byte-identical to pre-RFC output; execution semantics are
   unaffected because \texttt{cd\_values} are complete on their own, and
   introspection degrades to the \texttt{get\_config} fallback.  The
@@ -2355,7 +2358,7 @@ static const unsigned H5O_pline_ver_bounds[] = {
 };
 \end{minted}
 
-\texttt{H5O\_\_pline\_set\_version()} raises the message version to the
+\texttt{H5O\_pline\_set\_version()} raises the message version to the
 file's \emph{low} bound, then errors if the result exceeds the \emph{high}
 bound (\texttt{``Filter pipeline version out of bounds''}).  This RFC
 changes that function in exactly two ways:
@@ -2373,29 +2376,24 @@ changes that function in exactly two ways:
   without changing what the file means.
 \end{enumerate}
 
-The row that admits version~3 belongs to whichever release ships this
-feature, and this RFC deliberately does not hard-code which one.  Note
-that \texttt{H5F\_LIBVER\_V200} already exists and is currently equal to
-\texttt{H5F\_LIBVER\_LATEST}; this RFC introduces no libver constant of
-its own.  Two cases:
+Version~3 is admitted by the \texttt{H5F\_LIBVER\_V300} bound.  The
+\texttt{V200} row stays at version~2: \texttt{H5F\_LIBVER\_V200} already
+exists and appears in released files, so changing what it admits would
+retroactively alter the meaning of a bound callers have already written
+against.  The table therefore gains one row:
 
-\begin{itemize}
-\item \textbf{The 2.0 format is not yet frozen.}  Change
-  \texttt{H5O\_pline\_ver\_bounds[H5F\_LIBVER\_V200]} to
-  \texttt{H5O\_PLINE\_VERSION\_3} and bump
-  \texttt{H5O\_PLINE\_VERSION\_LATEST} to~3.  No new constant, no new row.
-\item \textbf{The 2.0 format is frozen.}  Leave the \texttt{V200} row at
-  version~2 --- changing it would retroactively alter what a bound already
-  in released files admits --- and add the version~3 row against the
-  next format bound (\texttt{H5F\_LIBVER\_V300}), which that release
-  introduces for its own reasons.
-\end{itemize}
+\begin{minted}{c}
+    H5O_PLINE_VERSION_2,     /* H5F_LIBVER_V200 */
+    H5O_PLINE_VERSION_3,     /* H5F_LIBVER_V300 -- new row  */
+    H5O_PLINE_VERSION_LATEST /* H5F_LIBVER_LATEST           */
+\end{minted}
 
-The choice is a release-timing question for the library team, not a design
-question: both cases use the same table, the same setter, and the same
-three rules above.  Everything else in this RFC is written against ``the
-bound that admits version~3'' rather than against a specific constant, so
-the outcome changes one table row and nothing else.
+\noindent with \texttt{H5O\_PLINE\_VERSION\_LATEST} bumped to~3.  This
+RFC introduces no libver constant of its own: \texttt{H5F\_LIBVER\_V300}
+is the format bound of the 3.0 release, which that release defines for
+its own reasons and this feature merely occupies.  Beyond the table row
+and the \texttt{H5O\_pline\_set\_version()} changes above, nothing else in
+the library's version-gating machinery is touched.
 
 \subsection{Reader Compatibility}
 \label{sec:pline-v3-readers}
@@ -2478,10 +2476,12 @@ are the reason the framing is worth its two-byte-per-entry overhead:
   message version.  It inherits this RFC's encoder/decoder branching,
   \texttt{H5O\_pline\_ver\_bounds[]} row, libver gating, and copy/delete
   handling unchanged.
-\item \textbf{Independent release timing.}  The blob feature need not ship
-  in the same release as the version-3 message.  Its \emph{callbacks} must
-  ship with its \emph{block type} --- they are useless apart --- but
-  neither is coupled to the release that introduces version~3.
+\item \textbf{Release timing is not forced.}  Both RFCs currently target
+  the same release (3.0), and the blob feature's \emph{callbacks} must
+  ship with its \emph{block type} --- they are useless apart.  But neither
+  is coupled to the release that introduces version~3, so if the blob work
+  slips it becomes a later block type rather than a blocked feature or a
+  second message version.
 \item \textbf{Safe partial readers.}  A library with version~3 but without
   blob support reads the configuration strings in such a file and rejects
   only the blob-bearing entries, by the critical-bit rule

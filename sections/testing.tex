@@ -199,7 +199,8 @@ calls, avoiding repeated parsing. This is already the recommended practice for
 
 \noindent\textbf{Decision:} The raw-string callback interface is retained.
 \texttt{set\_config} receives the parameter string as \texttt{const char
-*params} and uses \texttt{H5Zconfig\_get\_param} for key lookup.  Parsing
+*params} and uses the typed \texttt{H5Zconfig\_get\_*} accessors
+(\SectionRef{sec:config-get-param}) for key lookup.  Parsing
 overhead is negligible: a typical filter string is under 100~bytes with
 fewer than five keys, making two-pass parsing cost microseconds against a
 millisecond dataset-creation operation.  Switching to a tokenized interface
