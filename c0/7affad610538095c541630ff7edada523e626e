@@ -1,0 +1,20 @@
+sections/architecture.tex
+  s_2dcd805dd0ed75::t_6a0a427178f5e4 2142,2144,2147,2166-2172
+  s_2dcd805dd0ed75::t_12f9444bff039c 2173
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c07affad610538095c541630ff7edada523e626e",
+  "prompts": {},
+  "sessions": {
+    "s_2dcd805dd0ed75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0737e9df-fe8a-4672-8e5d-7c47d4d16c5e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
