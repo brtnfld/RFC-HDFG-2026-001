@@ -933,22 +933,42 @@ typedef struct H5Z_class3_t {
   (\texttt{H5O\_\_pline\_encode} / \texttt{H5O\_\_pline\_decode}) omit
   the name length field and name bytes entirely; no slot is reserved.
   Consequently \texttt{name} for built-ins has no version-2 slot on
-  disk.  For the runtime API this is harmless: built-in filters are
-  present in every HDF5 build, so the registry always supplies their
-  \texttt{name} to \texttt{H5Pget\_filter2}, and the ``plugin unloaded,
-  read name from disk'' fallback never engages for them.
+  disk.  For the runtime API this is \emph{almost} always harmless: the
+  registry supplies the name to \texttt{H5Pget\_filter2}, so the ``plugin
+  unloaded, read name from disk'' fallback rarely engages for them.  The
+  exception is that two built-ins are conditionally compiled ---
+  \texttt{deflate} behind \texttt{H5\_HAVE\_FILTER\_DEFLATE} and
+  \texttt{szip} behind \texttt{H5\_HAVE\_FILTER\_SZIP}
+  (\texttt{H5Z\_\_init\_package}).  A build lacking either does not
+  register it, so \texttt{H5Pget\_filter2} on such a build falls all the
+  way through to the numeric ID formatted as a decimal string.  Only
+  \texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}, and
+  \texttt{scale-offset} are unconditionally present.
 
-  It stops being harmless once configuration strings are persisted.  A
-  tool reading a version-3 file without the HDF5 library --- or any
-  reader working directly from the message bytes --- recovers
-  \texttt{level~=~6} for a built-in entry with no name attached to it,
-  which undercuts the self-describing property that motivated storing
-  the string.  Version~3 therefore carries the canonical name for
-  built-in entries in an \texttt{H5O\_PLINE\_EXT\_NAME} extension block
-  (\SectionRef{sec:pline-v3-layout}), written only when the entry also
-  stores a configuration string (\SectionRef{sec:config-storage-rules}).
-  Third-party filters keep using the version-2 slot, so the name is
-  never written twice and the version-2 encoding is untouched.
+  \textbf{Version~3 does not close this gap, deliberately.}  An earlier
+  draft of this RFC added an extension block carrying the canonical name
+  for built-in entries, on the reasoning that a version-3 file storing
+  \texttt{level~=~6} should say what it configures.  That was dropped
+  after checking what actually consumes the name:
+
+  \begin{itemize}
+  \item \texttt{h5dump} never consults the registry or the on-disk slot
+    for built-ins.  It switches on the filter ID and prints a hardcoded
+    label, which is why it still reports \texttt{COMPRESSION DEFLATE} for
+    a file whose deflate filter is unavailable.
+  \item The six built-in IDs are permanently fixed and published in the
+    file format specification.  Any reader that parses a pipeline message
+    --- including one that never links libhdf5 --- can map ID to name
+    from a six-entry table that cannot change.  Knowing the string
+    \texttt{"deflate"} does not help it decompress anything; it needs the
+    ID either way.
+  \end{itemize}
+
+  What remains is narrow: on a build compiled without deflate or szip,
+  \texttt{H5Pget\_filter2} returns the numeric ID as a string for those
+  two filters.  That is a pre-existing behaviour, affects a programmatic
+  caller who already holds the ID, and does not justify a permanent
+  format feature that could never later be removed.
 
   \textbf{Pre-existing \texttt{H5Pequal} behavior.}  The pipeline
   property's comparison callback (\texttt{H5P\_\_pline\_cmp}) does a
@@ -2049,17 +2069,10 @@ format change:
   string is stored.  Introspection for such entries falls back to
   \texttt{get\_config} reconstruction exactly as for files written before
   this RFC (\SectionRef{sec:introspection}).
-\item \textbf{Canonical name.}  An entry that stores a configuration
-  string also stores the filter's canonical name if --- and only if ---
-  the version-2 name slot cannot carry it, i.e.\ for HDF~Group built-ins
-  (\texttt{id < 256}), whose name the version-2 encoder omits.  For
-  third-party filters the version-2 slot already holds the name, so no
-  \texttt{H5O\_PLINE\_EXT\_NAME} block is written and the name is never
-  stored twice.  Entries with no stored string get no name block either:
-  the pairing is deliberate, since a name without a configuration adds
-  nothing a loaded plugin or the numeric ID does not already supply, and
-  writing one unconditionally would push every filtered file to
-  version~3 (\SectionRef{sec:pline-v3-gating}).
+\item \textbf{Filter names are not stored by this RFC.}  Third-party
+  filters continue to use the version-2 name slot; built-ins continue to
+  have no name on disk (\SectionRef{sec:class3-struct}).  Version~3 adds
+  no name storage of its own.
 \end{itemize}
 
 \verysubsection{Why the verbatim user string, and not a normalised or
@@ -2240,9 +2253,8 @@ Type codes are assigned centrally by The HDF~Group and recorded in
 \textbf{Code} & \textbf{Name} & \textbf{Critical} & \textbf{Defined by} \\
 \midrule
 \texttt{0x0001} & \texttt{H5O\_PLINE\_EXT\_CONFIG} & no  & this RFC \\
-\texttt{0x0002} & \texttt{H5O\_PLINE\_EXT\_NAME}   & no  & this RFC \\
-\texttt{0x0003} & \texttt{H5O\_PLINE\_EXT\_BLOB}   & yes & reserved for RFC-HDFG-2026-003 \\
-\texttt{0x0004}--\texttt{0xFFFF} & --- & --- & unassigned \\
+\texttt{0x0002} & \texttt{H5O\_PLINE\_EXT\_BLOB}   & yes & reserved for RFC-HDFG-2026-003 \\
+\texttt{0x0003}--\texttt{0xFFFF} & --- & --- & unassigned \\
 \bottomrule
 \end{tabular}
 \end{center}
@@ -2257,31 +2269,6 @@ cost of assignment is a line in a header.
 \texttt{H5O\_PLINE\_EXT\_CONFIG} carries the verbatim parameter string as
 UTF-8, not NUL-terminated and with no trailing NUL counted in
 \texttt{ext\_length}.  At most one appears per entry.
-
-\texttt{H5O\_PLINE\_EXT\_NAME} carries the filter's canonical name, also
-UTF-8 and not NUL-terminated.  It exists because the version-2 name slot
-is present only for filters in the third-party ID range
-(\SectionRef{sec:class3-struct}): for the HDF~Group built-ins
-(\texttt{id < 256}) the version-2 encoder omits the name field entirely.
-
-The beneficiary is specifically a reader that does \emph{not} use the HDF5
-library.  Any libhdf5-based tool, \texttt{h5dump} included, already knows
-every built-in filter's name --- built-ins are compiled in, so the runtime
-registry supplies the name whether or not anything is on disk, and no
-plugin is involved to be missing.  For those tools this block is redundant.
-It matters to the growing set of readers that parse HDF5 files directly
---- independent implementations in other languages, and metadata
-extractors that index datasets without opening them through libhdf5.  For
-those, a version-3 built-in entry would otherwise yield
-\texttt{level~=~6} with no indication of what it configures, which is a
-thin version of self-describing.
-
-The cost is bounded and paid only where the benefit applies: eight bytes
-of framing plus the name, on built-in entries that already store a
-configuration string, in files already committed to version~3.  Entries
-without a stored string, and third-party filters whose version-2 slot
-already carries the name, pay nothing
-(\SectionRef{sec:config-storage-rules}).
 
 \verysubsection{Size bounds}
 
@@ -2475,7 +2462,7 @@ alongside the dataset's pipeline message.
 That storage is the first consumer of the extension framing defined here.
 The blob bytes live in a global-heap object; the pipeline entry carries
 only a locator, as the reserved critical block type
-\texttt{H5O\_PLINE\_EXT\_BLOB} (0x0003,
+\texttt{H5O\_PLINE\_EXT\_BLOB} (0x0002,
 \SectionRef{sec:pline-v3-layout}).  Three consequences follow, and they
 are the reason the framing is worth its two-byte-per-entry overhead:
 

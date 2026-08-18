@@ -558,16 +558,14 @@ pipeline message with a small helper that fixes up the entry's
   different call orders produce byte-identical messages.  Splice a
   duplicate \texttt{H5O\_PLINE\_EXT\_CONFIG} block and verify the decoder
   rejects the message as malformed rather than accepting either copy.
-\item \texttt{fmt-12} (\textbf{built-in canonical name block}): Configure
-  deflate via \texttt{H5Pappend\_filter} with \texttt{level = 6}; verify
-  the entry carries an \texttt{H5O\_PLINE\_EXT\_NAME} block containing
-  \texttt{"deflate"}, and that \texttt{h5dump~-p} reports both the name
-  and \texttt{PARAMS\_STRING} with no plugin path configured.  Configure
-  a third-party filter the same way and verify it carries \emph{no} name
-  block --- its name is in the version-2 slot and must not be duplicated
-  (\SectionRef{sec:config-storage-rules}).  Configure deflate via raw
-  \texttt{cd\_values} and verify the entry carries no blocks at all and
-  the message is version~2.
+\item \texttt{fmt-12} (\textbf{no name storage}): Configure deflate via
+  \texttt{H5Pappend\_filter} with \texttt{level = 6} and verify the entry
+  carries exactly one extension block, the configuration string --- no
+  name block, since version~3 adds no name storage
+  (\SectionRef{sec:config-storage-rules}).  Configure a third-party
+  filter the same way and verify its name is in the version-2 slot,
+  unchanged.  Configure deflate via raw \texttt{cd\_values} and verify
+  the entry carries no blocks at all and the message is version~2.
 \end{itemize}
 
 
