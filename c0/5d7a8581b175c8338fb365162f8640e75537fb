@@ -1,0 +1,55 @@
+RFC-HDFG-2026-001-community.tex
+  s_2dcd805dd0ed75::t_aeff366592cee9 50-56,384-386,388-389,402-407
+sections/implementation.tex
+  s_2dcd805dd0ed75::t_a1f3d28453d0c0 173
+  s_2dcd805dd0ed75::t_52d6f2261e8fa8 624-639
+sections/abstract.tex
+  s_2dcd805dd0ed75::t_1530a74c6c9b8b 34-40
+REVIEW-FINDINGS.md
+  s_2dcd805dd0ed75::t_9af68166ea9510 3-19
+sections/testing.tex
+  s_2dcd805dd0ed75::t_a8981e9f5ec2e6 96-106,529-569
+  s_2dcd805dd0ed75::t_77256ab1601672 334-335,342-344,346-364,514-522
+  s_2dcd805dd0ed75::t_79605ea9db2201 570-571
+sections/architecture.tex
+  s_2dcd805dd0ed75::t_abd2ed10797851 1383-1393,2418-2437,2466-2489
+  s_2dcd805dd0ed75::t_4386c09a7b8507 2256-2274
+  s_2dcd805dd0ed75::t_5611999bebb58e 2115-2129
+  s_2dcd805dd0ed75::t_ed9cb6f41ea465 2338-2399
+  s_2dcd805dd0ed75::t_bb699a71cdeb06 2307-2308
+  s_2dcd805dd0ed75::t_ddc348d77afb48 2136-2137,2148-2156,2159-2255,2275-2291
+  s_2dcd805dd0ed75::t_56df274b38f809 935-951,2012-2018
+  s_2dcd805dd0ed75::t_34c07fe2578ba2 1523-1526,1663-1754,2104-2111
+  s_2dcd805dd0ed75::t_f3663251d6ade7 2050-2060,2302-2306,2309-2310,2325-2336
+  s_2dcd805dd0ed75::t_da35bdeb2e4bd4 2019,2337
+sections/resolved.tex
+  s_2dcd805dd0ed75::t_43ba7871e97a2e 13-22,297-311
+  s_2dcd805dd0ed75::t_e86717fbc31978 207-212
+sections/introduction.tex
+  s_2dcd805dd0ed75::t_d79ca135316420 22-24,57-61
+  s_2dcd805dd0ed75::t_1530a74c6c9b8b 31-35
+  s_2dcd805dd0ed75::t_52d6f2261e8fa8 43-45
+RFC-HDFG-2026-001.tex
+  s_2dcd805dd0ed75::t_db6229d24050ca 56
+.gitignore
+  s_2dcd805dd0ed75::t_9af68166ea9510 3
+support/revisions.tex
+  s_2dcd805dd0ed75::t_db6229d24050ca 6
+  s_2dcd805dd0ed75::t_d571fe79fd3aa3 7
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.6.22",
+  "base_commit_sha": "c05d7a8581b175c8338fb365162f8640e75537fb",
+  "prompts": {},
+  "sessions": {
+    "s_2dcd805dd0ed75": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "0737e9df-fe8a-4672-8e5d-7c47d4d16c5e",
+        "model": "claude-opus-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
