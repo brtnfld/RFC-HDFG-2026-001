@@ -213,6 +213,7 @@
   }%
 \fi
 \RequirePackage{tabularx}
+\RequirePackage{xltabular}
 \RequirePackage{multirow}
 
 %% The right way to do custom spacing
@@ -366,19 +367,26 @@
 }
 
 %% List of revisions
+%% Built on xltabular (longtable + tabularx X-column), not plain tabularx:
+%% a plain tabularx block is a single unbreakable box, so once the revision
+%% history grows past one page tall, LaTeX's output routine can never place
+%% it and loops indefinitely instead of erroring.  xltabular paginates like
+%% longtable, repeating the header row on each page, so the table always
+%% terminates regardless of how many revisions accumulate.
 \DeclareRobustCommand{\makerevisions}[1]{%
   \clearpage%
   \section*{Revision History}%
-  \begin{flushleft}%
-    \begin{tabularx}{\textwidth}{| l | l | X |}%
+  \setlength{\LTleft}{0pt}%
+  \setlength{\LTright}{0pt}%
+  \begin{xltabular}{\textwidth}{| l | l | X |}%
       \hline%
       \rowcolor{lightgray!50}%
       {\bfseries\sffamily\small\textcolor{rulecolor}{Version Number}} & {\bfseries\sffamily\small\textcolor{rulecolor}{Date}} & {\bfseries\sffamily\small\textcolor{rulecolor}{Comments}}\\
+      \hline%
+      \endhead
       \revisions%
       \hline
-      %\bottomrule%
-    \end{tabularx}%
-  \end{flushleft}%
+  \end{xltabular}%
   \clearpage%
 }
 
