@@ -127,7 +127,7 @@ decimal string may produce a slightly different numeral.  Passing such a
 reconstructed string back to \texttt{set\_config} may therefore yield a
 different binary value, breaking compression reproducibility.
 
-Because the configuration string is persisted verbatim on disk
+Because the configuration string is persisted on disk
 (\SectionRef{sec:pline-v3}), serialization precision is \emph{not}
 load-bearing for round-trip fidelity of string-configured pipelines: what
 the user typed is what introspection returns.  The requirements in this
@@ -1554,7 +1554,7 @@ in the DCPL without invoking any plugin callback.
 When \texttt{type} is \texttt{H5Z\_PARAMS\_STRING}, the library locates or
 loads the filter plugin, invokes the filter's \texttt{set\_config} callback to
 translate the parameter string into \texttt{cd\_values}, and stores the result.
-In addition, the validated parameter string is retained verbatim in the DCPL
+In addition, the validated parameter string is retained, in canonical form, in the DCPL
 pipeline entry and persisted to the file in the version-3 pipeline message
 (\SectionRef{sec:pline-v3}), making the configuration introspectable without
 the plugin and round-trippable without loss.
@@ -1966,7 +1966,8 @@ my_filter_set_config(const char *params, unsigned *flags,
 
     /* ---- 3. Populate cd_values only on the second pass ---- */
     if (cd_values != NULL) {
-        if (cd_values_size < *cd_nelmts * sizeof(*cd_values))
+        /* cd_values_size is an ELEMENT count, not a byte count */
+        if (cd_values_size < *cd_nelmts)
             return FAIL;               /* should not happen */
         cd_values[0] = (unsigned)level;
     }
@@ -1985,7 +1986,9 @@ my_filter_set_config(const char *params, unsigned *flags,
 \item Parameter parsing is performed on both passes (not cached) to
   ensure the count is consistent.
 \item If \texttt{cd\_values} is non-\texttt{NULL}, verify
-  \texttt{cd\_values\_size >= *cd\_nelmts * sizeof(*cd\_values)} before writing.
+  \texttt{cd\_values\_size >= *cd\_nelmts} before writing.
+  \texttt{cd\_values\_size} is the number of \texttt{unsigned} \emph{elements}
+  available, not a byte count.
 \item Use the typed accessors (\texttt{H5Zconfig\_get\_int},
   \texttt{H5Zconfig\_get\_double}, etc.)\ rather than manual string conversion;
   locale independence and TOML type checking are handled by the accessors.
@@ -2019,12 +2022,15 @@ future release.  The semicolon character is reserved outside of quoted strings
 \label{sec:pline-v3}
 
 This RFC introduces an on-disk format change: the validated parameter
-string is persisted \emph{verbatim} --- first in the DCPL, then in a new
-version~3 of the filter-pipeline object-header message
+string is persisted in \emph{canonical form}
+(\SectionRef{sec:config-canonical-form}) --- first in the DCPL, then in a
+new version~3 of the filter-pipeline object-header message
 (\texttt{H5O\_PLINE\_VERSION\_3}) --- alongside the \texttt{cd\_values}
-produced by \texttt{set\_config}.  The stored string, not a reconstruction
-from \texttt{cd\_values}, is the authoritative human-readable
-representation of a filter's configuration.  \texttt{cd\_values} remain
+produced by \texttt{set\_config}.  The canonical form is the user's own
+string with two value-preserving normalisations applied, so that the stored
+bytes are guaranteed to be a valid TOML v1.0.0 document.  The stored
+string, not a reconstruction from \texttt{cd\_values}, is the authoritative
+human-readable representation of a filter's configuration.  \texttt{cd\_values} remain
 exactly what they are today: the execution encoding consumed by the
 filter callback.  Because the string is persisted independently,
 \texttt{cd\_values} carry no round-trip obligation, and their internal
@@ -2044,15 +2050,20 @@ earlier drafts of this design, which were constrained to introduce no
 format change:
 
 \begin{enumerate}
-\item \textbf{Plugin-free introspection.}  Tools such as \texttt{h5dump}
-  read the stored string straight out of the pipeline message.  No plugin
-  needs to be located, loaded, or trusted to reconstruct the
-  configuration; a file is self-describing on any machine.
-\item \textbf{Exact round-trip.}  The stored string is byte-for-byte the
-  string the user passed to \texttt{H5Pappend\_filter}.  Floating-point
-  formatting precision, quantisation inside \texttt{set\_config}, and
-  packing-layout conventions no longer have any bearing on what
-  introspection returns.
+\item \textbf{Plugin-free --- and library-free --- introspection.}  Tools
+  such as \texttt{h5dump} read the stored string straight out of the
+  pipeline message.  No plugin needs to be located, loaded, or trusted to
+  reconstruct the configuration.  Because the stored bytes are canonical
+  (\SectionRef{sec:config-canonical-form}), a reader that is not the HDF5
+  library at all --- a pure-reimplementation reader such as jHDF or pyfive,
+  decoding the object header directly --- can parse the configuration with
+  a stock TOML parser.
+\item \textbf{Exact round-trip of the configured value.}  The stored string
+  denotes exactly the value the user passed to
+  \texttt{H5Pappend\_filter}: the two canonicalising rewrites are
+  bit-exact.  Floating-point formatting precision, quantisation inside
+  \texttt{set\_config}, and packing-layout conventions no longer have any
+  bearing on what introspection returns.
 \end{enumerate}
 
 \subsection{What Is Stored, and When}
@@ -2075,32 +2086,103 @@ format change:
   no name storage of its own.
 \end{itemize}
 
-\verysubsection{Why the verbatim user string, and not a normalised or
+\verysubsection{Why the canonical user string, and not a raw or
 post-processed form}
 
-Three candidate representations were considered for the stored string:
+Four candidate representations were considered for the stored string:
 
 \begin{enumerate}
-\item \textbf{The raw user string (chosen).}  Lossless by construction,
-  requires no callback in the persistence path, and preserves exactly what
-  the user expressed --- including hex-float literals and formatting.
+\item \textbf{The canonical user string (chosen).}  The user's own string
+  with exactly two value-preserving normalisations applied: optional outer
+  braces are stripped, and C99 hex-float literals are rewritten to
+  \texttt{\%.17e} decimal.  Interior spacing, quote style, key case, and
+  key order are preserved byte-for-byte.  See
+  \SectionRef{sec:config-canonical-form} for why these two, and only these
+  two, are applied.
+\item \textbf{The raw user string.}  Rejected: the accepted input language
+  is a \emph{superset} of TOML v1.0.0 in two respects
+  (\SectionRef{sec:config-canonical-form}), so a raw payload is not
+  guaranteed to parse with a stock TOML parser.  That defeats the purpose
+  of persisting the string, which is to be readable without the HDF5
+  library, not merely without the plugin.
 \item \textbf{A parser-normalised re-serialisation} (keys lowercased,
   values re-emitted).  Rejected: re-serialising floating-point values
   reintroduces the very decimal-precision machinery
   (\SectionRef{sec:float-precision}) that storing the string is meant to
-  make non-load-bearing.
+  make non-load-bearing.  The canonical form does \emph{not} re-serialise
+  values; it rewrites only the one token form that TOML cannot express, and
+  that rewrite is exact.
 \item \textbf{The post-processing \texttt{get\_config} output} (``what the
   filter actually applied,'' including defaults).  Rejected as the
   \emph{stored} form: it depends on the quality of a plugin callback and is
   lossy for filters that quantise parameters.  That view remains available
   at runtime by calling \texttt{get\_config} when the plugin is loaded, so
-  choosing the verbatim string forfeits nothing.
+  choosing the canonical string forfeits nothing.
 \end{enumerate}
 
 Defaults not present in the user's string are intentionally not baked into
 the stored form: which defaults apply is a property of the filter version
-that executes, and recording user intent verbatim keeps the stored
-configuration meaningful across plugin upgrades.
+that executes, and recording user intent keeps the stored configuration
+meaningful across plugin upgrades.
+
+\verysubsection{Canonical form of the stored string}
+\label{sec:config-canonical-form}
+
+Every constraint the filter profile places on parameter strings
+(\SectionRef{sec:param-overview}) is a \emph{restriction}: \texttt{inf},
+\texttt{-inf}, and \texttt{nan} are rejected; arrays, multi-line strings,
+datetime values, and document-level tables are not accepted; length and
+key count are bounded.  Those keep the accepted language a subset of TOML
+v1.0.0, which is the safe direction --- anything accepted is still valid
+TOML.
+
+Two features go the other way and make the accepted language a superset:
+
+\begin{itemize}
+\item \textbf{Optional outer braces.}  \texttt{level = 6} is a valid TOML
+  document, but \texttt{\{level = 6\}} is an inline table \emph{value} and
+  is not a valid document on its own.
+\item \textbf{C99 hex-float literals.}  \texttt{rate = 0x1.8p+1} is not
+  valid TOML at all; the library accepts it only because it rewrites
+  hex-float tokens to decimal before the TOML scanner
+  (\SectionRef{sec:float-precision}).
+\end{itemize}
+
+Both are accepted on input, and both would otherwise reach the file
+unchanged.  A reader handed those bytes and a stock TOML parser gets a hard
+parse error --- not a silent misreading, but a failure nonetheless.  This
+matters because the readers of this field are not only the HDF5 library:
+pure-reimplementation readers such as jHDF and pyfive decode the object
+header directly and never link \texttt{libhdf5}, and they are precisely the
+consumers that benefit from a stored string rather than a plugin
+reconstruction.  Normalising only one of the two would buy nothing, since
+either alone is enough to break a stock parse.
+
+The library therefore canonicalises the string before persisting it:
+
+\begin{enumerate}
+\item Strip optional outer braces and surrounding whitespace.
+\item Rewrite C99 hex-float literals to \texttt{\%.17e} decimal.  This is
+  bit-exact: \texttt{DBL\_DECIMAL\_DIG} is 17, so the decimal form recovers
+  the identical IEEE\,754 \texttt{double}.  Hex-float text inside a quoted
+  string or a comment is left alone.
+\end{enumerate}
+
+\begin{notebox}
+\textbf{Guarantee.}  The bytes stored in \texttt{H5O\_PLINE\_EXT\_CONFIG}
+are always a valid TOML v1.0.0 document, and are always valid input to
+\texttt{set\_config}.  A conforming TOML parser can read a filter's
+configuration out of any file this library writes, with no HDF5 code and no
+filter plugin involved.
+\end{notebox}
+
+The cost is that the stored string is no longer byte-identical to the
+caller's argument in these two cases: a caller who writes
+\texttt{\{rate = 0x1.8p+1\}} reads back
+\texttt{rate = 3.00000000000000000e+00}.  What is preserved is the
+\emph{value}, exactly, which is the property the format change was made to
+obtain.  Callers that need the original text of their own configuration
+already have it.
 
 \subsection{DCPL Retention and Property-List Machinery}
 \label{sec:dcpl-retention}
@@ -2266,7 +2348,8 @@ undiagnosable in the field --- the reader would parse foreign bytes as a
 type it thinks it knows.  Projects that need a block type request one; the
 cost of assignment is a line in a header.
 
-\texttt{H5O\_PLINE\_EXT\_CONFIG} carries the verbatim parameter string as
+\texttt{H5O\_PLINE\_EXT\_CONFIG} carries the canonical parameter string
+(\SectionRef{sec:config-canonical-form}) as
 UTF-8, not NUL-terminated and with no trailing NUL counted in
 \texttt{ext\_length}.  At most one appears per entry.
 
@@ -2281,11 +2364,17 @@ this message and must be stored elsewhere in the file and referenced from
 a block, which is precisely the shape the blob channel takes
 (\SectionRef{sec:blob-future}).
 
-One consequence worth stating plainly: \texttt{H5Z\_CONFIG\_STRING\_MAX}
-(4096, \SectionRef{sec:param-overview}) is now an API-level policy cap
-alone.  The earlier 16-bit \texttt{config\_length} field made 4096 look
-format-imposed; it never was, and under this framing the limit can be
-raised later without touching the on-disk encoding.
+One consequence worth stating precisely: widening
+\texttt{H5Z\_CONFIG\_STRING\_MAX} (4096,
+\SectionRef{sec:param-overview}) no longer requires a change to the
+\emph{encoding}, because \texttt{ext\_length} is 32-bit where the earlier
+fixed \texttt{config\_length} field was 16-bit.  It does, however, remain a
+compatibility boundary: the decoder rejects an
+\texttt{H5O\_PLINE\_EXT\_CONFIG} block whose \texttt{ext\_length} exceeds
+\texttt{H5Z\_CONFIG\_STRING\_MAX}, so a file written under a raised cap
+would not be readable by an already-released version-3 reader.  Raising the
+limit is therefore a versioned, coordinated change to the format's
+acceptance rules, not a purely API-level policy adjustment.
 
 \subsection{When Version 3 Is Written}
 \label{sec:pline-v3-gating}
