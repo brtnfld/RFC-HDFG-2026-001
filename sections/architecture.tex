@@ -1704,8 +1704,10 @@ and filter ID unchanged.  \texttt{params} is interpreted exactly as
 \item \texttt{H5Z\_PARAMS\_STRING}: the string is validated and resolved
   through the filter's \texttt{set\_config} callback --- the same two-pass
   protocol \texttt{H5Pappend\_filter} uses --- and both the resulting
-  \texttt{cd\_values} and the verbatim string replace the entry's current
-  ones.  The entry keeps a stored configuration string.
+  \texttt{cd\_values} and the canonical string
+  (\SectionRef{sec:config-canonical-form}) replace the entry's current
+  ones.  The entry keeps a stored configuration string, canonicalised on
+  exactly the same terms as on the append path.
 \item \texttt{H5Z\_PARAMS\_CDVALUES}: the \texttt{cd\_values} array
   replaces the entry's current one and any stored string is cleared,
   matching \texttt{H5Pmodify\_filter} exactly
