@@ -37,12 +37,16 @@ This design covers:
 \item The Fortran and Java bindings that ship with HDF5
   (\SectionRef{sec:bindings}): a generic
   \texttt{h5pappend\_filter\_f} with two specific procedures plus
-  \texttt{h5pget\_filter\_params\_by\_idx\_f} and
-  \texttt{h5zconfig\_get\_param\_f} for Fortran; two overloaded
+  \texttt{h5pget\_filter\_params\_by\_idx\_f} for Fortran; two overloaded
   \texttt{H5Pappend\_filter} methods and
   \texttt{H5Pget\_filter\_params\_by\_idx} for Java.  Both languages also
   expose \texttt{H5Pmodify\_filter\_by\_idx} through the same pattern
-  (\SectionRef{sec:modify-bindings}).
+  (\SectionRef{sec:modify-bindings}).  The typed parameter accessors
+  (\texttt{H5Zconfig\_get\_int}, \texttt{H5Zconfig\_get\_double},
+  \texttt{H5Zconfig\_get\_bool}, \texttt{H5Zconfig\_get\_str};
+  \SectionRef{sec:config-get-param}) are \emph{not} wrapped: they are
+  \texttt{H5Zdevelop.h} helpers consumed by \texttt{set\_config}
+  implementations, and filter plugins are written in C.
 \end{itemize}
 
 This design does not cover:
@@ -61,8 +65,8 @@ This design does not cover:
   (\SectionRef{sec:modify-filter}), which this RFC adds.
 \item VFD and VOL connector string configuration.  The TOML-based parameter
   string grammar defined here is designed to extend naturally to VFD/VOL
-  configuration, and \SectionRef{sec:vfd-use-cases} documents that design
-  as forward-looking context.  The VFD/VOL configuration API changes
+  configuration; \SectionRef{sec:appendix-vfd} records that design as
+  forward-looking context.  The VFD/VOL configuration API changes
   (\texttt{H5FDconfig\_get\_subtable\_str}, profile constants, etc.) are
   explicitly out of scope for this RFC.
 \item In-file blob configuration storage for filters whose configuration

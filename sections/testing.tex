@@ -84,7 +84,8 @@ and the raw \texttt{cd\_values} form of \texttt{H5Pappend\_filter} ---
 continue to be written as \texttt{H5O\_PLINE\_VERSION\_2} messages,
 byte-identical to pre-RFC output at any libver bound.  Pipelines carrying
 stored configuration strings are written as \texttt{H5O\_PLINE\_VERSION\_3}
-messages, which persist each entry's parameter string verbatim alongside
+messages, which persist each entry's parameter string, in the canonical
+form of \SectionRef{sec:config-canonical-form}, alongside
 \texttt{cd\_values}; libraries predating version~3 reject such messages
 with a clear dataset-open error, and callers who need old-reader
 compatibility bound the file format with \texttt{H5Pset\_libver\_bounds},
@@ -147,8 +148,12 @@ in \texttt{H5Zdevelop.h} explicitly warns against stateful parsing.
 For pipelines configured through the string API and written without a
 restrictive libver bound, \texttt{H5Pget\_filter\_params\_by\_idx} returns
 the stored string byte-for-byte, so strict string equality after a
-set-then-get round trip \emph{does} hold --- this RFC's primary path has
-no lossy round-trip.  The residual risk is confined to the fallback
+set-then-get round trip \emph{does} hold --- against the \emph{canonical
+form} of the input (\SectionRef{sec:config-canonical-form}), which differs
+from the caller's literal text only when that text carried outer braces or
+a hex-float literal.  This RFC's primary path has no lossy round-trip, and
+because the canonical form is a fixed point, a second set-then-get cycle
+returns the identical bytes.  The residual risk is confined to the fallback
 paths: entries configured via raw \texttt{cd\_values}, pre-RFC files, and
 files written under a libver bound that forced the version-2 message.
 There, \texttt{get\_config} reconstructs the string from
@@ -489,8 +494,42 @@ These tests exercise the version-3 pipeline message
   string containing a float with many significant digits (e.g.,
   \texttt{rate = 3.5555555555555554}) and a quoted string value.  Close and
   reopen the file; verify \texttt{H5Pget\_filter\_params\_by\_idx} returns
-  the input string byte-for-byte, with the plugin \emph{not} loaded
-  (e.g., \texttt{HDF5\_PLUGIN\_PATH} unset).
+  the input string byte-for-byte --- this input carries neither outer braces
+  nor a hex-float literal, so its canonical form is the input itself ---
+  with the plugin \emph{not} loaded (e.g., \texttt{HDF5\_PLUGIN\_PATH}
+  unset).
+\item \texttt{fmt-01a} (\textbf{canonicalisation is applied}): Repeat
+  \texttt{fmt-01} with an input that exercises both rewrites, e.g.
+  \texttt{\{tolerance = 0x1p-36\}}.  Verify that
+  \texttt{H5Pget\_filter\_params\_by\_idx} returns the canonical form
+\begin{Verbatim}[fontsize=\scriptsize]
+    tolerance = 1.45519152283668518e-11
+\end{Verbatim}
+  \noindent with outer braces stripped and the hex literal rewritten, and
+  that a correctly rounded \texttt{strtod} of that numeral yields exactly
+  $2^{-36}$.  Verify that a stock TOML parser
+  accepts the returned bytes and rejects the original input, which is the
+  property the canonical form exists to provide
+  (\SectionRef{sec:config-canonical-form}).
+\item \texttt{fmt-01b} (\textbf{canonicalisation is idempotent}): Feed the
+  string returned by \texttt{fmt-01a} back through
+  \texttt{H5Pappend\_filter} and write a second file; verify the stored
+  bytes are byte-identical to the first file's.  Repeat the cycle once more
+  through \texttt{h5repack} to confirm that repeated copies do not drift.
+\item \texttt{fmt-01c} (\textbf{value transparency across the rewrite}):
+  For a filter that quantises on a binary boundary, verify that
+  \texttt{set\_config} applied to \texttt{tolerance = 0x1p-36} and to its
+  canonical decimal form produce identical \texttt{cd\_values}.  Repeat at
+  several exact powers of two spanning the exponent range, including
+  subnormals, since a decimal-to-binary conversion that is not correctly
+  rounded (\SectionRef{sec:float-precision}) is observable only at these
+  boundaries --- a 1~ulp error there moves the value a whole quantisation
+  bucket.  Subnormals matter here because a float scanner that treats any
+  \texttt{errno} from \texttt{strtod} as a parse failure rejects every
+  subnormal literal: glibc raises \texttt{ERANGE} on underflow to a
+  subnormal even though the conversion succeeded and returned the correctly
+  rounded value.  Overflow to $\pm$\texttt{HUGE\_VAL} and underflow to zero
+  must still be rejected.
 \item \texttt{fmt-02} (\textbf{version selection, strings present}): With
   default libver bounds, verify the pipeline message is written as
   version~3 (via \texttt{h5debug} or direct message decode) when at least

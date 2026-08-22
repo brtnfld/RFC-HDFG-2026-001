@@ -138,9 +138,15 @@ value of~2 (mapping \texttt{H5Z\_class\_t} $\rightarrow$ \texttt{H5Z\_class2\_t}
 bumped to~3. See \SectionRef{sec:version-numbering}.
 
 \verysubsection{R16}
-Developer helper for plugin authors. The library provides
-\texttt{H5Zconfig\_get\_param} in \texttt{H5Zdevelop.h}, returning \texttt{htri\_t} with an
-explicit \texttt{size\_t *val\_len} output. See \SectionRef{sec:config-get-param}.
+Developer helper for plugin authors. The library provides typed accessors in
+\texttt{H5Zdevelop.h}---\texttt{H5Zconfig\_get\_int},
+\texttt{H5Zconfig\_get\_double}, \texttt{H5Zconfig\_get\_bool}, and
+\texttt{H5Zconfig\_get\_str}, alongside \texttt{H5Zconfig\_has\_key}---each
+returning \texttt{htri\_t} ($>0$ found, $0$ absent, $<0$ error).  The
+string accessor carries an in/out \texttt{size\_t *buf\_size} for the standard
+size-query pattern.  The single string-returning helper of earlier drafts was
+superseded when the parameter format became TOML-typed.
+See \SectionRef{sec:config-get-param}.
 
 \verysubsection{R17}
 Filter availability check. A by-name variant of \texttt{H5Zfilter\_avail} is NOT
@@ -249,7 +255,8 @@ deprecation handling) for the \texttt{H5Pset\_filter2} name, which the group jud
 acceptable given the long-term usability benefit. This decision also simplifies
 the new additions to the public \texttt{H5Z} API surface: the only new public
 functions are \texttt{H5Pset\_filter2}, \texttt{H5Pget\_filter\_params\_by\_idx},
-and the developer-facing \texttt{H5Zconfig\_get\_param}. See \SectionRef{sec:append-filter}.
+and the developer-facing \texttt{H5Zconfig\_get\_*} accessors. See
+\SectionRef{sec:append-filter}.
 
 \verysubsection{R28}
 Normative string and parameter limits. The maximum parameter string length
@@ -335,8 +342,8 @@ collective \texttt{H5Dcreate}.  See \SectionRef{sec:append-filter}.
 
 \verysubsection{R38}
 Raw-string callback interface retained.  \texttt{set\_config} receives
-\texttt{const char *params} and uses \texttt{H5Zconfig\_get\_param} for
-key lookup.  Pre-tokenization was rejected: parsing overhead is
+\texttt{const char *params} and uses the typed \texttt{H5Zconfig\_get\_*}
+accessors (\SectionRef{sec:config-get-param}) for key lookup.  Pre-tokenization was rejected: parsing overhead is
 microseconds vs.\ millisecond dataset creation; switching would change the
 \texttt{H5Z\_set\_config\_func\_t} ABI and burden plugin authors.  Token
 caching can be added transparently inside the library if ever needed.

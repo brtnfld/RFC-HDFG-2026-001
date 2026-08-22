@@ -13,11 +13,23 @@ string API is fully functional without third-party plugins.
 
 For built-in filters that have dedicated \texttt{H5Pset\_*} functions with non-trivial
 validation logic (particularly SZIP and Scale-Offset), the \texttt{set\_config}
-callback delegates to the existing internal validation code rather than
-reimplementing it independently. This prevents divergence between the two
-configuration paths and ensures that validation constraints are applied
-consistently regardless of whether the filter was configured via
-\texttt{H5Pset\_szip} or \texttt{H5Pappend\_filter}.
+callback does \emph{not} call the public setter.  Doing so would re-enter the
+property-list layer that invoked the callback in the first place, and the public
+setters take a \texttt{hid\_t} DCPL rather than the \texttt{cd\_values} array the
+callback must fill.  Instead, the validation logic in each such
+\texttt{H5Pset\_*} implementation is factored out into a package-internal static
+helper (e.g., an \texttt{H5Z\_\_szip\_parms\_check()} extracted from
+\texttt{H5Pset\_szip}), and both paths call that one helper.  The
+\texttt{set\_config} callback then writes \texttt{cd\_values} itself.  Sharing the
+helper---rather than either duplicating the checks or delegating to the public
+API---is what prevents divergence between the two configuration paths and
+ensures that validation constraints are applied consistently regardless of
+whether the filter was configured via \texttt{H5Pset\_szip} or
+\texttt{H5Pappend\_filter}.
+
+Throughout this section, ``does not call \texttt{H5Pset\_*}'' should be read in
+this sense: the public API is not invoked, but the validation rules it enforces
+are, via the shared helper.
 
 \verysubsection{Implementation note}
 Each built-in filter is converted to \texttt{H5Z\_class3\_t} in its existing
@@ -58,8 +70,9 @@ No parameters. \texttt{params} should be \texttt{NULL}.
   values, translates \texttt{coding} into the appropriate option mask
   (\texttt{H5\_SZIP\_EC\_OPTION\_MASK} or \texttt{H5\_SZIP\_NN\_OPTION\_MASK}),
   and populates \texttt{cd\_values} directly.  Validation checks that
-  \texttt{pixels\_per\_block} is an even integer in \texttt{[2,~32]}.  The
-  callback does not delegate to \texttt{H5Pset\_szip}.
+  \texttt{pixels\_per\_block} is an even integer in \texttt{[2,~32]}, by calling
+  the shared internal helper \texttt{H5Z\_\_szip\_parms\_check()} factored out of
+  \texttt{H5Pset\_szip} rather than the public \texttt{H5Pset\_szip} API itself.
 \item Example: \texttt{coding = "entropy", pixels\_per\_block = 8}
 \end{itemize}
 
@@ -78,10 +91,12 @@ No user-facing parameters (derived from datatype). \texttt{params} should be
   in \texttt{H5Zscaleoffset.c}) parses the parameter string directly using
   \texttt{H5Zconfig\_get\_str} and \texttt{H5Zconfig\_get\_int}, translates
   \texttt{scale\_type} into the corresponding \texttt{H5Z\_SO\_*} enumerator,
-  validates that \texttt{scale\_factor} is non-negative, and populates
-  \texttt{cd\_values} directly.  The callback returns
-  \texttt{H5E\_BADVALUE} if either key is absent.  The callback does not
-  delegate to \texttt{H5Pset\_scaleoffset}.
+  validates that \texttt{scale\_factor} is non-negative---via the shared internal
+  helper \texttt{H5Z\_\_scaleoffset\_parms\_check()} factored out of
+  \texttt{H5Pset\_scaleoffset} rather than the public
+  \texttt{H5Pset\_scaleoffset} API itself---and populates \texttt{cd\_values}
+  directly.  The callback returns \texttt{H5E\_BADVALUE} if either key is
+  absent.
 \item Example: \texttt{scale\_type = "float\_dscale", scale\_factor = 4}
 \end{itemize}
 
@@ -197,7 +212,11 @@ A further concern specific to floating-point parameters is
 CPU architectures (e.g., x86\_64 and ARM64), the conversion of a decimal
 string such as \texttt{"rate=3.55555555"} to a \texttt{double} may produce
 different bit patterns if the platform \texttt{strtod} implementations are
-not both correctly-rounded per IEEE~754.  The stored configuration string
+not both correctly-rounded per IEEE~754 --- which
+\SectionRef{sec:float-precision} makes a normative requirement precisely
+because a 1~ulp divergence is not merely a parallel-consistency matter, but
+also changes the value a filter receives.  The following applies to
+platforms that do not meet that requirement.  The stored configuration string
 (\SectionRef{sec:pline-v3}) is identical across ranks by construction, but
 the \texttt{cd\_values} produced by each rank's \texttt{set\_config} become
 deterministic only after the string-to-\texttt{double} conversion is in
@@ -483,8 +502,8 @@ SUBROUTINE h5pappend_filter_str_f(prp_id, filter, flags, params, hdferr)
         BIND(C, NAME='H5Pappend_filter_str_c')
       IMPORT :: HID_T, C_INT, C_CHAR
       INTEGER(HID_T), VALUE                            :: plist_id
-      INTEGER(C_INT), VALUE                            :: filter_c
-      INTEGER(C_INT), VALUE                            :: flags_c
+      INTEGER(C_INT), VALUE                            :: filter_c  ! H5Z_filter_t
+      INTEGER(C_INT), VALUE                            :: flags_c   ! unsigned
       CHARACTER(KIND=C_CHAR), DIMENSION(*), INTENT(IN) :: params_c
     END FUNCTION H5Pappend_filter_str_c
   END INTERFACE
@@ -496,28 +515,160 @@ END SUBROUTINE h5pappend_filter_str_f
 ! Raw cd_values form -- wrapper calling H5Pappend_filter_raw_c
 SUBROUTINE h5pappend_filter_raw_f(prp_id, filter, flags, cd_nelmts, cd_values, hdferr)
   IMPLICIT NONE
-  INTEGER(HID_T),  INTENT(IN)              :: prp_id
-  INTEGER,         INTENT(IN)              :: filter
-  INTEGER,         INTENT(IN)              :: flags
-  INTEGER(SIZE_T), INTENT(IN)              :: cd_nelmts
+  INTEGER(HID_T),  INTENT(IN)               :: prp_id
+  INTEGER,         INTENT(IN)               :: filter
+  INTEGER,         INTENT(IN)               :: flags
+  INTEGER(SIZE_T), INTENT(IN)               :: cd_nelmts
   INTEGER,         DIMENSION(*), INTENT(IN) :: cd_values
-  INTEGER,         INTENT(OUT)             :: hdferr
+  INTEGER,         INTENT(OUT)              :: hdferr
+
+  ! Default-kind INTEGER is not necessarily C_INT (e.g. under -i8), so the
+  ! array is converted element-wise rather than passed through.
+  INTEGER(C_INT), DIMENSION(:), ALLOCATABLE :: cd_values_c
   INTERFACE
     INTEGER(C_INT) FUNCTION H5Pappend_filter_raw_c( &
         plist_id, filter_c, flags_c, cd_nelmts_c, cd_vals) &
         BIND(C, NAME='H5Pappend_filter_raw_c')
       IMPORT :: HID_T, C_INT, SIZE_T
       INTEGER(HID_T), VALUE                    :: plist_id
-      INTEGER(C_INT), VALUE                    :: filter_c
-      INTEGER(C_INT), VALUE                    :: flags_c
+      INTEGER(C_INT), VALUE                    :: filter_c  ! H5Z_filter_t
+      INTEGER(C_INT), VALUE                    :: flags_c   ! unsigned
       INTEGER(SIZE_T), VALUE                   :: cd_nelmts_c
       INTEGER(C_INT), DIMENSION(*), INTENT(IN) :: cd_vals
     END FUNCTION H5Pappend_filter_raw_c
   END INTERFACE
+
+  ALLOCATE(cd_values_c(MAX(cd_nelmts,1_SIZE_T)), STAT=hdferr)
+  IF (hdferr /= 0) THEN
+     hdferr = -1
+     RETURN
+  END IF
+  cd_values_c(1:cd_nelmts) = INT(cd_values(1:cd_nelmts), C_INT)
+
   hdferr = INT(H5Pappend_filter_raw_c(prp_id, INT(filter,C_INT), &
-               INT(flags,C_INT), INT(cd_nelmts,SIZE_T), cd_values))
+               INT(flags,C_INT), cd_nelmts, cd_values_c))
+  DEALLOCATE(cd_values_c)
 END SUBROUTINE h5pappend_filter_raw_f
 \end{minted}
+
+\verysubsection{Fortran introspection: \texttt{h5pget\_filter\_params\_by\_idx\_f}}
+
+\texttt{H5Pget\_filter\_params\_by\_idx} (\SectionRef{sec:introspection}) takes
+no union argument, so its wrapper binds directly to the public C entry point
+and needs no \texttt{H5Zf.c} helper.  The wrapper hides the C size-query
+protocol: it calls the C function twice --- once with a null buffer to learn
+the length, once to populate an exactly sized temporary --- and copies the
+result into the caller's \texttt{CHARACTER} variable.  \texttt{params\_len}
+returns the \emph{full} length of the parameter string even when
+\texttt{params} was too short to hold it, so a caller can detect truncation by
+comparing it against \texttt{LEN(params)}.
+
+\begin{minted}{fortran}
+! In H5Pff.F90
+SUBROUTINE h5pget_filter_params_by_idx_f(prp_id, filter_idx, params, hdferr, &
+                                        params_len)
+  IMPLICIT NONE
+  INTEGER(HID_T),   INTENT(IN)            :: prp_id
+  INTEGER,          INTENT(IN)            :: filter_idx
+  CHARACTER(LEN=*), INTENT(OUT)           :: params
+  INTEGER,          INTENT(OUT)           :: hdferr
+  INTEGER(SIZE_T),  INTENT(OUT), OPTIONAL :: params_len
+
+  CHARACTER(LEN=1,KIND=C_CHAR), DIMENSION(:), ALLOCATABLE, TARGET :: buf
+  INTEGER(SIZE_T) :: needed, ncopy, i
+  INTEGER(C_INT)  :: rc
+  INTERFACE
+    INTEGER(C_INT) FUNCTION H5Pget_filter_params_by_idx_c( &
+        plist_id, filter_idx_c, params_buf, params_buf_size, params_len_c) &
+        BIND(C, NAME='H5Pget_filter_params_by_idx')
+      IMPORT :: HID_T, C_INT, C_PTR, SIZE_T
+      INTEGER(HID_T),  VALUE :: plist_id
+      INTEGER(C_INT),  VALUE :: filter_idx_c     ! unsigned
+      TYPE(C_PTR),     VALUE :: params_buf       ! C_NULL_PTR => size query
+      INTEGER(SIZE_T), VALUE :: params_buf_size
+      INTEGER(SIZE_T)        :: params_len_c     ! by reference
+    END FUNCTION H5Pget_filter_params_by_idx_c
+  END INTERFACE
+
+  params = ''
+  IF (PRESENT(params_len)) params_len = 0_SIZE_T
+
+  ! Pass 1: size query (params_len is set even with a null buffer)
+  rc = H5Pget_filter_params_by_idx_c(prp_id, INT(filter_idx,C_INT), &
+                                     C_NULL_PTR, 0_SIZE_T, needed)
+  IF (rc < 0) THEN
+     hdferr = INT(rc)
+     RETURN
+  END IF
+  IF (PRESENT(params_len)) params_len = needed
+
+  ! Pass 2: populate an exactly sized buffer, then copy out
+  ALLOCATE(buf(needed+1), STAT=hdferr)
+  IF (hdferr /= 0) THEN
+     hdferr = -1
+     RETURN
+  END IF
+  rc = H5Pget_filter_params_by_idx_c(prp_id, INT(filter_idx,C_INT), &
+                                     C_LOC(buf(1)), needed+1, needed)
+  IF (rc >= 0) THEN
+     ncopy = MIN(needed, INT(LEN(params), SIZE_T))
+     DO i = 1, ncopy
+        params(i:i) = buf(i)
+     END DO
+  END IF
+  DEALLOCATE(buf)
+  hdferr = INT(rc)
+END SUBROUTINE h5pget_filter_params_by_idx_f
+\end{minted}
+
+\noindent The returned \texttt{params} is blank-padded to the declared length
+of the caller's variable, following the usual Fortran convention; the
+NUL-terminated C form is not exposed.  A filter configured through the raw
+\texttt{cd\_values} path yields the \texttt{get\_config} reconstruction or the
+\texttt{cd\_values} fallback string, exactly as in C
+(\SectionRef{sec:introspection}).
+
+\verysubsection{Fortran interoperable type mapping}
+\texttt{H5Z\_filter\_t} is \texttt{typedef int} in \texttt{H5Zpublic.h}, so
+\texttt{INTEGER(C\_INT)} is its exact interoperable counterpart on every
+platform HDF5 supports; no separate \texttt{H5Z\_FILTER\_T} Fortran kind
+parameter is needed.  The \texttt{flags} argument is \texttt{unsigned} in C and
+is likewise passed as \texttt{INTEGER(C\_INT)}: Fortran has no unsigned integer
+type, and this is the convention the existing HDF5 Fortran binding already uses
+for \texttt{H5Pset\_filter}'s \texttt{flags}.  The filter flag bits in use
+occupy the low bits of the word, so the signed/unsigned reinterpretation is
+value-preserving in practice; the C helpers in \texttt{H5Zf.c} cast back to
+\texttt{unsigned} on entry.
+
+\textbf{Default-kind \texttt{INTEGER} arguments are converted, never passed
+through.}  The user-facing arguments \texttt{filter}, \texttt{flags},
+\texttt{filter\_idx}, and \texttt{cd\_values} are declared as default-kind
+\texttt{INTEGER} so that callers need not name a specific kind, but default
+\texttt{INTEGER} is not guaranteed to be \texttt{C\_INT}: a build using
+\texttt{-fdefault-integer-8} or \texttt{-i8} makes it 64-bit while the C
+interface still expects 32-bit.  Scalars are therefore converted at the call
+site with \texttt{INT(x, C\_INT)}, and the \texttt{cd\_values} array is
+converted element-wise into an \texttt{INTEGER(C\_INT)} temporary rather than
+passed through --- an unadorned \texttt{INTEGER, DIMENSION(*)} actual argument
+would otherwise reach C as an array of the wrong element width, misreading
+every element after the first.  When default \texttt{INTEGER} already is
+\texttt{C\_INT} the conversion is a plain copy.  The temporary is
+\texttt{ALLOCATABLE} rather than an automatic array because \texttt{cd\_nelmts}
+is bounded only by \texttt{UINT16\_MAX}
+(\SectionRef{sec:callback-specs}); typical filters use fewer than a dozen
+elements, so the allocation is negligible against the surrounding property-list
+work.
+
+\textbf{Range caveat.}  \texttt{cd\_values} elements are \texttt{unsigned int}
+in C, and Fortran cannot represent values above \texttt{HUGE(0)} in a
+default-kind \texttt{INTEGER}.  Callers that need the full unsigned range ---
+for example a filter whose \texttt{cd\_values} carry the bit pattern of a
+\texttt{double} (\SectionRef{sec:cd-packing-convention}) --- pass those
+elements as negative two's-complement values, which reach C with the intended
+bit pattern.  This is pre-existing behaviour of
+\texttt{h5pset\_filter\_f} and is unchanged here; the string form
+(\texttt{h5pappend\_filter\_str\_f}) avoids the question entirely, which is
+the recommended path for Fortran callers.
 
 \verysubsection{Fortran string passing convention}
 Fortran \texttt{CHARACTER(LEN=*)} strings are not NUL-terminated; the
@@ -545,18 +696,25 @@ IMPLICIT NONE
 INTEGER(HID_T)        :: plist
 INTEGER               :: hdferr
 INTEGER, DIMENSION(1) :: cd_vals = [6]
+CHARACTER(LEN=256)    :: params
+INTEGER(SIZE_T)       :: params_len
 
 CALL h5pcreate_f(H5P_DATASET_CREATE_F, plist, hdferr)
 
 ! String form (generic resolves to h5pappend_filter_str_f)
 CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
-                             "level=6"//C_NULL_CHAR, hdferr)
+                             "level=6", hdferr)
 
 ! Raw cd_values form (generic resolves to h5pappend_filter_raw_f)
 CALL h5pappend_filter_f(plist, H5Z_FILTER_DEFLATE_F, &
                              H5Z_FLAG_MANDATORY_F,        &
                              1_SIZE_T, cd_vals, hdferr)
+
+! Introspection: read back entry 0's configuration string
+CALL h5pget_filter_params_by_idx_f(plist, 0, params, hdferr, params_len)
+IF (hdferr >= 0 .AND. params_len <= LEN(params)) &
+   WRITE(*,'(A)') "filter 0: "//TRIM(params)     ! -> level = 6
 \end{minted}
 
 

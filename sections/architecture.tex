@@ -156,7 +156,12 @@ using \texttt{\%.17e}.  This format:
   \item guarantees exact IEEE\,754 double round-trips: C99 \texttt{DBL\_DECIMAL\_DIG}
     is 17, meaning 17 significant decimal digits suffice to distinguish any two
     distinct \texttt{double} values and recover the original bit pattern via
-    \texttt{strtod}; and
+    \texttt{strtod}.  Note that \texttt{\%.17e} emits 18 significant digits ---
+    one before the decimal point plus 17 after --- one more than strictly
+    required; the extra digit is harmless, and the wider format is specified so
+    that no implementation has to reason about the boundary case.  Recovery is
+    exact only if the reader's decimal-to-binary conversion is correctly
+    rounded; see the requirement below; and
   \item is made locale-independent by the implementation: standard
     \texttt{snprintf} respects \texttt{LC\_NUMERIC} and may replace the decimal
     point with a comma (e.g., \texttt{de\_DE} locale), which TOML prohibits.
@@ -176,345 +181,43 @@ using \texttt{\%.17e}.  This format:
     use \texttt{\%g}, \texttt{\%f}, \texttt{\%a}, or fewer than 17 significant
     digits.  Document this requirement in \texttt{H5Zdevelop.h} as a normative
     requirement for third-party plugins.
+  \item \textbf{Decimal-to-binary conversion:} Every conversion of a decimal
+    float literal to \texttt{double} --- in the library's own parser and in
+    every \texttt{set\_config} implementation --- \emph{shall} be correctly
+    rounded per IEEE~754 round-to-nearest, ties-to-even.  This is not
+    guaranteed by the C standard: C11~\S7.22.1.3 (C99~\S7.20.1.3) permits \texttt{strtod} to
+    return either of the two representable values adjacent to the correctly
+    rounded result, chosen in an implementation-defined manner.  A 1~ulp
+    error is enough to change a filter's behaviour whenever the filter
+    quantises on a binary boundary
+    (\SectionRef{sec:config-canonical-form}), and the stored configuration
+    string is an \emph{input} to \texttt{set\_config}, not only a display
+    artefact.  Implementations on platforms whose \texttt{strtod} is not
+    known to be correctly rounded must supply their own conversion.  In
+    practice glibc, musl, and the Microsoft UCRT are correctly rounded, as
+    are the parsers mandated by the Java and Python language
+    specifications, so pure-reimplementation readers such as jHDF and
+    pyfive are unaffected.
   \item \textbf{Documentation:} Add a note to \texttt{H5Zdevelop.h} and the
-    plugin author guide explaining the \texttt{\%.17e} requirement and why
-    \texttt{\%.17g} is insufficient.
+    plugin author guide explaining the \texttt{\%.17e} requirement, why
+    \texttt{\%.17g} is insufficient, and the correctly-rounded conversion
+    requirement above.
 \end{itemize}
 \end{notebox}
 
 \verysubsection{Additional constraints — VFD/VOL profile (future work)}
 
 \begin{outofscope}
-VFD/VOL configuration is out of scope for this RFC.  The constraints below
-are forward-looking design notes included for completeness.
+VFD and VOL connector configuration is out of scope for this RFC.  A
+forward-looking sketch---the relaxed grammar profile those contexts would
+need (full TOML v1.0.0 documents, unbounded nesting depth, the
+\texttt{H5FD\_CONFIG\_*} limits), a use-case-by-use-case walkthrough of VFD
+stack configuration, and the sub-table extraction helper that stack
+delegation would require---is collected in
+\SectionRef{sec:appendix-vfd}.  It is recorded there to show that the
+grammar chosen above scales to those contexts without a second syntax;
+none of it is proposed for implementation here.
 \end{outofscope}
-
-VFD and VOL connector configuration strings require richer structure than
-filter parameter strings: arbitrary stack depth, arrays (e.g., lists of
-endpoint addresses), and file-based delivery that benefits from multi-section
-TOML documents.  The following relaxed constraints apply to parameter strings
-used in VFD and VOL connector configuration contexts.
-
-\begin{itemize}
-\item \textbf{Full TOML v1.0.0 document syntax supported:} Arrays
-  (\texttt{[1,2,3]}), multi-line strings, and document-level tables
-  (\texttt{[section]}) are all accepted.
-\item \textbf{Arbitrary nesting depth:} Inline tables and dotted keys may be
-  nested to any depth required to express the VFD stack hierarchy.  There is
-  no library-imposed depth limit beyond available stack memory.
-\item \textbf{Maximum string length:} \texttt{H5FD\_CONFIG\_STRING\_MAX} (=
-  16384 bytes).  A full multi-level VFD stack with a SWMR configuration group
-  is unlikely to exceed a few kilobytes; 16\,KB provides ample headroom.
-  Strings exceeding this limit are rejected with \texttt{H5E\_BADVALUE}.
-\item \textbf{Maximum top-level key count:} \texttt{H5FD\_CONFIG\_MAX\_PARAMS}
-  (= 256).  Strings containing more top-level keys are rejected with
-  \texttt{H5E\_BADVALUE}.
-\item \textbf{Special float values:} \texttt{inf}, \texttt{-inf}, and
-  \texttt{nan} are rejected with \texttt{H5E\_BADVALUE}, consistent with the
-  filter profile.
-\item \textbf{Locale independence:} C-locale numeric conversion applies, as
-  in the filter profile.
-\end{itemize}
-
-The VFD name is expressed as the sole top-level key, with its configuration
-parameters as the value (an inline table or dotted keys).  An underlying VFD
-in a stack is expressed as a nested key under the outer VFD's table.  An
-empty parameter list is expressed as an empty inline table (\texttt{\{\}}).
-For example, a three-level page-buffer~$\to$~encryption~$\to$~sec2 stack:
-
-\begin{minted}{toml}
-page_buffer.page_size       = 4096
-page_buffer.max_num_pages   = 64
-page_buffer.underlying_vfd.encryption_vfd.plaintext_page_size = 4096
-page_buffer.underlying_vfd.encryption_vfd.key = "0123456789ABCDEF..."
-page_buffer.underlying_vfd.encryption_vfd.underlying_vfd.sec2 = {}
-\end{minted}
-
-or equivalently as inline tables:
-
-\begin{minted}{toml}
-page_buffer = {
-  page_size = 4096, max_num_pages = 64,
-  underlying_vfd = { encryption_vfd = {
-    plaintext_page_size = 4096, key = "0123456789ABCDEF...",
-    underlying_vfd = { sec2 = {} }
-  }}
-}
-\end{minted}
-
-\subsection{VFD/VOL Profile: Use Case Coverage (Future Work)}
-\label{sec:vfd-use-cases}
-
-\begin{outofscope}
-This subsection is out of scope for this RFC.  It is included as
-forward-looking design context to demonstrate that the TOML grammar chosen
-for filter configuration extends naturally to VFD and VOL connector
-configuration.  The API changes described here
-(\texttt{H5FDconfig\_get\_subtable\_str}, \texttt{H5FDconfig\_load\_from\_file},
-VFD/VOL profile constants) are not part of this RFC.
-\end{outofscope}
-
-This subsection demonstrates, use case by use case, that the TOML VFD/VOL
-profile is sufficient to express all VFD stack configuration requirements.
-The Lifeboat VFD configuration RFC~\cite{lifeboat-vfd-cl} provides a concrete
-set of use cases and motivates several of the design choices described hereafter.
-
-\verysubsection{UC-1: Flat scalar VFD parameters}
-
-\textbf{Use case.}  A VFD such as the page buffer VFD requires a small set of
-scalar parameters: page size, maximum number of pages, replacement policy.
-
-\textbf{Coverage.}  Standard TOML key\,=\,value pairs cover this
-directly.  The grammar provides typed integers, floats, booleans, and quoted
-strings without any extension.  Example:
-
-\begin{minted}{toml}
-page_buffer = { page_size = 4096, max_num_pages = 64, replacement_policy = 0 }
-\end{minted}
-
-No aspect of this use case requires any relaxation beyond ordinary TOML.
-
-\verysubsection{UC-2: Boolean flags}
-
-\textbf{Use case.}  VFD SWMR configuration contains several boolean fields
-(e.g., \texttt{presume\_posix\_semantics}, \texttt{flush\_raw\_data}).  The
-Lifeboat grammar has no boolean type; it uses integer \texttt{0}/\texttt{1}
-as a workaround, requiring comment annotations (\texttt{/* <- Use integer for
-bool value */}) to explain the intent.
-
-\textbf{Coverage.}  TOML has a native boolean type:
-\texttt{true}/\texttt{false} (lowercase, unquoted).  The intent is
-self-documenting and the parser enforces the type without integer-to-boolean
-coercion.  Example:
-
-\begin{minted}{toml}
-H5F_vfd_swmr_config = {
-  presume_posix_semantics = true,
-  flush_raw_data          = true,
-  generate_updater_files  = false
-}
-\end{minted}
-
-Native boolean support eliminates the need for integer \texttt{0}/\texttt{1} workarounds.
-
-\verysubsection{UC-3: Binary blob values (e.g., encryption keys)}
-
-\textbf{Use case.}  The encryption VFD requires a raw binary key (32 bytes in
-the Lifeboat example).  The Lifeboat grammar introduces a special
-\texttt{<binary\_blob>} terminal with a \texttt{--} prefix to distinguish hex
-byte sequences from identifiers and integers.
-
-\textbf{Coverage.}  TOML has no native binary type, but a quoted
-string carrying a hex-encoded value is fully sufficient.  The VFD callback
-receives the string and decodes it.  The convention is explicit and requires no
-grammar extension:
-
-\begin{minted}{toml}
-encryption_vfd = {
-  key = "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF"
-}
-\end{minted}
-
-TOML's quoted string type carries arbitrary content, so no disambiguation
-prefix is needed.  The decoding convention (e.g., hex, base64) is specified
-by the VFD and validated in its configuration entry point, as with all other
-parameter types.
-
-\textbf{Validation responsibility.}  In the Lifeboat grammar, the parser
-natively enforces that a \texttt{<binary\_blob>} terminal contains only valid
-hex characters.  Under TOML the parser treats the value as an opaque string;
-it is therefore the VFD's responsibility to validate the string's content
-(character set, byte length, encoding) and return \texttt{H5E\_BADVALUE} if
-the value is malformed.  This is the same responsibility pattern already
-required of all other parameter types: the TOML grammar validates syntax and
-type, while semantic validation (range checks, format checks) belongs to the
-VFD.  The shift is in degree, not in kind.
-
-\verysubsection{UC-4: Arbitrary-depth VFD stack nesting}
-
-\textbf{Use case.}  A VFD stack may contain three or more levels (e.g.,
-page buffer~$\to$~encryption~$\to$~sec2).  Each VFD must be able to read its
-own parameters and forward the remaining configuration to the underlying VFD,
-without any VFD needing to know the schema of its neighbors.
-
-\textbf{Coverage.}  TOML inline tables and dotted keys are
-recursively defined and support arbitrary nesting depth.  The VFD/VOL profile
-removes any library-imposed depth limit.  Each VFD in the stack reads the
-keys it recognizes by name and extracts the \texttt{underlying\_vfd} sub-table
-to pass to the next level.  Because TOML keys are named rather than
-positional, each VFD looks up only what it knows about and ignores everything
-else; no VFD needs visibility into any other VFD's schema.
-
-The full three-level example from UC-1:
-
-\begin{minted}{toml}
-page_buffer = {
-  page_size = 4096, max_num_pages = 64,
-  underlying_vfd = { encryption_vfd = {
-    plaintext_page_size = 4096, key = "...",
-    underlying_vfd = { sec2 = {} }
-  }}
-}
-\end{minted}
-
-The page buffer VFD reads \texttt{page\_size} and \texttt{max\_num\_pages},
-then calls \texttt{H5FDconfig\_get\_subtable\_str} to extract the
-\texttt{underlying\_vfd} value as a raw TOML string
-(\SectionRef{sec:subtable-extraction}), creates a new FAPL, and loads that
-string into the FAPL's \texttt{driver\_config\_str} field via
-\texttt{H5FDconfig\_load\_str\_into\_fapl}.  The encryption VFD
-receives that FAPL, reads its own keys from the extracted string, and
-similarly forwards the \texttt{underlying\_vfd.sec2} sub-table to the sec2
-configuration.  No VFD ever parses keys belonging to another VFD.
-
-\textbf{API note.}  VFDs do not use the \texttt{H5Z\_class3\_t.set\_config}
-callback defined in \SectionRef{sec:class3}; that callback is specific to I/O
-filters.  VFD configuration strings are delivered via the
-\texttt{driver\_config\_str} field of \texttt{H5FD\_driver\_prop\_t} (defined
-in \texttt{H5FDprivate.h}), which is already present in the HDF5 library.
-The TOML VFD/VOL profile described here specifies the \emph{format} of that
-string; no change to the \texttt{H5FD\_class\_t} struct or the VFD open
-callback signature is required by this RFC.
-
-\verysubsection{UC-5: VFD name as the top-level identifier}
-
-\textbf{Use case.}  In the Lifeboat grammar, the VFD name is the outer
-identifier of the top-level name-value pair: \texttt{( page\_buffer ( \ldots )
-)}.  The configuration string is self-describing: the consumer can determine
-which VFD is being configured without out-of-band information.
-
-\textbf{Coverage.}  The same self-describing property is achieved
-by convention: the VFD name is the sole top-level key, and its value is the
-parameter table.  A configuration string that begins with
-\texttt{page\_buffer~=~\{~\ldots~\}} unambiguously identifies the page buffer
-VFD as the top-level driver.  The library reads the top-level key name to
-determine which VFD to load and configure.
-
-\textbf{Sole top-level key enforcement.}  The library validates that a
-VFD/VOL profile configuration string contains \emph{exactly one} top-level
-key.  If zero top-level keys are present the string is treated as ``no
-configuration'' (equivalent to a \texttt{NULL} string).  If two or more
-top-level keys are present (e.g., \texttt{page\_buffer = \{\ldots\}, sec2 =
-\{\}}) the library returns \texttt{H5E\_BADVALUE} immediately, before
-consulting any VFD.  This rule ensures unambiguous driver identification and
-mirrors the Lifeboat grammar's constraint that the top-level is always a
-single \texttt{<name\_value\_pair>}.
-
-\verysubsection{UC-6: Empty parameter list}
-
-\textbf{Use case.}  The sec2 VFD requires no configuration parameters.  In
-the Lifeboat grammar this is expressed as \texttt{( sec2 () )} --- a VFD name
-with an explicit but empty parameter list.
-
-\textbf{Coverage.}  An empty inline table \texttt{sec2 = \{\}} is
-the direct and idiomatic equivalent.  The VFD name is present (self-describing),
-the parameter list is explicitly empty, and the grammar requires no special
-case.  \texttt{NULL} or an empty string is also accepted by the VFD/VOL
-profile and treated as ``no parameters'', consistent with the filter profile.
-
-\verysubsection{UC-7: Configuration groups (VFD SWMR)}
-
-\textbf{Use case.}  VFD SWMR requires coordinated configuration across
-multiple subsystems: the SWMR engine itself, the page buffer, file space
-strategy, and file space page size.  Historically these were configured
-independently, risking writer/reader mismatches.  The Lifeboat RFC introduces
-a ``configuration group'' concept: a named outer wrapper containing multiple
-named sub-configurations that are parsed and applied together.
-
-\textbf{Coverage.}  The configuration group maps directly onto a
-TOML table whose value is a list of named sub-tables.  When delivered as an
-inline string (e.g., environment variable or API call), nested inline tables
-express the group:
-
-\begin{minted}{toml}
-vfd_swmr_config_data = {
-  H5F_vfd_swmr_config = {
-    version = 1, tick_len = 4, max_lag = 7,
-    presume_posix_semantics = true, flush_raw_data = true,
-    md_file_path = "./md_dir", md_file_name = "md_file"
-  },
-  page_buffer_config = {
-    page_buf_size = 4096, metadata_pages_only = true
-  },
-  file_space_strategy_config = { persist = false },
-  file_space_page_size        = { page_size = 4096 }
-}
-\end{minted}
-
-When delivered from a file, standard TOML document-level section tables are
-the natural form (permitted under the VFD/VOL profile):
-
-\begin{minted}{toml}
-[vfd_swmr_config_data.H5F_vfd_swmr_config]
-version   = 1
-tick_len  = 4
-max_lag   = 7
-presume_posix_semantics = true
-flush_raw_data          = true
-md_file_path = "./md_dir"
-md_file_name = "md_file"
-
-[vfd_swmr_config_data.page_buffer_config]
-page_buf_size       = 4096
-metadata_pages_only = true
-
-[vfd_swmr_config_data.file_space_strategy_config]
-persist = false
-
-[vfd_swmr_config_data.file_space_page_size]
-page_size = 4096
-\end{minted}
-
-Both forms parse to the same TOML AST and express identical configuration
-data.  However, they are not processed identically at the library level: an
-inline string is stored verbatim in the FAPL's \texttt{driver\_config\_str}
-and consumed directly by VFDs, while a file containing document-level section
-tables is first parsed and normalized to an inline string by the
-file-loading helper (\SectionRef{sec:subtable-extraction}) before being
-placed in the FAPL.  VFDs always see the inline form; the distinction between
-the two authoring styles is transparent to them.
-
-The top-level name (\texttt{vfd\_swmr\_config\_data}) identifies the
-configuration group, and each sub-table name identifies the target subsystem.
-The writer/reader coordination
-problem is solved by the same mechanism: both sides load from the same
-configuration string or file, with the library applying writer- and
-reader-specific flag overrides (\texttt{writer}, \texttt{create\_file})
-programmatically rather than encoding them in the configuration string.
-
-\verysubsection{UC-8: Stack-level delegation without breadth-first parsing}
-
-\textbf{Use case.}  The Lifeboat grammar was designed around a
-\emph{breadth-first} parsing model: when a VFD encounters the configuration
-string, it parses only its own parameters and receives the sub-expression for
-the underlying VFD as a single opaque token, which it passes down the stack
-unchanged.  The motivation, as stated in the Lifeboat RFC, is schema
-isolation: each VFD in the stack should not need to know anything about the
-configuration data for the underlying VFDs.  This is achieved by a
-context-sensitive lexer that, when a name-value pair value is expected,
-treats a parenthesised sub-expression as a single token rather than
-descending into it.  Each VFD parses only the keys at its own level and
-forwards the unparsed sub-expression string down the stack.
-
-\textbf{Schema isolation via AST lookup.}  TOML parsers (including the
-vendored tomlc17 subset) build a full recursive AST in a single pass, after
-which each VFD can locate the keys it recognises by name and extract the
-\texttt{underlying\_vfd} sub-table without scanning past unknown structure.
-Schema isolation is preserved --- each VFD reads only its own keys --- through
-named-key lookup over a complete AST.
-
-\textbf{Implementation.}  Each VFD in the stack receives a TOML configuration
-string via \texttt{driver\_config\_str} in its FAPL.  It parses that string,
-extracts its own keys by name using \texttt{H5FDconfig\_get\_*} helpers, then
-calls \texttt{H5FDconfig\_get\_subtable\_str} (\SectionRef{sec:subtable-extraction})
-to extract the raw source bytes of the \texttt{underlying\_vfd} value — no
-AST-to-string serialization is required, because the helper works directly on
-the original input bytes.  The extracted substring is loaded into a new FAPL's
-\texttt{driver\_config\_str} and passed to the next VFD's open callback.
-Configuration strings are small (well under the 16\,KB VFD/VOL profile limit),
-so the substring extraction overhead is negligible.  Each VFD independently
-validates and consumes only its own configuration data, achieving full schema
-isolation without any special parsing protocol.
 
 \subsection{Examples}
 \label{sec:param-examples}
@@ -559,94 +262,12 @@ fletcher32"}); it is not part of the TOML inline table grammar and is
 rejected with \texttt{H5E\_BADVALUE} outside of quoted strings.
 
 \verysubsection{Sub-table string extraction for VFD stack delegation (future work)}
-\label{sec:subtable-extraction}
 
 \begin{outofscope}
-Out of scope for this RFC.  See \SectionRef{sec:vfd-use-cases}.
-\end{outofscope}
-
-VFD stack delegation (\SectionRef{sec:vfd-use-cases}, UC-4 and UC-8) requires
-a VFD to pass the configuration of its underlying VFD as a string to that
-VFD's configuration entry point.  Because the \texttt{set\_config} entry point
-accepts a \texttt{const char~*} string, a VFD cannot pass a parsed
-\texttt{toml\_table\_t} pointer directly to the next level.
-
-Standard C TOML parsers, including tomlc17, build an in-memory parse tree but
-do not include an emitter to serialize that tree back to a string.  Rather
-than adding a full TOML emitter to the vendored library---which would
-significantly increase complexity and maintenance burden---the library instead
-provides a lightweight helper function that extracts the raw source substring
-corresponding to a named sub-table directly from the original input string:
-
-\begin{minted}{c}
-herr_t H5FDconfig_get_subtable_str(
-    const char  *params,      /* original VFD config string          */
-    const char  *key,         /* dotted key path, e.g. "underlying_vfd" */
-    char        *buf,         /* output buffer, or NULL for size query   */
-    size_t      *buf_size     /* in: capacity; out: required length      */
-);
-\end{minted}
-
-This function locates the value span of \texttt{key} in \texttt{params} by
-scanning the source bytes directly (using the same lexer used by the parser
-to identify balanced brace extents), copies the raw substring into
-\texttt{buf}, and returns its length via \texttt{buf\_size}.  The extracted
-substring is a valid TOML inline table string that the receiving VFD can
-parse independently.  This approach:
-
-\begin{itemize}
-\item Requires no emitter and no AST traversal beyond balanced-brace matching.
-\item Preserves the exact source text, including whitespace and comments,
-  avoiding any round-trip fidelity issues.
-\item Follows the standard HDF5 size-query pattern: passing \texttt{NULL} for
-  \texttt{buf} returns the required buffer size without copying.
-\item Returns \texttt{H5E\_NOTFOUND} if the key is absent, and
-  \texttt{H5E\_BADVALUE} if the value is not a table (i.e., is a scalar).
-\end{itemize}
-
-\textbf{Inline table requirement.}
-\texttt{H5FDconfig\_get\_subtable\_str} operates on inline table syntax only.
-Balanced-brace scanning works because the value of a named key in an inline
-table is always a contiguous, brace-delimited span in the source bytes.
-Document-level section tables (\texttt{[section]}) have no such span: the
-keys of \texttt{[page\_buffer.underlying\_vfd]} are scattered across the file
-with no enclosing braces, so there is no contiguous substring to extract.
-
-This is not a limitation in practice because document-level tables
-\emph{never reach \texttt{driver\_config\_str} directly}.  The two delivery
-paths are:
-
-\begin{enumerate}
-\item \textbf{Inline string} (environment variable, API call): the caller
-  supplies an inline table string, which is stored verbatim in
-  \texttt{driver\_config\_str}.  \texttt{H5FDconfig\_get\_subtable\_str}
-  operates on this string directly.
-\item \textbf{File-based delivery}: the application calls a library helper
-  such as \texttt{H5FDconfig\_load\_from\_file()} (analogous to the Lifeboat
-  \texttt{H5CL\_load\_config\_string\_from\_file()}), which reads the file,
-  parses it into a TOML AST (accepting document-level tables in that parse),
-  and then emits a single normalized inline table string that it stores in
-  the FAPL's \texttt{driver\_config\_str}.  From that point on, all VFDs in
-  the stack see only the inline form.
-\end{enumerate}
-
-The document-level \texttt{[section]} syntax is therefore a user-facing
-authoring convenience.  The library's file-loading helper is the single point
-responsible for normalizing it to inline form; \texttt{H5FDconfig\_get\_subtable\_str}
-and all downstream VFD configuration logic operate exclusively on inline
-strings.  The normalization step requires the file-loading helper to include a
-minimal inline-table emitter, scoped only to that one helper and not exposed
-to VFD authors.
-
-This function is defined in \texttt{H5FDconfig.c} and declared in
-\texttt{H5FDdevelop.h}, placing it in the VFD developer API rather than the
-filter developer API (\texttt{H5Zdevelop.h}).  The \texttt{H5FD} prefix
-distinguishes it from the filter-scoped \texttt{H5Zconfig\_*} helpers.
-
-\begin{outofscope}
-\texttt{H5FDconfig\_get\_subtable\_str} and the associated
-\texttt{H5FDconfig\_load\_from\_file} helper are not part of this RFC and are
-not present in the HDF5 source tree.
+VFD stack delegation needs a way to hand a nested VFD its own slice of the
+configuration string.  The helper that would provide it,
+\texttt{H5FDconfig\_get\_subtable\_str}, is out of scope for this RFC and is
+described in \SectionRef{sec:subtable-extraction}.
 \end{outofscope}
 
 
@@ -986,12 +607,13 @@ typedef struct H5Z_class3_t {
   compare \texttt{id} and \texttt{cd\_values} directly via
   \texttt{H5Pget\_filter2}.
 
-  \textbf{Length limit:} \texttt{name} must not exceed 255 bytes
-  (excluding the NUL terminator).  \texttt{H5Zregister()} rejects a v3
-  registration where \texttt{strlen(name) > 255} with
-  \texttt{H5E\_BADVALUE}.  This bound is a sanity cap; the
-  pipeline-message name field is variable-length and short names fit
-  in the inline buffer (\texttt{H5Z\_COMMON\_NAME\_LEN}).
+  \textbf{Length limit:} \texttt{name} must be between 1 and 255 bytes
+  (excluding the NUL terminator).  \texttt{H5Zregister()} rejects any v3
+  registration where \texttt{name == NULL}, \texttt{strlen(name) == 0},
+  or \texttt{strlen(name) > 255} with \texttt{H5E\_BADVALUE}.  The upper
+  bound is a sanity cap; the pipeline-message name field is
+  variable-length and short names fit in the inline buffer
+  (\texttt{H5Z\_COMMON\_NAME\_LEN}).
 
   A migration guide for plugin authors upgrading from v2 to v3 is
   produced alongside this RFC, covering at minimum: the strengthened
@@ -1229,8 +851,15 @@ and does not require a new public API function.
   Note: the per-string token count is separately bounded by
   \texttt{H5Z\_CONFIG\_MAX\_PARAMS} (64), a parser-level limit applied before
   \texttt{set\_config} is ever invoked (\SectionRef{sec:param-overview}).
-\item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array in
-  bytes (0 when \texttt{cd\_values} is \texttt{NULL}).
+\item \texttt{cd\_values\_size}---The capacity of the \texttt{cd\_values} array as an
+  \emph{element} count (the number of \texttt{unsigned} elements allocated), or
+  0 when \texttt{cd\_values} is \texttt{NULL}.  This matches the unit of
+  \texttt{cd\_nelmts} and the existing HDF5 convention for
+  \texttt{cd\_values}-adjacent counts (e.g., \texttt{H5Pget\_filter2}); it is
+  \emph{not} a byte count.  A conforming callback compares
+  \texttt{cd\_values\_size} against \texttt{*cd\_nelmts} directly, with no
+  \texttt{sizeof(unsigned)} scaling
+  (\SectionRef{sec:set-config-template}).
 \item Returns non-negative on success, negative on failure.
 \end{itemize}
 
@@ -1491,15 +1120,62 @@ typedef struct {
 Convenience initialiser macros are provided for the two common cases:
 
 \begin{minted}{c}
+#ifdef __cplusplus
+/* C++ has no compound literals; construct by field assignment. */
+static inline H5Z_params_t H5Z_params_raw(size_t n, const unsigned *vals)
+{
+    H5Z_params_t p;
+    p.type            = H5Z_PARAMS_CDVALUES;
+    p.u.raw.cd_nelmts = n;
+    p.u.raw.cd_values = vals;
+    return p;
+}
+static inline H5Z_params_t H5Z_params_str(const char *s)
+{
+    H5Z_params_t p;
+    p.type  = H5Z_PARAMS_STRING;
+    p.u.str = s;
+    return p;
+}
+#define H5Z_PARAMS_RAW(n, vals) H5Z_params_raw((n), (vals))
+#define H5Z_PARAMS_STR(s)       H5Z_params_str(s)
+#else
 /* C99: compound literals with designated initialisers */
 #define H5Z_PARAMS_RAW(n, vals) \
     ((H5Z_params_t){ H5Z_PARAMS_CDVALUES, { .raw = { (n), (vals) } } })
 #define H5Z_PARAMS_STR(s) \
     ((H5Z_params_t){ H5Z_PARAMS_STRING,   { .str  = (s)            } })
+#endif
 \end{minted}
 
-\verysubsection{Compound literal lifetime}
-Both macros expand to C99 compound literals.  A compound literal has
+\verysubsection{C++ callers}
+The C99 spelling of these macros is not merely a compatibility risk under
+C++ --- it does not compile at all.  C++ has no compound literals in any
+standard revision, and designated initialisers, added in C++20, do not
+supply the missing \texttt{(T)\{...\}} syntax.  This matters in practice:
+HPC applications routinely compile C-style HDF5 call sites with a C++
+driver (\texttt{mpicxx}), and \texttt{H5Zpublic.h} must remain usable from
+those translation units.  The \texttt{\_\_cplusplus} branch above therefore
+defines the two macros in terms of inline constructor functions that build
+the struct by field assignment --- the same construction the Fortran C
+helpers in \texttt{H5Zf.c} use for the same reason
+(\SectionRef{sec:fortran-bindings}).
+
+\textbf{One consequence for C++ callers:} the returned value is a
+temporary, and C++ does not permit taking its address, so the
+\texttt{\&H5Z\_PARAMS\_STR(\ldots)} idiom shown below is C-only.  C++
+callers assign to a named variable first:
+
+\begin{minted}{cpp}
+H5Z_params_t p = H5Z_PARAMS_STR("level = 6");   /* or H5Z_params_str(...) */
+H5Pappend_filter(plist, H5Z_FILTER_DEFLATE, H5Z_FLAG_MANDATORY, &p);
+\end{minted}
+
+\noindent The named-variable form compiles identically in C and C++, so it
+is the portable spelling for code that must build as either.
+
+\verysubsection{Compound literal lifetime (C)}
+Under C, both macros expand to compound literals.  A compound literal has
 automatic storage duration within its enclosing block---it is not a
 temporary that expires at the semicolon.  Passing \texttt{\&H5Z\_PARAMS\_STR("level=6")}
 to \texttt{H5Pappend\_filter} is therefore valid C99: the literal's
@@ -1798,7 +1474,8 @@ order of decreasing fidelity:
 \item \textbf{The stored configuration string.}  If the entry carries a
   persisted parameter string (\SectionRef{sec:config-storage-rules}) ---
   retained in the DCPL at \texttt{H5Pappend\_filter} time, or decoded from
-  a version-3 pipeline message --- that string is returned verbatim.  This
+  a version-3 pipeline message --- that string is returned exactly as stored,
+  in the canonical form of \SectionRef{sec:config-canonical-form}.  This
   is exact and requires no plugin.
 \item \textbf{\texttt{get\_config} reconstruction.}  For entries without a
   stored string (raw \texttt{cd\_values} configuration, files written
@@ -1823,8 +1500,9 @@ unsigned integers; the original value cannot be exactly recovered from the
 stored integer, and the reconstructed string will reflect the rounded
 value rather than what the user originally typed. Consumers should treat
 reconstructed strings as informational only.  These caveats do \emph{not}
-apply to source~1: a stored string is returned byte-for-byte as the user
-supplied it.  Callers that need to distinguish an authoritative stored
+apply to source~1: a stored string is returned byte-for-byte as stored ---
+the caller's own text, with only the two value-preserving canonicalising
+rewrites of \SectionRef{sec:config-canonical-form} applied.  Callers that need to distinguish an authoritative stored
 string from a reconstruction can compare against
 \texttt{H5Pget\_filter2} output or note whether the plugin was required;
 the common case --- pipelines configured through the string API and
@@ -2062,10 +1740,14 @@ format change:
   a stock TOML parser.
 \item \textbf{Exact round-trip of the configured value.}  The stored string
   denotes exactly the value the user passed to
-  \texttt{H5Pappend\_filter}: the two canonicalising rewrites are
-  bit-exact.  Floating-point formatting precision, quantisation inside
-  \texttt{set\_config}, and packing-layout conventions no longer have any
-  bearing on what introspection returns.
+  \texttt{H5Pappend\_filter}: both canonicalising rewrites preserve the
+  value exactly on the way out.  Floating-point formatting precision,
+  quantisation inside \texttt{set\_config}, and packing-layout conventions
+  no longer have any bearing on what introspection returns.  Recovering
+  that value \emph{from} the stored text additionally requires a correctly
+  rounded decimal-to-binary conversion
+  (\SectionRef{sec:float-precision}); that is a property of the reader,
+  not of the stored bytes.
 \end{enumerate}
 
 \subsection{What Is Stored, and When}
@@ -2074,8 +1756,9 @@ format change:
 \begin{itemize}
 \item \texttt{H5Pappend\_filter} with \texttt{H5Z\_PARAMS\_STRING}: after
   \texttt{set\_config} validates the string and produces
-  \texttt{cd\_values}, the library retains the caller's parameter string
-  verbatim in the DCPL pipeline entry.  A \texttt{NULL} or empty string
+  \texttt{cd\_values}, the library retains the caller's parameter string in
+  the DCPL pipeline entry, canonicalised per
+  \SectionRef{sec:config-canonical-form}.  A \texttt{NULL} or empty string
   (``no parameters'') stores nothing.
 \item \texttt{H5Pappend\_filter} with \texttt{H5Z\_PARAMS\_CDVALUES},
   \texttt{H5Pset\_filter}, and all other legacy configuration paths: no
@@ -2176,6 +1859,22 @@ are always a valid TOML v1.0.0 document, and are always valid input to
 \texttt{set\_config}.  A conforming TOML parser can read a filter's
 configuration out of any file this library writes, with no HDF5 code and no
 filter plugin involved.
+
+\textbf{Fixed point.}  Canonicalisation is idempotent.  A canonical string
+has no outer braces and no hex-float tokens left to rewrite, so
+canonicalising it a second time returns the identical bytes.  Feeding a
+stored string back through \texttt{H5Pappend\_filter} --- which the
+guarantee above makes always valid --- therefore reproduces the stored bytes
+exactly, so a configuration that is retrieved and re-applied cannot drift.
+This holds because the stored form is the canonical \emph{user} string and
+is never re-serialised from the parsed value (candidate~3 above).
+
+Note what does \emph{not} exercise this path: when \texttt{h5repack} copies a
+pipeline it did not receive a \texttt{-f} override for, it duplicates the
+source DCPL with \texttt{H5Pcopy}, so the stored bytes travel as data and are
+never re-parsed.  The re-application path is taken by callers that feed a
+retrieved string back deliberately, and by \texttt{h5repack~-f} when the user
+supplies a parameter string on the command line.
 \end{notebox}
 
 The cost is that the stored string is no longer byte-identical to the
@@ -2185,6 +1884,31 @@ caller's argument in these two cases: a caller who writes
 \emph{value}, exactly, which is the property the format change was made to
 obtain.  Callers that need the original text of their own configuration
 already have it.
+
+Two consequences follow from the stored string being an \emph{input} to
+\texttt{set\_config} and not merely a display artefact.
+
+First, the hex-float rewrite hands the value from a notation with no parse
+latitude --- a hex literal whose mantissa fits in 53 bits converts exactly,
+with no rounding step at all --- to one where C99 permits a 1~ulp
+implementation-defined error.  For a filter that quantises on a binary
+boundary this is observable: zfp's fixed-accuracy mode derives its internal
+\texttt{minexp} via \texttt{frexp} and so rounds the requested tolerance
+\emph{down} to the next integer power of two, meaning a tolerance recovered
+1~ulp low lands an entire quantisation bucket away.  Exact powers of two
+are precisely the values a user would write in hex, and precisely where
+this boundary sits.  The correctly-rounded conversion requirement in
+\SectionRef{sec:float-precision} exists to close this; with it, the
+canonical decimal recovers the identical \texttt{double} and the rewrite is
+value-transparent end to end.
+
+Second, the original hex text cannot be retained in a TOML comment
+alongside the decimal.  A stock TOML parser discards comments, so a
+comment-aware reader and a conforming one would derive different values
+from identical bytes --- exactly the divergence the canonical form exists
+to prevent.  Any hex rendering of a stored value therefore belongs in
+\texttt{h5dump} output, produced at display time from the parsed
+\texttt{double}, and never in the stored bytes.
 
 \subsection{DCPL Retention and Property-List Machinery}
 \label{sec:dcpl-retention}
@@ -2198,16 +1922,11 @@ All property-list machinery handles it uniformly:
   the broadcast pattern recommended for Parallel HDF5
   (\SectionRef{sec:thread-safety}) preserves it.
 \item \texttt{H5Pmodify\_filter} \emph{clears} the stored string for the
-  modified entry: the caller has replaced \texttt{cd\_values} directly, so
-  the string no longer describes the entry's configuration.  Introspection
-  for that entry reverts to \texttt{get\_config} fallback.  Clearing is
-  mandatory --- retaining a string that disagrees with the entry's
-  \texttt{cd\_values} would make introspection actively wrong rather than
-  merely approximate --- which is why
-  \texttt{H5Pmodify\_filter\_by\_idx} (\SectionRef{sec:modify-filter})
-  exists: it is the edit path that supplies a replacement string instead of
-  discarding the old one.  Its \texttt{H5Z\_PARAMS\_CDVALUES} form clears
-  the string for the same reason and on the same terms.
+  modified entry, as does the \texttt{H5Z\_PARAMS\_CDVALUES} form of
+  \texttt{H5Pmodify\_filter\_by\_idx}; introspection for that entry reverts
+  to \texttt{get\_config} fallback.  \SectionRef{sec:modify-filter} is the
+  normative statement of modify semantics and of why the string must be
+  cleared rather than retained.
 \item \texttt{H5Premove\_filter} discards the string with the entry.
 \item \texttt{H5Ocopy} deep-copies the string alongside \texttt{cd\_values}
   when copying a dataset's pipeline message.
