@@ -33,6 +33,47 @@ the string in \texttt{\{\ldots\}} internally before parsing if braces are
 absent.  \texttt{NULL} or an empty string means ``no parameters'' and is
 valid for filters that take no parameters (shuffle, fletcher32, nbit).
 
+\verysubsection{The accepted language, stated exactly}
+\label{sec:accepted-language}
+
+``TOML inline table content grammar'' is the starting point, not the whole
+rule: the accepted language is TOML v1.0.0 with removals in one direction
+and additions in the other.  Both lists are normative, and both are needed
+to know what a conforming implementation must accept.
+
+\textbf{Restrictions} (accepted $\subset$ TOML --- anything accepted is
+still valid TOML):
+
+\begin{itemize}
+\item \texttt{inf}, \texttt{-inf}, and \texttt{nan} are rejected
+  (\SectionRef{sec:param-overview}).
+\item Arrays, multi-line strings, datetime values, and document-level
+  section tables (\texttt{[table]} headers) are not accepted.
+\item Length and key count are bounded by
+  \texttt{H5Z\_CONFIG\_STRING\_MAX} and
+  \texttt{H5Z\_CONFIG\_MAX\_KEYS}.
+\item The semicolon is reserved at the grammar level for a possible future
+  pipeline separator and is rejected outside quoted strings.
+\end{itemize}
+
+\textbf{Extensions} (accepted $\supset$ TOML --- these two forms are
+\emph{not} valid TOML and are the reason canonicalisation exists):
+
+\begin{itemize}
+\item Optional outer braces: \texttt{\{level = 6\}} is an inline table
+  \emph{value}, not a TOML document.
+\item C99 hexadecimal float literals: \texttt{rate = 0x1.8p+1} has no TOML
+  spelling at all.
+\end{itemize}
+
+Canonicalisation (\SectionRef{sec:config-canonical-form}) removes exactly
+these two extensions before the string is persisted, which is what makes the
+stored bytes a valid TOML document rather than merely something this library
+can parse.  The accepted language is therefore wider than what is ever
+written to a file: a conforming reader needs only a stock TOML parser, while
+a conforming \emph{writer} must additionally accept the two extended forms
+on input.
+
 \verysubsection{Value types}
 
 \begin{itemize}
@@ -1606,8 +1647,8 @@ needs to decode it.  Earlier drafts of this RFC --- written under a
 no-format-change constraint --- specified a normative cross-plugin slot
 layout (little-endian split \texttt{double}s, length-prefixed string
 chunks) so that \texttt{get\_config} could losslessly reconstruct the
-configuration from \texttt{cd\_values} alone.  With the string stored
-verbatim, that machinery is unnecessary and has been withdrawn
+configuration from \texttt{cd\_values} alone.  With the string itself
+stored, that machinery is unnecessary and has been withdrawn
 (\SectionRef{sec:type-tags-superseded}).
 
 Two non-normative recommendations remain for filter authors:

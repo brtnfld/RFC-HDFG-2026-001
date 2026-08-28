@@ -479,6 +479,18 @@ These tests confirm that no existing behavior is broken.
   \texttt{cd\_values}, \emph{and} stored configuration string
   (\SectionRef{sec:dcpl-retention})---confirming that \texttt{set\_config} is
   not re-invoked on decode and that the string survives serialisation.
+\item \texttt{reg-08} (\textbf{mixed v2/v3 pipeline}): The regression cases
+  above exercise version-2 and version-3 filters separately.  This one puts
+  both in a single pipeline --- the shape a real file takes mid-migration,
+  with an old third-party compressor stacked alongside a newly ported one.
+  Build a DCPL carrying, in order, a v2 plugin configured through raw
+  \texttt{cd\_values}, a built-in (shuffle), and a v3 plugin configured
+  through \texttt{H5Z\_PARAMS\_STRING}.  Write and reopen, and verify: the
+  data round-trips; each plugin's filter callback actually executed on both
+  the write and the read path (a self-inverse transform round-trips equally
+  well if neither ran, so invocation must be counted, not inferred); the
+  three entries keep their order; entry~0 reports no stored string; and
+  entry~2 returns its configuration string.
 \end{itemize}
 
 
