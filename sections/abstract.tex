@@ -26,7 +26,7 @@ callbacks.  The existing \texttt{name} field is promoted from a free-form
 debug comment to a required canonical identifier, serving as both the stable
 string name and the human-readable display label.  The library
 writes this name into the filter-pipeline message at filter-add time
-so it is available to tools even when the plugin is not installed.
+so tools can access it even when the plugin is not installed.
 The validated parameter string is itself persisted, in a canonical form
 guaranteed to be valid TOML v1.0.0, in a new
 version~3 of the filter-pipeline message, making configurations
