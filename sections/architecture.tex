@@ -50,7 +50,7 @@ valid for filters that take no parameters (shuffle, fletcher32, nbit).
   Hexadecimal float literals in C99 \texttt{\%a} form
   (e.g., \texttt{rate = 0x1.8p+1} for exactly \texttt{3.0}) are also accepted
   as input; the library rewrites them to decimal before the TOML scanner.
-  The canonical output form produced by the library is \texttt{\%.17e}
+  The canonical output form produced by the library is \texttt{\%.16e}
   (\SectionRef{sec:float-precision}).
 \item \textbf{Boolean:} \texttt{true} or \texttt{false} (lowercase only, per
   TOML).  The values \texttt{True}, \texttt{False}, \texttt{1}, and \texttt{0}
@@ -146,27 +146,37 @@ compliance from the underlying parser.
 
 \textbf{Output (produced by the library and callbacks):} \texttt{get\_config}
 implementations \emph{shall} format \texttt{float} and \texttt{double} values
-using \texttt{\%.17e}.  This format:
+using \texttt{\%.16e}.  This format:
 \begin{itemize}
-  \item always emits a decimal point and exponent (e.g.\ \texttt{3.00000000000000000e+00}),
+  \item always emits a decimal point and exponent (e.g.\ \texttt{3.0000000000000000e+00}),
     satisfying the TOML~v1.0 requirement that float literals contain a
     \texttt{.} or an exponent --- \texttt{\%.17g} is \emph{not} used because
     it drops the decimal point for whole numbers (\texttt{8.0}~$\to$~\texttt{"8"}),
     which TOML parsers interpret as an integer;
-  \item guarantees exact IEEE\,754 double round-trips: C99 \texttt{DBL\_DECIMAL\_DIG}
-    is 17, meaning 17 significant decimal digits suffice to distinguish any two
-    distinct \texttt{double} values and recover the original bit pattern via
-    \texttt{strtod}.  Note that \texttt{\%.17e} emits 18 significant digits ---
-    one before the decimal point plus 17 after --- one more than strictly
-    required; the extra digit is harmless, and the wider format is specified so
-    that no implementation has to reason about the boundary case.  Recovery is
+  \item guarantees exact IEEE\,754 double round-trips while staying inside the
+    standard's recommended-rounding range.  \texttt{\%.16e} emits exactly 17
+    significant digits --- one before the decimal point plus 16 after ---
+    which is \texttt{DBL\_DECIMAL\_DIG}, the minimum that distinguishes any
+    two distinct \texttt{double} values and recovers the original bit pattern
+    via \texttt{strtod}.
+
+    The width is deliberate.  C11~\S7.22.1.3p11 recommends correct rounding
+    only for decimal forms of at most \texttt{DECIMAL\_DIG} significant
+    digits; beyond that the recommendation weakens to a bounded-value rule.
+    \texttt{DECIMAL\_DIG} is sized for \texttt{long double}, so it is 21 where
+    that is x87 80-bit but 17 where \texttt{long double == double} --- MSVC
+    among others.  \texttt{\%.17e} would emit 18 digits and exceed
+    \texttt{DECIMAL\_DIG} on those targets for no benefit, since 17 digits
+    already round-trip exactly.  Contrast \S7.22.1.3p9, which \emph{requires}
+    correct rounding for the hexadecimal form: that asymmetry is what the
+    rewrite trades away (\SectionRef{sec:config-canonical-form}).  Recovery is
     exact only if the reader's decimal-to-binary conversion is correctly
     rounded; see the requirement below; and
   \item is made locale-independent by the implementation: standard
     \texttt{snprintf} respects \texttt{LC\_NUMERIC} and may replace the decimal
     point with a comma (e.g., \texttt{de\_DE} locale), which TOML prohibits.
     Implementations must therefore scan the formatted string and replace any
-    comma with a period before use; since \texttt{\%.17e} places exactly one
+    comma with a period before use; since \texttt{\%.16e} places exactly one
     decimal separator in the mantissa, a single-pass scan suffices.
 \end{itemize}
 
@@ -174,9 +184,9 @@ using \texttt{\%.17e}.  This format:
 \textbf{Implementation requirements:}
 \begin{itemize}
   \item \textbf{Parser:} The library pre-processes hex-float tokens
-    (e.g., \texttt{0x1.8p+1}) into \texttt{\%.17e} decimal form before the
+    (e.g., \texttt{0x1.8p+1}) into \texttt{\%.16e} decimal form before the
     TOML scanner.  No changes to the vendored tomlc17 subset are required.
-  \item \textbf{\texttt{get\_config} callbacks:} Use \texttt{\%.17e} for all
+  \item \textbf{\texttt{get\_config} callbacks:} Use \texttt{\%.16e} for all
     \texttt{float} and \texttt{double} values in parameter strings.  Do not
     use \texttt{\%g}, \texttt{\%f}, \texttt{\%a}, or fewer than 17 significant
     digits.  Document this requirement in \texttt{H5Zdevelop.h} as a normative
@@ -199,7 +209,7 @@ using \texttt{\%.17e}.  This format:
     specifications, so pure-reimplementation readers such as jHDF and
     pyfive are unaffected.
   \item \textbf{Documentation:} Add a note to \texttt{H5Zdevelop.h} and the
-    plugin author guide explaining the \texttt{\%.17e} requirement, why
+    plugin author guide explaining the \texttt{\%.16e} requirement, why
     \texttt{\%.17g} is insufficient, and the correctly-rounded conversion
     requirement above.
 \end{itemize}
@@ -939,12 +949,13 @@ round-trip correctness. Document this requirement in
   original due to precision loss or encoding limitations.
 \item \textbf{Locale and precision requirement:} \texttt{get\_config}
   implementations that format floating-point values must use
-  \texttt{\%.17e} (e.g., \texttt{snprintf(buf, n, "\%.17e", val)}).
+  \texttt{\%.16e} (e.g., \texttt{snprintf(buf, n, "\%.16e", val)}).
   This format always contains a decimal point and exponent (valid TOML\,v1.0
   float) and guarantees exact IEEE\,754 \texttt{double} round-trips via 17
   significant digits (\texttt{DBL\_DECIMAL\_DIG}).  Do not use \texttt{\%a}
   (hex-float, not valid TOML), \texttt{\%g} (may omit decimal point, producing
-  a TOML integer), \texttt{\%f}, or fewer than 17 significant digits.
+  a TOML integer), \texttt{\%f}, fewer than 17 significant digits, or more
+  than \texttt{DECIMAL\_DIG} of them (\SectionRef{sec:float-precision}).
   \textbf{Locale caveat:} \texttt{snprintf} respects \texttt{LC\_NUMERIC}; in
   locales with a comma decimal separator the output is not valid TOML.
   Implementations must replace any comma in the formatted number with a
@@ -1780,7 +1791,7 @@ Four candidate representations were considered for the stored string:
 \item \textbf{The canonical user string (chosen).}  The user's own string
   with exactly two value-preserving normalisations applied: optional outer
   braces are stripped, and C99 hex-float literals are rewritten to
-  \texttt{\%.17e} decimal.  Interior spacing, quote style, key case, and
+  \texttt{\%.16e} decimal.  Interior spacing, quote style, key case, and
   key order are preserved byte-for-byte.  See
   \SectionRef{sec:config-canonical-form} for why these two, and only these
   two, are applied.
@@ -1847,7 +1858,7 @@ The library therefore canonicalises the string before persisting it:
 
 \begin{enumerate}
 \item Strip optional outer braces and surrounding whitespace.
-\item Rewrite C99 hex-float literals to \texttt{\%.17e} decimal.  This is
+\item Rewrite C99 hex-float literals to \texttt{\%.16e} decimal.  This is
   bit-exact: \texttt{DBL\_DECIMAL\_DIG} is 17, so the decimal form recovers
   the identical IEEE\,754 \texttt{double}.  Hex-float text inside a quoted
   string or a comment is left alone.
@@ -1880,7 +1891,7 @@ supplies a parameter string on the command line.
 The cost is that the stored string is no longer byte-identical to the
 caller's argument in these two cases: a caller who writes
 \texttt{\{rate = 0x1.8p+1\}} reads back
-\texttt{rate = 3.00000000000000000e+00}.  What is preserved is the
+\texttt{rate = 3.0000000000000000e+00}.  What is preserved is the
 \emph{value}, exactly, which is the property the format change was made to
 obtain.  Callers that need the original text of their own configuration
 already have it.
