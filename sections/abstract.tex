@@ -26,7 +26,7 @@ existing \texttt{name} field's contract is strengthened from
 free-form debug comment to a required canonical name that serves as
 both the stable string identifier and the display name.  The library
 writes this name into the filter-pipeline message at filter-add time
-so it is available to tools even when the plugin is not installed.
+so tools can access it even when the plugin is not installed.
 The validated parameter string is itself persisted verbatim in a new
 version~3 of the filter-pipeline message, making configurations
 introspectable without the plugin and round-trippable without loss;
