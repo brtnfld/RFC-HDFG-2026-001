@@ -201,18 +201,26 @@ using \texttt{\%.16e}.  This format:
     two distinct \texttt{double} values and recovers the original bit pattern
     via \texttt{strtod}.
 
-    The width is deliberate.  C11~\S7.22.1.3p11 recommends correct rounding
-    only for decimal forms of at most \texttt{DECIMAL\_DIG} significant
-    digits; beyond that the recommendation weakens to a bounded-value rule.
+    The width is deliberate.  C17~\S7.22.1.3p9 (Recommended practice)
+    recommends correct rounding only for decimal forms of at most
+    \texttt{DECIMAL\_DIG} significant digits; beyond that the recommendation
+    weakens to a bounded-value rule.
     \texttt{DECIMAL\_DIG} is sized for \texttt{long double}, so it is 21 where
     that is x87 80-bit but 17 where \texttt{long double == double} --- MSVC
     among others.  \texttt{\%.17e} would emit 18 digits and exceed
     \texttt{DECIMAL\_DIG} on those targets for no benefit, since 17 digits
-    already round-trip exactly.  Contrast \S7.22.1.3p9, which \emph{requires}
+    already round-trip exactly.  Contrast \S7.22.1.3p5, which \emph{requires}
     correct rounding for the hexadecimal form: that asymmetry is what the
     rewrite trades away (\SectionRef{sec:config-canonical-form}).  Recovery is
     exact only if the reader's decimal-to-binary conversion is correctly
-    rounded; see the requirement below; and
+    rounded; see the requirement below.
+
+    C23 renumbers this subclause to \S7.24.1.5 and restates the same two
+    paragraphs as p6 (hexadecimal, required) and p10 (decimal, recommended);
+    it also replaces \texttt{DECIMAL\_DIG} with \emph{M}, ``the maximum value
+    of the \texttt{T\_DECIMAL\_DIG} macros'', which is still
+    \texttt{LDBL\_DECIMAL\_DIG} in practice and so leaves the 17-digit
+    conclusion unchanged; and
   \item is made locale-independent by the implementation: standard
     \texttt{snprintf} respects \texttt{LC\_NUMERIC} and may replace the decimal
     point with a comma (e.g., \texttt{de\_DE} locale), which TOML prohibits.
@@ -235,12 +243,13 @@ using \texttt{\%.16e}.  This format:
   \item \textbf{Decimal-to-binary conversion:} Every conversion of a decimal
     float literal to \texttt{double} --- in the library's own parser and in
     every \texttt{set\_config} implementation --- \emph{shall} be correctly
-    rounded per IEEE~754 round-to-nearest, ties-to-even.  This is not
-    guaranteed by the C standard: C11~\S7.22.1.3 (C99~\S7.20.1.3) permits \texttt{strtod} to
-    return either of the two representable values adjacent to the correctly
-    rounded result, chosen in an implementation-defined manner.  A 1~ulp
-    error is enough to change a filter's behaviour whenever the filter
-    quantises on a binary boundary
+    rounded per IEEE~754 round-to-nearest, ties-to-even.  This is a
+    requirement this RFC places on the implementation, not one it inherits:
+    for the decimal form the C standard offers correct rounding only as
+    \emph{Recommended practice} (C17~\S7.22.1.3p9, C99~\S7.20.1.3p9,
+    C23~\S7.24.1.5p10), so a conforming \texttt{strtod} may return a value
+    1~ulp from the correctly rounded result.  That is enough to change a
+    filter's behaviour whenever the filter quantises on a binary boundary
     (\SectionRef{sec:config-canonical-form}), and the stored configuration
     string is an \emph{input} to \texttt{set\_config}, not only a display
     artefact.  Implementations on platforms whose \texttt{strtod} is not
@@ -249,6 +258,18 @@ using \texttt{\%.16e}.  This format:
     are the parsers mandated by the Java and Python language
     specifications, so pure-reimplementation readers such as jHDF and
     pyfive are unaffected.
+
+    The requirement is checkable rather than assumed: \texttt{fmt-01c}
+    (\SectionRef{sec:test-ondisk}) sweeps exact powers of two, the values at
+    which a 1~ulp conversion error is observable, so a platform whose
+    conversion is not correctly rounded fails the test suite rather than
+    writing subtly wrong values.  Nor is a failing platform stranded --- the
+    conversion is a leaf dependency, and supplying a correctly rounded
+    routine there restores conformance without touching the format.  What
+    does \emph{not} depend on this is filter execution: the pipeline runs
+    from \texttt{cd\_values}, which the producer computed from its own parse,
+    so a reader with a sloppy \texttt{strtod} misreads the introspected
+    configuration but never changes how stored data is decoded.
   \item \textbf{Documentation:} Add a note to \texttt{H5Zdevelop.h} and the
     plugin author guide explaining the \texttt{\%.16e} requirement, why
     \texttt{\%.17g} is insufficient, and the correctly-rounded conversion
@@ -1960,7 +1981,8 @@ comment-aware reader and a conforming one would derive different values
 from identical bytes --- exactly the divergence the canonical form exists
 to prevent.  Any hex rendering of a stored value therefore belongs in
 \texttt{h5dump} output, produced at display time from the parsed
-\texttt{double}, and never in the stored bytes.
+\texttt{double}, and never in the stored bytes;
+\SectionRef{sec:h5dump-hex-annotation} specifies that rendering.
 
 \subsection{DCPL Retention and Property-List Machinery}
 \label{sec:dcpl-retention}

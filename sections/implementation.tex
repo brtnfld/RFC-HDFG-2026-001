@@ -396,6 +396,113 @@ the parameter string contains one, it is escaped as
 The format change is confined to the \texttt{FILTERS} block; all other
 \texttt{h5dump} output is unaffected.
 
+\verysubsection{Hexadecimal annotation of binary-exact floats}
+\label{sec:h5dump-hex-annotation}
+
+Canonicalisation preserves a float's \emph{value} exactly but not its text
+(\SectionRef{sec:config-canonical-form}): a caller who writes
+\texttt{accuracy = 0x1p-36} reads back
+\texttt{accuracy = 1.4551915228366852e-11}.  The decimal is unrecognisable
+as a power of two, which is the form a user tuning a
+quantising filter reasons in.  The original text cannot be carried in the
+stored bytes --- a conforming TOML parser discards comments, so a
+comment-aware reader and a stock one would derive different values from
+identical bytes --- so the rendering is produced at display time from the
+parsed \texttt{double}, and nothing is added to the file.
+
+When \texttt{-p} is active, \texttt{h5dump} appends a trailing comment
+naming each float in the parameter string whose value is a small multiple
+of a power of two:
+
+\begin{verbatim}
+    FILTERS {
+      USER_DEFINED_FILTER {
+        FILTER_ID 32013
+        COMMENT zfp
+        PARAMS_STRING 'mode = "accuracy", accuracy = 1.4551915228366852e-11'
+          # accuracy = 0x1p-36
+      }
+    }
+\end{verbatim}
+
+\begin{notebox}
+\textbf{Normative rules:}
+\begin{itemize}
+  \item \textbf{Placement.}  The comment is emitted \emph{outside} the
+    single-quoted value, never within it.  The quoted text remains the
+    literal output of \texttt{H5Pget\_filter\_params\_by\_idx}, byte for
+    byte, so a script that extracts the quoted span still recovers exactly
+    the stored bytes.
+  \item \textbf{Selection.}  A float is annotated only when its significand
+    fits in 13 bits --- equivalently, when the value is $m \cdot 2^{e}$ for
+    an integer $m$ with $|m| < 2^{13}$, which is at most three hexadecimal
+    fraction digits.  Annotating merely because the hex form is
+    \emph{shorter} than the decimal is not the rule and would be nearly
+    vacuous: \texttt{0.1} renders as \texttt{0x1.999999999999ap-4}, 20
+    characters against the canonical form's 22, so almost every float would
+    acquire a comment that tells the reader nothing.  The 13-bit bound
+    admits the values this exists for --- exact powers of two, and simple
+    multiples such as \texttt{0x1.8p-36} --- and excludes values whose hex
+    form is merely a second unreadable spelling.
+  \item \textbf{Rendering.}  \texttt{h5dump} formats the hexadecimal text
+    itself; it does \emph{not} print \texttt{\%a} output verbatim.  C17
+    \S7.21.6.1p8 requires only that a precision-free \texttt{\%a} be
+    ``sufficient for an exact representation'' when \texttt{FLT\_RADIX} is a
+    power of 2, and constrains the leading digit only to be nonzero for
+    normalized values, so \texttt{0x1.8p-36},
+    \texttt{0x1.8000000000000p-36}, and \texttt{0x3p-37} are all conforming
+    renderings of one \texttt{double} --- glibc trims trailing zeros and the
+    Microsoft CRT does not.  \texttt{h5dump} output is compared byte for
+    byte against expected files, so the tool emits a canonical spelling: a
+    normalized leading digit, trailing zeros of the fraction removed, the
+    fraction and its decimal point omitted entirely when zero, lowercase
+    \texttt{0x} and \texttt{p}, and a signed exponent.
+  \item \textbf{Already-hexadecimal values are not annotated.}  A literal
+    the reader can already see in hexadecimal needs no second spelling.
+    This does not arise for a canonical stored string, which by
+    construction has no hex-float tokens left
+    (\SectionRef{sec:config-canonical-form}), but it does for a
+    \texttt{get\_config} reconstruction, which is not canonicalised.
+  \item \textbf{Scope.}  Display only.  The annotation never affects the
+    stored bytes, \texttt{H5Pget\_filter\_params\_by\_idx}, or any value
+    passed to \texttt{set\_config}, and its absence is never diagnostic ---
+    a float without a comment is simply not a small multiple of a power of
+    two.  The rule applies wherever a tool displays a parameter string;
+    \texttt{h5ls~-v} prints raw \texttt{cd\_values} today and would adopt it
+    along with \texttt{PARAMS\_STRING} display, which this RFC does not
+    propose for that tool.
+  \item \textbf{Mechanism.}  The tool locates the floats by a lexical scan
+    of the parameter string, skipping quoted strings and comments exactly as
+    the hex-float rewrite does, and taking the preceding bare key --- dotted
+    keys included --- as the name to echo.  No key-enumeration API is
+    required, and none is proposed: the typed accessors
+    (\texttt{H5Zconfig\_get\_double} and its siblings) are lookup-by-name,
+    and \texttt{h5dump} does not know the key names of a filter it has not
+    loaded.  A scan is admissible precisely because the annotation is
+    display-only --- it cannot alter a value, only fail to comment on one.
+\end{itemize}
+\end{notebox}
+
+Generating the hexadecimal text rather than delegating to \texttt{\%a} also
+improves the subnormal case: \texttt{frexp} normalizes, so
+$2^{-1074}$ annotates as \texttt{0x1p-1074} rather than the
+\texttt{0x0.0000000000001p-1022} that a denormalized \texttt{\%a} rendering
+produces.  Both are exact; only the first is legible, and both re-read to the
+identical \texttt{double}.
+
+The reciprocal direction is the one that carries the workflow: hex-float
+literals are accepted on \emph{input} everywhere a parameter string is
+(\SectionRef{sec:float-precision}), including \texttt{h5repack~-f}, so a
+sweep can be driven directly from the shell without converting tolerances
+to decimal first:
+
+\begin{verbatim}
+    for exp in $(seq -1 -1 -64); do
+      h5repack -f "UD=32013,0,mode = \"accuracy\", accuracy = 0x1p$exp" \
+               in.h5 out_$exp.h5
+    done
+\end{verbatim}
+
 \verysubsection{DESCRIPTION}
 
 When \texttt{-p} is active, a \texttt{DESCRIPTION} line is appended after
