@@ -8,8 +8,14 @@
 \section{Built-in Filter Parameters}
 \label{sec:builtin-filters}
 
-Each built-in filter implements \texttt{set\_config} and \texttt{get\_config} so that the
-string API is fully functional without third-party plugins.
+Each built-in filter that accepts parameters implements \texttt{set\_config}
+and \texttt{get\_config} so that the string API is fully functional
+without third-party plugins.  The parameterless built-ins (shuffle,
+fletcher32, nbit) implement neither callback, per
+\SectionRef{sec:append-filter}: the library handles their
+\texttt{NULL}/empty-string configuration directly, and a non-empty
+string supplied to one of them is rejected with \texttt{H5E\_UNSUPPORTED}
+without ever reaching a callback.
 
 For built-in filters that have dedicated \texttt{H5Pset\_*} functions with non-trivial
 validation logic (particularly SZIP and Scale-Offset), the \texttt{set\_config}
@@ -830,7 +836,7 @@ IF (hdferr >= 0 .AND. params_len <= LEN(params)) &
 
 Java does not support C unions, and method overloading is the idiomatic
 Java mechanism for variant inputs.  Two overloaded static methods are
-added to the existing \texttt{HDF5Library} class:
+added to the existing \texttt{hdf.hdf5lib.H5} class:
 
 \begin{minted}{java}
 // String form
@@ -839,7 +845,7 @@ public static native int H5Pappend_filter(
     int    filter_id,
     int    flags,
     String params       // null means "no parameters"
-) throws HDF5LibraryException, NullPointerException;
+) throws HDF5LibraryException;
 
 // Raw cd_values form (equivalent to existing H5Pset_filter)
 public static native int H5Pappend_filter(

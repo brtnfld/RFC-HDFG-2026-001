@@ -235,6 +235,17 @@ registration.  Tests invoke the typed accessor functions
 
 \verysubsection{Valid inputs}
 
+Each accessor returns \texttt{htri\_t} ($>0$ found, $0$ absent, $<0$ error)
+and writes the decoded value through its output parameter
+(\SectionRef{sec:config-get-param}); it does not return the value itself.
+Unless noted otherwise, ``returns \emph{X}'' below is shorthand for ``the
+call returns positive (found) and writes \emph{X}'' to the output
+parameter --- e.g., \texttt{H5Zconfig\_get\_int} returns \texttt{6}'' means
+\texttt{H5Zconfig\_get\_int(params, key, \&out)} returns a positive
+\texttt{htri\_t} with \texttt{out~==~6}.  parse-04 and parse-09 are the
+exception: there they report the \texttt{htri\_t} return value itself
+(\texttt{0}, absent), since no output value exists in that case.
+
 \begin{center}
 \small
 \renewcommand{\arraystretch}{1.25}
@@ -259,7 +270,9 @@ registration.  Tests invoke the typed accessor functions
 \texttt{parse-08} & \texttt{\ \ level\ \ =\ \ 6\ \ }
   & whitespace stripped; \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
 \texttt{parse-09} & \texttt{LEVEL = 6}
-  & key normalized to lowercase \texttt{level}; \texttt{H5Zconfig\_get\_int} returns \texttt{6} \\
+  & valid TOML; but \texttt{H5Zconfig\_get\_int(params, "level", \ldots)} returns
+  \texttt{0} (absent) --- keys are case-sensitive, so \texttt{LEVEL} does not
+  match \texttt{level} \\
 \texttt{parse-10} & \texttt{name = 'hello world'}
   & single-quoted literal string; \texttt{H5Zconfig\_get\_str} returns \texttt{hello world} \\
 \texttt{parse-11} & \texttt{\{level = 6\}}
@@ -411,17 +424,22 @@ resulting \texttt{cd\_values} must be identical.
 \noindent Additional round-trip tests verify that:
 \begin{itemize}
 \item \texttt{rt-E01}: Passing a non-NULL, non-empty \texttt{params} to a parameterless
-  built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns \texttt{H5E\_BADVALUE}.
+  built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns
+  \texttt{H5E\_UNSUPPORTED}: these filters implement no \texttt{set\_config}
+  callback, so this is the ``filter found but does not implement
+  \texttt{set\_config}'' case (\SectionRef{sec:append-filter}), not a
+  rejected parameter string.
 \item \texttt{rt-E01b}: Passing \texttt{NULL} or an empty parameter string
   to a filter that implements \texttt{set\_config} and requires parameters
   (e.g., Scale-Offset, SZIP) invokes \texttt{set\_config} with
   \texttt{params~=~NULL} and returns \texttt{H5E\_BADVALUE} at
   \texttt{H5Pappend\_filter} time (fail-fast). The pipeline must not be
   appended.
-\item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{clevl = 6}
-  instead of \texttt{clevel = 6}) to any built-in returns
-  \texttt{H5E\_BADVALUE} with an error message identifying the unrecognized key.
-  v3 filters reject unknown keys (\SectionRef{sec:callback-specs}).
+\item \texttt{rt-E02}: Passing an unrecognized key (e.g., \texttt{levl = 6}
+  instead of \texttt{level = 6} for deflate) to any built-in that implements
+  \texttt{set\_config} returns \texttt{H5E\_BADVALUE} with an error message
+  identifying the unrecognized key. v3 filters reject unknown keys
+  (\SectionRef{sec:callback-specs}).
 \item \texttt{rt-E03}: Passing an out-of-range value (\texttt{level = 10} for deflate,
   \texttt{pixels\_per\_block = 33} for szip) returns \texttt{H5E\_BADVALUE}.
 \item \texttt{rt-E04}: Passing a type-mismatched value (\texttt{level = "six"} for deflate)
@@ -632,9 +650,14 @@ These tests require a Parallel HDF5 build and at least two MPI ranks.
   before \texttt{H5Dcreate}.
 \item \texttt{par-02} (\textbf{rank failure propagation}): Simulate a missing plugin
   on one rank (e.g., by unsetting \texttt{HDF5\_PLUGIN\_PATH} on rank~1 only).
-  Verify that the failing rank returns an error from \texttt{H5Pappend\_filter} (or from
-  \texttt{H5Dcreate}, depending on when plugin loading occurs) and that the
-  application can detect this and abort collectively without an MPI deadlock.
+  Verify that the failing rank returns \texttt{H5E\_NOFILTER} from
+  \texttt{H5Pappend\_filter} itself, per the eager-loading contract
+  (\SectionRef{sec:append-filter}: a string-configured filter is resolved
+  at \texttt{H5Pappend\_filter} time, never deferred to \texttt{H5Dcreate}),
+  and that the application can detect this and abort collectively without
+  an MPI deadlock.  A failure surfacing instead at \texttt{H5Dcreate} would
+  itself be a bug: it would mean ranks disagree about which call is
+  collective, which is exactly the divergence this test exists to catch.
 \item \texttt{par-03} (\textbf{debug-build consistency check}): In a debug build
   (\texttt{NDEBUG} not defined), induce a rank-inconsistent DCPL (by having one rank
   add an extra filter entry) and verify that \texttt{H5Dcreate} returns

@@ -51,7 +51,7 @@ still valid TOML):
   section tables (\texttt{[table]} headers) are not accepted.
 \item Length and key count are bounded by
   \texttt{H5Z\_CONFIG\_STRING\_MAX} and
-  \texttt{H5Z\_CONFIG\_MAX\_KEYS}.
+  \texttt{H5Z\_CONFIG\_MAX\_PARAMS}.
 \item The semicolon is reserved at the grammar level for a possible future
   pipeline separator and is rejected outside quoted strings.
 \end{itemize}
@@ -124,8 +124,13 @@ on input.
 
 Keys follow the TOML bare-key rules: ASCII letters, digits, hyphens, and
 underscores (\texttt{[A-Za-z0-9\_-]+}).  Quoted keys (\texttt{"key"}) are
-accepted by the parser but discouraged.  Keys are \emph{case-insensitive};
-the library normalizes to lowercase before lookup.  Dotted keys
+accepted by the parser but discouraged.  Keys are \emph{case-sensitive},
+per TOML v1.0.0 bare-key semantics.  Parameter values are already
+case-sensitive (a filter distinguishes \texttt{"zlib"} from
+\texttt{"Zlib"} as it sees fit); folding key case would introduce the
+only case-insensitive comparison in an otherwise case-sensitive grammar,
+silently masking caller typos (\texttt{Level = 6}) rather than resolving
+genuine ambiguity.  Dotted keys
 (\texttt{stripe.size}) are accepted and express one level of nesting
 (\texttt{stripe.size = 1048576} is equivalent to
 \texttt{stripe = \{size = 1048576\}}); they are the recommended form for
@@ -428,21 +433,37 @@ legacy \texttt{H5Z\_class1\_t} struct.  The dispatch is extended to recognise
 \texttt{H5Z\_CLASS\_T\_VERS\_MAX} guarding against unknown future values:
 
 \begin{minted}{c}
-    if (version > H5Z_CLASS_T_VERS_MAX)
-        /* -> error: version field exceeds library support */
-    else if (version == H5Z_CLASS_T_VERS)  /* 1 */
+    if (version == H5Z_CLASS_T_VERS)       /* 1 */
         /* -> H5Z_class2_t        */
     else if (version == 2)
         /* -> H5Z_class3_t        */
+#ifndef H5_NO_DEPRECATED_SYMBOLS
     else
-        /* -> legacy H5Z_class1_t */
+        /* -> legacy H5Z_class1_t: this "version" slot is actually
+         * H5Z_class1_t.id, a filter ID, not a struct version        */
+#else
+    else
+        /* -> error: version field exceeds library support */
+#endif
 \end{minted}
 
-Note: When \texttt{H5\_NO\_DEPRECATED\_SYMBOLS} is defined, the legacy
-\texttt{H5Z\_class1\_t} path is compiled out entirely and any value other
-than \texttt{H5Z\_CLASS\_T\_VERS} or \texttt{2} produces a hard error.  Under
-\texttt{H5\_NO\_DEPRECATED\_SYMBOLS}, only versions \texttt{1} and \texttt{2}
-are accepted.
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX} (\texttt{2}) is not tested directly in
+this dispatch.  \texttt{H5Z\_class1\_t} has no version field --- its first
+member is \texttt{H5Z\_filter\_t id} --- and third-party filter IDs
+occupy \texttt{[256, 65535]}, values that legitimately exceed
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX}.  A first branch that rejects
+\texttt{version~>~H5Z\_CLASS\_T\_VERS\_MAX} before checking for the
+legacy case would therefore reject every legacy plugin with an ID above
+\texttt{2} --- i.e., every third-party \texttt{H5Z\_class1\_t} plugin
+that exists, since \texttt{H5Z\_FILTER\_RESERVED} already excludes IDs
+that low.  The known-version checks must come first, with the legacy
+struct handled by exclusion, exactly as the existing (pre-RFC)
+\texttt{version != H5Z\_CLASS\_T\_VERS} dispatch above does.
+\texttt{H5Z\_CLASS\_T\_VERS\_MAX} instead bounds what
+\texttt{H5\_NO\_DEPRECATED\_SYMBOLS} accepts: with the legacy path
+compiled out, any value other than \texttt{H5Z\_CLASS\_T\_VERS} or
+\texttt{2} produces a hard error, and \texttt{H5Z\_CLASS\_T\_VERS\_MAX}
+is exactly that boundary.
 
 \texttt{H5Z\_class3\_t} is an independent flat struct; it does NOT embed
 \texttt{H5Z\_class2\_t} as a member.  The library reads the \texttt{version}
@@ -527,14 +548,33 @@ typedef struct H5Z_class3_t {
     unsigned                    encoder_present;
     unsigned                    decoder_present;
     const char                 *name;
-    const char                 *description;
     H5Z_can_apply_func_t        can_apply;
     H5Z_set_local_func_t        set_local;
     H5Z_func2_t                 filter;    /* extended: dxpl_id + scaled */
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
+    const char                 *description; /* appended last -- see below */
 } H5Z_class3_t;
 \end{minted}
+
+\textbf{Field order: append, never insert.}  The first eight members
+above are in the same order as \texttt{H5Z\_class2\_t}
+(\texttt{version, id, encoder\_present, decoder\_present, name,
+can\_apply, set\_local, filter}).  Existing \texttt{H5Z\_class2\_t}
+plugins overwhelmingly use positional C struct initialisers rather than
+C99 designated initialisers.  A plugin author upgrading to
+\texttt{H5Z\_class3\_t} who bumps \texttt{version} and appends the new
+callbacks without switching to designated initialisers keeps
+\texttt{can\_apply}, \texttt{set\_local}, and \texttt{filter} in their
+original positions; C zero-initialises any trailing members the
+positional initialiser omits, so an incomplete upgrade degrades safely
+to \texttt{set\_config~=~get\_config~=~description~=~NULL} (equivalent
+to a v2-style plugin with no string configuration) rather than silently
+misassigning a callback pointer to \texttt{description} or vice versa.
+This is why \texttt{description} is the last member rather than being
+inserted after \texttt{name}: any new field added to this struct in the
+future must likewise be appended, never inserted, to preserve this
+property.
 
 \verysubsection{Field descriptions}
 
@@ -556,8 +596,9 @@ typedef struct H5Z_class3_t {
   lz4, zstd, snappy, and others as its internal compressor) registers a
   single canonical name for the plugin class (\texttt{name = "blosc2"}).
   The choice of internal algorithm is a \emph{parameter}, expressed in
-  the TOML configuration string (e.g., \texttt{"compressor=lz4,
-  clevel=5"}), not a separate filter identity.
+  the TOML configuration string (e.g.,
+  \texttt{compressor.name = "lz4", compressor.level = 5}), not a separate
+  filter identity.
 
   \textbf{How it is stored and retrieved.}  When a v3 filter is appended
   to a pipeline, the library writes the plugin's \texttt{name} into the
@@ -865,16 +906,28 @@ unaffected.
   ignore this parameter.
 
 \item \texttt{scaled}---Array of \texttt{ndims} scaled chunk coordinates
-  (chunk offset in chunk units, not element units).  This is the same
+  (chunk offset in chunk units, not element units), when the filter is
+  invoked as part of chunked dataset I/O.  This is the same
   \texttt{scaled[]} array present at every internal pipeline call site.
   Filters performing spatially-aware compression (e.g., ROIBIN-SZ spatial
   masks, GPU tile routing) use these coordinates to determine which region
   of the dataset they are operating on.  Filters that do not need spatial
   information may ignore this parameter.
 
-\item \texttt{ndims}---Number of elements in \texttt{scaled[]};
-  equals the dataset's chunk rank.
+\item \texttt{ndims}---Number of elements in \texttt{scaled[]} when
+  \texttt{scaled} is non-\texttt{NULL}; equals the dataset's chunk rank.
 \end{itemize}
+
+\textbf{Non-chunk contexts.}  A filter pipeline is not exclusive to
+chunked datasets: a \texttt{H5Z\_class3\_t} filter can equally be
+attached to a group creation property list, where it compresses the
+fractal heap used for dense attribute or link storage
+(\SectionRef{sec:append-filter}).  A fractal heap has no chunk
+coordinates or dataset rank.  When \texttt{filter} is invoked outside
+chunked dataset I/O, the library passes \texttt{scaled~=~NULL} and
+\texttt{ndims~=~0}; a spatially-aware filter must check for
+\texttt{scaled~==~NULL} before dereferencing it, rather than assuming a
+chunked-dataset caller.
 
 \noindent Passing the DXPL and chunk coordinates as parameters to the
 existing callback rather than via a separate callback or a new public
@@ -942,7 +995,7 @@ invalid parameters.
 A \texttt{set\_config} callback should reject unrecognized keys by returning a
 negative value and pushing \texttt{H5E\_BADVALUE} with a message identifying the
 key.  This is the primary defense against misspelled parameter names (e.g.,
-\texttt{"clevl=6"} instead of \texttt{"clevel=6"}), which would otherwise be
+\texttt{"levl=6"} instead of \texttt{"level=6"}), which would otherwise be
 silently ignored.  Because the string API does not have the compile-time safety
 of named constants, rejecting unknown keys is strongly recommended for
 usability.
@@ -1354,7 +1407,9 @@ override can compare the value they passed with the flags returned by
 \verysubsection{Parameters}
 
 \begin{itemize}
-\item \texttt{plist\_id}---A dataset creation property list identifier.
+\item \texttt{plist\_id}---A dataset or group creation property list
+  identifier (filters attached to a GCPL configure the fractal heap used
+  for dense attribute/link storage; \SectionRef{sec:callback-specs}).
 \item \texttt{id}---The filter identifier (\texttt{H5Z\_filter\_t}).  For
   built-in filters, use the predefined constants
   (\texttt{H5Z\_FILTER\_DEFLATE}, etc.).  For externally registered filters,
@@ -1390,11 +1445,14 @@ Non-negative on success; negative on failure.
   the callback for validation (see Empty-string handling in the
   Description).
 \item \texttt{H5E\_BADVALUE}---The parameter string is malformed, the
-  \texttt{params} type field is unrecognised, or \texttt{set\_config} rejected
-  the parameter string.
+  \texttt{params} type field is unrecognised, \texttt{set\_config} rejected
+  the parameter string, or the callback returned a \texttt{cd\_nelmts}
+  value exceeding \texttt{UINT16\_MAX}, the file-format limit on
+  \texttt{cd\_values} elements per filter entry
+  (\SectionRef{sec:callback-specs}).
 \item \texttt{H5E\_CANTINIT}---The \texttt{set\_config} callback returned a
-  \texttt{cd\_nelmts} value exceeding \texttt{UINT16\_MAX} or the library's
-  internal filter-table limit.
+  \texttt{cd\_nelmts} value exceeding the library's internal filter-table
+  limit.
 \end{itemize}
 
 \verysubsection{Usage examples}
@@ -1598,7 +1656,9 @@ by returning the parameter string rather than the filter name.
 \verysubsection{Parameters}
 
 \begin{itemize}
-\item \texttt{plist\_id}---A dataset creation property list identifier.
+\item \texttt{plist\_id}---A dataset or group creation property list
+  identifier (filters attached to a GCPL configure the fractal heap used
+  for dense attribute/link storage; \SectionRef{sec:callback-specs}).
 \item \texttt{filter\_idx}---Zero-based index of the filter in the pipeline.
 \item \texttt{params\_buf}---Buffer to receive the parameter string, or \texttt{NULL}
   to query size only.
@@ -2094,7 +2154,8 @@ reader that does not recognise \texttt{ext\_type} what to do:
   continue.  The entry stays fully usable; only the information carried by
   that one block is unavailable, and introspection for it degrades exactly
   as it does for a version-2 entry.  Blocks carrying descriptive or
-  introspective data --- both types defined by this RFC --- clear the bit.
+  introspective data clear the bit; \texttt{H5O\_PLINE\_EXT\_CONFIG}, the
+  only block type this RFC defines, is one such block.
 \item \textbf{Critical set (1).}  Fail the dataset open with an error
   naming the unsupported block type and filter ID.  The reader must
   \emph{not} skip the block and proceed to filter data: the entry's
@@ -2214,8 +2275,11 @@ downgrade is safe only for non-critical blocks, however: a critical block
 interpreted without, so dropping it would corrupt the caller's intent
 rather than merely degrade introspection.  The specification that defines
 a critical block type must therefore state that a restrictive libver bound
-is a hard error for entries carrying it, not a silent downgrade.  Both
-block types defined by this RFC are non-critical and downgrade silently.
+is a hard error for entries carrying it, not a silent downgrade.  The one
+block type this RFC defines, \texttt{H5O\_PLINE\_EXT\_CONFIG}, is
+non-critical and downgrades silently.  (\texttt{H5O\_PLINE\_EXT\_BLOB} is
+critical, but it is reserved for RFC-HDFG-2026-003, not defined by this
+RFC.)
 
 \verysubsection{Where the gating lives}
 
