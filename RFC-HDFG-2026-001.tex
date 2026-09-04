@@ -14,9 +14,9 @@
 
 
 % Callout box for out-of-scope notices
-\usepackage[skins]{tcolorbox}
+\usepackage[skins,breakable]{tcolorbox}
 \newtcolorbox{outofscope}{
-  enhanced,
+  enhanced, breakable,
   colback=yellow!10,
   colframe=orange!70!black,
   fonttitle=\bfseries,
@@ -27,7 +27,7 @@
 
 % Callout box for implementation notes
 \newtcolorbox{notebox}{
-  enhanced,
+  enhanced, breakable,
   colback=blue!5,
   colframe=blue!50!black,
   left=4pt, right=4pt, top=3pt, bottom=3pt,
