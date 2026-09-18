@@ -442,13 +442,22 @@ of a power of two:
     fits in 13 bits --- equivalently, when the value is $m \cdot 2^{e}$ for
     an integer $m$ with $|m| < 2^{13}$, which is at most three hexadecimal
     fraction digits.  Annotating merely because the hex form is
-    \emph{shorter} than the decimal is not the rule and would be nearly
-    vacuous: \texttt{0.1} renders as \texttt{0x1.999999999999ap-4}, 20
-    characters against the canonical form's 22, so almost every float would
-    acquire a comment that tells the reader nothing.  The 13-bit bound
-    admits the values this exists for --- exact powers of two, and simple
-    multiples such as \texttt{0x1.8p-36} --- and excludes values whose hex
-    form is merely a second unreadable spelling.
+    \emph{shorter} than the canonical decimal is not the rule, and fails in
+    both directions.  Since the canonical decimal is itself the shortest
+    round-trip form (\SectionRef{sec:float-precision}), a length comparison
+    would \emph{miss} exactly the values this feature is for: \texttt{0.5},
+    \texttt{0.25}, and \texttt{3.0} all qualify under the 13-bit rule, but
+    their canonical decimals (\texttt{0.5}, \texttt{0.25}, \texttt{3.0}) are
+    already shorter than their hex spellings
+    (\texttt{0x1p-1}, \texttt{0x1p-2}, \texttt{0x1.8p+1}), so a
+    shorter-than-hex test would stay silent on all three.  Conversely, a
+    value with no short binary structure at all can still have a hex form
+    shorter than its 17-digit canonical decimal by sheer coincidence of
+    digit patterns, without being a value a user reasons about in powers of
+    two.  The 13-bit bound tests the value's structure directly and admits
+    exactly the values this exists for --- exact powers of two, and simple
+    multiples such as \texttt{0x1.8p-36} --- regardless of how either
+    spelling happens to measure.
   \item \textbf{Rendering.}  \texttt{h5dump} formats the hexadecimal text
     itself; it does \emph{not} print \texttt{\%a} output verbatim.  C17
     \S7.21.6.1p8 requires only that a precision-free \texttt{\%a} be
