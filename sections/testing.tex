@@ -425,10 +425,9 @@ resulting \texttt{cd\_values} must be identical.
 \begin{itemize}
 \item \texttt{rt-E01}: Passing a non-NULL, non-empty \texttt{params} to a parameterless
   built-in (\texttt{shuffle}, \texttt{fletcher32}, \texttt{nbit}) returns
-  \texttt{H5E\_UNSUPPORTED}: these filters implement no \texttt{set\_config}
-  callback, so this is the ``filter found but does not implement
-  \texttt{set\_config}'' case (\SectionRef{sec:append-filter}), not a
-  rejected parameter string.
+  \texttt{H5E\_BADVALUE}: these filters share a trivial \texttt{set\_config}
+  callback that rejects any non-empty string, rather than leaving
+  \texttt{set\_config} unset.
 \item \texttt{rt-E01b}: Passing \texttt{NULL} or an empty parameter string
   to a filter that implements \texttt{set\_config} and requires parameters
   (e.g., Scale-Offset, SZIP) invokes \texttt{set\_config} with

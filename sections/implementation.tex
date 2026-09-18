@@ -8,14 +8,13 @@
 \section{Built-in Filter Parameters}
 \label{sec:builtin-filters}
 
-Each built-in filter that accepts parameters implements \texttt{set\_config}
-and \texttt{get\_config} so that the string API is fully functional
-without third-party plugins.  The parameterless built-ins (shuffle,
-fletcher32, nbit) implement neither callback, per
-\SectionRef{sec:append-filter}: the library handles their
-\texttt{NULL}/empty-string configuration directly, and a non-empty
-string supplied to one of them is rejected with \texttt{H5E\_UNSUPPORTED}
-without ever reaching a callback.
+Each built-in filter implements \texttt{set\_config} and \texttt{get\_config}
+so that the string API is fully functional without third-party plugins.
+The parameterless built-ins (shuffle, fletcher32, nbit) share a single
+trivial \texttt{set\_config} implementation that accepts \texttt{NULL}/empty
+input (setting \texttt{cd\_nelmts~=~0}) and rejects a non-empty parameter
+string with \texttt{H5E\_BADVALUE}, rather than each carrying its own
+copy of that logic or leaving the callback unset.
 
 For built-in filters that have dedicated \texttt{H5Pset\_*} functions with non-trivial
 validation logic (particularly SZIP and Scale-Offset), the \texttt{set\_config}

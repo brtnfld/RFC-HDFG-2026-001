@@ -1369,20 +1369,24 @@ string \texttt{""}, \texttt{H5Pappend\_filter} treats the call as ``no
 parameters''. The library locates the filter plugin and inspects its class
 record:
 \begin{itemize}
-\item If the plugin does \emph{not} implement \texttt{set\_config} (the
-  typical case for parameterless built-ins such as shuffle, fletcher32, and
-  nbit), the library appends the filter with \texttt{cd\_nelmts~=~0} and no
-  callback is invoked. Such filters are usable through the
-  \texttt{H5Z\_PARAMS\_STRING} form without being forced to provide a
-  \texttt{set\_config} callback that has nothing to do.
-\item If the plugin \emph{does} implement \texttt{set\_config}, the callback
-  is invoked with \texttt{params~=~NULL}. The plugin decides whether an
-  empty configuration is acceptable: parameterless or fully-defaulted
-  filters may return success with the appropriate \texttt{cd\_values}, while
-  filters that strictly require parameters (e.g., Scale-Offset, SZIP) may
-  return \texttt{H5E\_BADVALUE} so the failure surfaces at
-  \texttt{H5Pappend\_filter} rather than later at \texttt{H5Dcreate} or
-  I/O time. This preserves the fail-fast contract documented below.
+\item If the plugin does \emph{not} implement \texttt{set\_config} at all
+  (its class record leaves the callback \texttt{NULL} --- always true for
+  a \texttt{H5Z\_class2\_t} plugin, which has no such field, and possible
+  but atypical for a \texttt{H5Z\_class3\_t} plugin that opts out), the
+  library appends the filter with \texttt{cd\_nelmts~=~0} and no callback
+  is invoked.
+\item If the plugin \emph{does} implement \texttt{set\_config} --- which
+  includes the parameterless built-ins (shuffle, fletcher32, nbit),
+  registered with a shared trivial callback rather than each being left
+  without one --- the callback is invoked with \texttt{params~=~NULL}.
+  The plugin decides whether an empty configuration is acceptable:
+  parameterless or fully-defaulted filters may return success with the
+  appropriate \texttt{cd\_values}, while filters that strictly require
+  parameters (e.g., Scale-Offset, SZIP) may return \texttt{H5E\_BADVALUE}
+  so the failure surfaces at \texttt{H5Pappend\_filter} rather than later
+  at \texttt{H5Dcreate} or I/O time. This preserves the fail-fast contract
+  documented below. The shared parameterless-filter callback follows the
+  same rule: it returns \texttt{H5E\_BADVALUE} for a non-empty string.
 \end{itemize}
 
 \verysubsection{Eager plugin loading}
