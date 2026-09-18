@@ -417,7 +417,10 @@ new struct generations are added. The library's internal dispatch in
 independent of \texttt{H5Z\_CLASS\_T\_VERS\_MAX}.
 
 \textbf{Future class versions:} Other in-progress HDF5 work (e.g.,
-Accelerator-native I/O Pipeline) may also need to extend
+Accelerator-native I/O Pipeline; a preliminary proposal from Kevin
+Dougherty, September 2026, to decouple the storage chunk from the unit
+handed to the compressor and support progressive decompression, noted as
+future-RFC material in RFC-HDFG-2026-003) may also need to extend
 \texttt{H5Z\_class\_t}.  The \texttt{H5Z\_CLASS\_T\_VERS\_MAX} pattern
 accommodates this without back-to-back struct versioning: a future
 \texttt{H5Z\_class4\_t} would set \texttt{version = 3} and
