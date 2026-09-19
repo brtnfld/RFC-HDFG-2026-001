@@ -195,46 +195,52 @@ compliance from the underlying parser.
 \textbf{Output (produced by the library and callbacks):} the library's own
 canonicalization (\SectionRef{sec:config-canonical-form}) formats
 \texttt{float} and \texttt{double} values as the \emph{shortest} decimal
-literal that round-trips back to the identical value.  \texttt{get\_config}
-implementations \emph{may} do the same, or fall back to the simpler,
-always-correct fixed-width \texttt{\%.16e} described below; both are valid
-(\SectionRef{sec:callback-specs}).
+literal that round-trips back to the identical value, computed with the
+vendored Ryu library~\cite{ryu,ryupaper}.  \texttt{get\_config}
+implementations are not required to take on that dependency: they \emph{may}
+approximate the same shortest-form output with a search described below, or
+fall back to the simpler, always-correct fixed-width \texttt{\%.16e}; all
+three are valid (\SectionRef{sec:callback-specs}).
 
-The shortest-round-trip form is obtained by trying successively wider
-precisions with \texttt{\%.*g} --- which chooses fixed or scientific notation
-the way a person would --- and keeping the first candidate whose
-\texttt{strtod} readback reproduces the value bit for bit.  Common values
-canonicalize short (\texttt{3.0}, \texttt{0.1}); a value whose mantissa
-doesn't line up with a short decimal takes up to
-\texttt{DBL\_DECIMAL\_DIG} (17) significant digits, the minimum that
-round-trips every IEEE\,754 double, and precision 17 always succeeds by
-construction, so the search cannot fall through without a match.  This
-format:
+Ryu computes the shortest round-tripping digit string directly from the
+IEEE\,754 bit pattern --- no search, and no \texttt{strtod} readback needed to
+confirm the result, since the shortest-round-trip property is what the
+algorithm proves about its own output~\cite{ryupaper}.  Its reference
+implementation always emits scientific notation with no padding
+(\texttt{3.0}~$\to$~\texttt{"3E0"}, \texttt{0.1}~$\to$~\texttt{"1E-1"}), so the
+library takes the digit string and decimal exponent apart and lays them out
+again \texttt{\%g}-style --- fixed-point while the exponent stays in
+human-scale range, scientific outside it --- which is what keeps the
+canonical form of an ordinary compression level reading
+\texttt{rate~=~3.5} rather than \texttt{rate~=~3.5E0}.  That re-layout only
+moves the decimal point; it never rounds, drops, or adds a significant digit,
+so Ryu's round-trip guarantee carries over unchanged.  This format:
 \begin{itemize}
   \item always emits a decimal point or exponent, satisfying the TOML~v1.0
-    requirement that float literals contain one or the other ---
-    \texttt{\%.*g} alone is \emph{not} sufficient because it drops the
-    decimal point for whole numbers (\texttt{8.0}~$\to$~\texttt{"8"}), which
-    TOML parsers interpret as an integer; whenever the winning candidate has
-    neither, \texttt{".0"} is appended to force float lexical class
-    (e.g.\ \texttt{8.0}, not \texttt{8});
+    requirement that float literals contain one or the other: the
+    fixed-point branch of the re-layout appends \texttt{".0"} whenever the
+    digits run out at the decimal point (e.g.\ \texttt{8.0}, not
+    \texttt{8}, which TOML parsers would read as an integer), and the
+    scientific branch always carries an exponent;
   \item guarantees exact IEEE\,754 double round-trips while never exceeding
-    the standard's recommended-rounding range.  The widest candidate tried,
+    the standard's recommended-rounding range.  Ryu never emits more than
     17 significant digits --- one before the decimal point plus 16 after ---
-    is \texttt{DBL\_DECIMAL\_DIG}, the minimum that distinguishes any two
+    which is \texttt{DBL\_DECIMAL\_DIG}, the minimum that distinguishes any two
     distinct \texttt{double} values and recovers the original bit pattern via
     \texttt{strtod};
 
-    The 17-digit ceiling is deliberate.  C17~\S7.22.1.3p9 (Recommended
-    practice) recommends correct rounding only for decimal forms of at most
-    \texttt{DECIMAL\_DIG} significant digits; beyond that the recommendation
-    weakens to a bounded-value rule.
-    \texttt{DECIMAL\_DIG} is sized for \texttt{long double}, so it is 21 where
-    that is x87 80-bit but 17 where \texttt{long double == double} --- MSVC
-    among others.  18 digits would exceed \texttt{DECIMAL\_DIG} on those
-    targets for no benefit, since 17 digits already round-trip exactly.
-    Contrast \S7.22.1.3p5, which \emph{requires} correct rounding for the
-    hexadecimal form: that asymmetry is what the rewrite trades away
+    The 17-digit ceiling is not a Ryu-specific choice but a property of
+    \texttt{double} itself, and it is deliberate that Ryu never needs to
+    exceed it.  C17~\S7.22.1.3p9 (Recommended practice) recommends correct
+    rounding only for decimal forms of at most \texttt{DECIMAL\_DIG}
+    significant digits; beyond that the recommendation weakens to a
+    bounded-value rule.  \texttt{DECIMAL\_DIG} is sized for \texttt{long
+    double}, so it is 21 where that is x87 80-bit but 17 where
+    \texttt{long double == double} --- MSVC among others.  18 digits would
+    exceed \texttt{DECIMAL\_DIG} on those targets for no benefit, since 17
+    digits already round-trip exactly.  Contrast \S7.22.1.3p5, which
+    \emph{requires} correct rounding for the hexadecimal form: that
+    asymmetry is what the rewrite trades away
     (\SectionRef{sec:config-canonical-form}).  Recovery is exact only if the
     reader's decimal-to-binary conversion is correctly rounded; see the
     requirement below.
@@ -245,21 +251,36 @@ format:
     of the \texttt{T\_DECIMAL\_DIG} macros'', which is still
     \texttt{LDBL\_DECIMAL\_DIG} in practice and so leaves the 17-digit
     conclusion unchanged; and
-  \item is made locale-independent by the implementation: standard
-    \texttt{snprintf} respects \texttt{LC\_NUMERIC} and may replace the decimal
-    point with a comma (e.g., \texttt{de\_DE} locale), which TOML prohibits.
-    Implementations must therefore look up the locale's actual decimal
-    separator via \texttt{localeconv} and replace it with a period --- before
-    the float-lexical-class check above, so a comma-locale fixed-point result
-    (e.g.\ \texttt{"3,5"}) is not mistaken for an integer-shaped token and
-    given a spurious \texttt{".0"} --- and do so on the same locale's
-    \texttt{snprintf} output that was just round-trip-verified, so
-    \texttt{strtod} parses exactly what was written.
+  \item needs no locale handling at all: Ryu writes ASCII digits and a
+    literal \texttt{.} directly, never routing through the locale-sensitive
+    \texttt{snprintf}, so \texttt{LC\_NUMERIC} cannot substitute a comma for
+    the period TOML requires.
 \end{itemize}
 
+\texttt{get\_config} implementations that want comparably short output
+without vendoring Ryu can approximate it with the standard library alone:
+try successively wider precisions with \texttt{\%.*g} --- which chooses
+fixed or scientific notation the way a person would --- and keep the first
+candidate whose \texttt{strtod} readback reproduces the value bit for bit.
+Common values canonicalize short (\texttt{3.0}, \texttt{0.1}); a value whose
+mantissa doesn't line up with a short decimal takes up to
+\texttt{DBL\_DECIMAL\_DIG} (17) significant digits, and precision 17 always
+succeeds by construction, so the search cannot fall through without a
+match.  Unlike Ryu's direct computation, this approximation \emph{is}
+locale-sensitive: \texttt{\%.*g} routes through \texttt{snprintf}, which
+respects \texttt{LC\_NUMERIC} and may substitute a comma for the decimal
+point (e.g., \texttt{de\_DE} locale), so an implementation using this
+technique must look up the locale's actual decimal separator via
+\texttt{localeconv} and replace it with a period --- before checking whether
+the candidate needs a trailing \texttt{".0"} forced onto it, or a
+comma-locale fixed-point result (e.g.\ \texttt{"3,5"}) is mistaken for an
+integer-shaped token --- on the same locale's \texttt{snprintf} output that
+was just round-trip-verified, so \texttt{strtod} parses exactly what was
+written.
+
 The always-correct fallback \texttt{\%.16e} remains available to
-\texttt{get\_config} implementations that prefer not to implement the search
-above: it always emits a decimal point and exponent
+\texttt{get\_config} implementations that prefer not to implement either of
+the above: it always emits a decimal point and exponent
 (e.g.\ \texttt{3.0000000000000000e+00}) and the same 17-significant-digit
 guarantee, just without the shorter spelling for common values.
 
@@ -268,15 +289,17 @@ guarantee, just without the shorter spelling for common values.
 \begin{itemize}
   \item \textbf{Parser:} The library pre-processes hex-float tokens
     (e.g., \texttt{0x1.8p+1}) into shortest-round-trip decimal form before
-    the TOML scanner.  No changes to the vendored tomlc17 subset are
-    required.
+    the TOML scanner, using the vendored Ryu library~\cite{ryu} for the
+    digit computation (\SectionRef{sec:ryu-vendoring}).  No changes to the
+    vendored tomlc17 subset are required.
   \item \textbf{\texttt{get\_config} callbacks:} The simplest correct choice
     is \texttt{\%.16e} for all \texttt{float} and \texttt{double} values in
-    parameter strings.  For more compact output, callbacks may instead use
-    the shortest-round-trip search described above.  Either way, do not use
-    plain \texttt{\%g} or \texttt{\%f} without a round-trip check, do not use
-    \texttt{\%a}, and do not use fewer than 17 significant digits without
-    verifying the round-trip.  Document both options in
+    parameter strings.  For more compact output, callbacks may instead
+    vendor Ryu themselves, or approximate its output with the
+    shortest-round-trip search described above.  Whichever is chosen, do not
+    use plain \texttt{\%g} or \texttt{\%f} without a round-trip check, do not
+    use \texttt{\%a}, and do not use fewer than 17 significant digits
+    without verifying the round-trip.  Document all three options in
     \texttt{H5Zdevelop.h} as a normative requirement for third-party
     plugins.
   \item \textbf{Decimal-to-binary conversion:} Every conversion of a decimal
@@ -311,7 +334,8 @@ guarantee, just without the shorter spelling for common values.
     configuration but never changes how stored data is decoded.
   \item \textbf{Documentation:} Add a note to \texttt{H5Zdevelop.h} and the
     plugin author guide explaining the \texttt{\%.16e} fallback, the
-    shortest-round-trip alternative, why plain \texttt{\%g}/\texttt{\%.17g}
+    shortest-round-trip alternatives (vendoring Ryu, or approximating it
+    with the search), why plain \texttt{\%g}/\texttt{\%.17g}
     is insufficient on its own, and the correctly-rounded conversion
     requirement above.
 \end{itemize}
@@ -372,6 +396,39 @@ The semicolon character is reserved at the grammar level for a possible
 future pipeline-string extension (\texttt{"shuffle; deflate, level = 9;
 fletcher32"}); it is not part of the TOML inline table grammar and is
 rejected with \texttt{H5E\_BADVALUE} outside of quoted strings.
+
+\subsection{Shortest-Round-Trip Float Formatting}
+\label{sec:ryu-vendoring}
+
+The hex-float canonicalization rewrite (\SectionRef{sec:config-canonical-form})
+gets its shortest-round-trip decimal digits from a second vendored
+dependency, independent of tomlc17: Ryu~\cite{ryu}, Ulf Adams's reference C
+implementation of the algorithm from his PLDI~2018 paper~\cite{ryupaper}.
+Writing an equivalent conversion by hand was considered and rejected on
+\cite{hdf5issue6153}: getting every rounding corner right is the subject of
+that paper, and the result is written into the file format, where a wrong
+digit is permanent.
+
+Only Ryu's double-to-shortest-decimal translation unit is vendored, under
+\texttt{src/ryu}; its 32-bit float, string-to-float, and fixed/exponential
+precision units are not, since nothing in HDF5 calls them.  Ryu is dual
+licensed Apache-2.0 or Boost-1.0 at the vendoring party's option; both
+license texts are carried alongside the source.  Ryu's public API exposes
+three unnamespaced global symbols (\texttt{d2s}, \texttt{d2s\_buffered},
+\texttt{d2s\_buffered\_n}); a force-included, HDF5-authored header renames
+them to an \texttt{H5Z\_\_ryu\_}-prefixed form ahead of both the vendored
+translation unit and every HDF5 call site, so a statically linked
+\texttt{libhdf5.a} cannot collide with an application's own copy of
+Ryu --- the same treatment \SectionRef{sec:param-parser} gives tomlc17, and
+for the same reason.  Ryu has no tagged release recent enough to include the
+correctness fixes this vendoring needs, so the vendored copy tracks a pinned
+upstream commit rather than a tag, identified by that commit hash and by the
+SHA-256 of each vendored file.
+
+The reference implementation's output is not used verbatim
+(\SectionRef{sec:float-precision} describes the \texttt{\%g}-style re-layout
+applied on top of it); no change to any vendored Ryu file is required to
+obtain it.
 
 \verysubsection{Sub-table string extraction for VFD stack delegation (future work)}
 
@@ -1107,17 +1164,21 @@ round-trip correctness. Document this requirement in
   float) and guarantees exact IEEE\,754 \texttt{double} round-trips via 17
   significant digits (\texttt{DBL\_DECIMAL\_DIG}).  For more compact output,
   implementations may instead emit the shortest decimal literal that still
-  round-trips, the same technique the library's own canonicalization uses
-  (\SectionRef{sec:float-precision}); either is a valid
-  \texttt{get\_config} output.  Do not use \texttt{\%a} (hex-float, not valid
-  TOML), plain \texttt{\%g} without a round-trip check (may omit decimal
-  point, producing a TOML integer), \texttt{\%f}, fewer than 17 significant
-  digits without verifying the round-trip, or more than
+  round-trips --- either by vendoring the same Ryu library the library's own
+  canonicalization uses (\SectionRef{sec:ryu-vendoring}), or by approximating
+  its output with a search (\SectionRef{sec:float-precision}); any of the
+  three is a valid \texttt{get\_config} output.  Do not use \texttt{\%a}
+  (hex-float, not valid TOML), plain \texttt{\%g} without a round-trip check
+  (may omit decimal point, producing a TOML integer), \texttt{\%f}, fewer
+  than 17 significant digits without verifying the round-trip, or more than
   \texttt{DECIMAL\_DIG} of them (\SectionRef{sec:float-precision}).
-  \textbf{Locale caveat:} \texttt{snprintf} respects \texttt{LC\_NUMERIC}; in
-  locales with a comma decimal separator the output is not valid TOML.
-  Implementations must replace any comma in the formatted number with a
-  period before returning the string.
+  \textbf{Locale caveat:} this only applies to the \texttt{\%.16e} and
+  search-based approximation options, both of which route through
+  \texttt{snprintf}: it respects \texttt{LC\_NUMERIC}, and in locales with a
+  comma decimal separator the output is not valid TOML.  Implementations
+  using either option must replace any comma in the formatted number with a
+  period before returning the string; vendoring Ryu sidesteps the caveat
+  entirely, since it never calls \texttt{snprintf}.
   See \SectionRef{sec:float-precision} for full rationale.
   Document this requirement in \texttt{H5Zdevelop.h} as part of the
   \texttt{H5Z\_get\_config\_func\_t} specification.
