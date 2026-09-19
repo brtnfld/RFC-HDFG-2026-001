@@ -1,0 +1,25 @@
+support/rfc.bib
+  s_b8d78984f1d7b6::t_3c9598d35e772e 80-97
+sections/architecture.tex
+  s_b8d78984f1d7b6::t_ffb3534f973608 1167-1173,1175-1181
+  s_b8d78984f1d7b6::t_20071cd935fee3 292-294,297-302
+  s_b8d78984f1d7b6::t_be009fd5301b43 400-432
+  s_b8d78984f1d7b6::t_175e295f332d4e 337-338
+  s_b8d78984f1d7b6::t_43bc20900ca425 198-217,220-224,226,228,232-243,254-257,260-280,282-283
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "115a800cc0b5777447b4c3701c32738e0884b607",
+  "prompts": {},
+  "sessions": {
+    "s_b8d78984f1d7b6": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "fbbb2be2-86a7-424a-a666-7a9511b01b40",
+        "model": "claude-sonnet-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
