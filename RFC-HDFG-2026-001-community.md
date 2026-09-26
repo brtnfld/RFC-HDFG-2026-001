@@ -187,7 +187,7 @@ Available accessors: `H5Zconfig_get_int`, `H5Zconfig_get_double`,
 (`"compressor.level"`) reach into nested inline tables.
 
 **`get_config`** reconstructs a parameter string from `cd_values` for
-`h5dump -p` output and `H5Pget_filter_params_by_idx`. Optional but recommended.
+`h5dump --filter-params` output and `H5Pget_filter_params_by_idx`. Optional but recommended.
 
 **`filter_title`** is a short human-readable label stored in `cd_values` so
 tools can display it even when the plugin is not installed.
@@ -217,13 +217,17 @@ h5repack -f 'deflate, level = 9' in.h5 out.h5
 
 ### h5dump
 
-`h5dump -p` appends a `PARAMS_STRING` line per filter. Default output is
-unchanged.
+`h5dump --filter-params` (which implies `-p`) adds a `PARAMS_STRING`
+line, and a `DESCRIPTION` line when the filter is available, inside each
+filter's entry. Default output and plain `-p` output are unchanged.
 
 ```
 FILTERS {
-  COMPRESSION DEFLATE { LEVEL 6 }
-  PARAMS_STRING "level = 6"
+   COMPRESSION DEFLATE {
+      LEVEL 6
+      PARAMS_STRING 'level = 6'
+      DESCRIPTION "deflate"
+   }
 }
 ```
 

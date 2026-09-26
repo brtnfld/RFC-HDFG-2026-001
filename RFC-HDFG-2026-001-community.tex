@@ -316,7 +316,7 @@ Blosc-style sub-compressor configuration without custom parsing.
 \subsection{\texttt{get\_config} Callback}
 
 Reconstructs a parameter string from \texttt{cd\_values} for
-\texttt{h5dump~-p} output and \texttt{H5Pget\_filter\_params\_by\_idx}.
+\texttt{h5dump~-{}-filter-params} output and \texttt{H5Pget\_filter\_params\_by\_idx}.
 Optional but recommended.
 
 \subsection{\texttt{canonical\_name}}
@@ -357,13 +357,18 @@ h5repack -f 'deflate, level = 9' in.h5 out.h5
 
 \subsection{\texttt{h5dump}}
 
-\texttt{h5dump~-p} appends a \texttt{PARAMS\_STRING} line for each filter.
-Default output (without \texttt{-p}) is unchanged.
+\texttt{h5dump~-{}-filter-params} (which implies \texttt{-p}) adds a
+\texttt{PARAMS\_STRING} line, and a \texttt{DESCRIPTION} line when the
+filter is available, inside each filter's entry.  Default output and plain
+\texttt{-p} output are unchanged.
 
 \begin{minted}{text}
 FILTERS {
-  COMPRESSION DEFLATE { LEVEL 6 }
-  PARAMS_STRING "level = 6"
+   COMPRESSION DEFLATE {
+      LEVEL 6
+      PARAMS_STRING 'level = 6'
+      DESCRIPTION "deflate"
+   }
 }
 \end{minted}
 

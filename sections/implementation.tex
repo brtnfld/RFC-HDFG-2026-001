@@ -407,18 +407,28 @@ No new behaviour is introduced for this edge case.
 
 \subsection{h5dump}
 
-The \texttt{PARAMS\_STRING} field is displayed only when \texttt{h5dump} is invoked
-with \texttt{-p} (the existing flag that enables display of filter and property
-details). Output without \texttt{-p} is unchanged. Because \texttt{PARAMS\_STRING} is
-gated behind \texttt{-p}, and because format changes of this kind have been
-accepted in prior major releases, no additional command-line flag is required.
+The \texttt{PARAMS\_STRING}, hexadecimal-annotation, and
+\texttt{DESCRIPTION} lines are displayed only when \texttt{h5dump} is
+invoked with the new \texttt{-{}-filter-params} option.
+\texttt{-{}-filter-params} implies \texttt{-p}/\texttt{-{}-properties} (the
+existing flag that enables display of filter and property details) and
+adds these lines to the \texttt{FILTERS} block.  Output of plain
+\texttt{-p}, and output without either flag, is byte-identical to earlier
+releases.  A separate flag is required because the added lines depend on
+which filters and plugins are available on the machine running
+\texttt{h5dump} (\texttt{PARAMS\_STRING} falls back to a
+\texttt{get\_config} reconstruction, and \texttt{DESCRIPTION} is
+registry-sourced), and because \texttt{h5import} and user scripts parse
+\texttt{-p} output.
 
-\verysubsection{Normative output format (with \texttt{-p})}
+\verysubsection{Normative output format (with \texorpdfstring{\texttt{-{}-filter-params}}{--filter-params})}
 
-When \texttt{-p} is active, for each filter in the pipeline, a
-\texttt{PARAMS\_STRING} line is appended immediately
-after the existing filter line, indented to the same level as other filter
-sub-fields:
+When \texttt{-{}-filter-params} is active, for each filter in the pipeline, a
+\texttt{PARAMS\_STRING} line is written nested inside that filter's entry,
+after the filter's existing sub-fields and indented to the same level.  A
+filter that prints on one line under \texttt{-p} (e.g.\
+\texttt{COMPRESSION DEFLATE \{ LEVEL 9 \}} or
+\texttt{PREPROCESSING SHUFFLE}) prints as a block containing those lines:
 
 \begin{verbatim}
     FILTERS {
@@ -461,7 +471,7 @@ comment-aware reader and a stock one would derive different values from
 identical bytes --- so the rendering is produced at display time from the
 parsed \texttt{double}, and nothing is added to the file.
 
-When \texttt{-p} is active, \texttt{h5dump} appends a trailing comment
+When \texttt{-{}-filter-params} is active, \texttt{h5dump} appends a trailing comment
 naming each float in the parameter string whose value is a small multiple
 of a power of two:
 
@@ -565,7 +575,7 @@ to decimal first:
 
 \verysubsection{DESCRIPTION}
 
-When \texttt{-p} is active, a \texttt{DESCRIPTION} line is appended after
+When \texttt{-{}-filter-params} is active, a \texttt{DESCRIPTION} line is appended after
 \texttt{PARAMS\_STRING}, nested inside the entry of the filter it describes,
 for filters whose class registration supplies a non-NULL \texttt{description}
 (via \texttt{H5Zget\_filter\_class\_info}):
@@ -589,12 +599,15 @@ unavailable), \texttt{DESCRIPTION} has no on-disk fallback: it is a
 best-effort, registry-sourced label read from the filter class's in-memory
 registration at the time \texttt{h5dump} runs. If the filter plugin is not
 registered or loadable on the machine running \texttt{h5dump}, the
-\texttt{DESCRIPTION} line is omitted entirely. Running \texttt{h5dump -p} on
+\texttt{DESCRIPTION} line is omitted entirely. Running
+\texttt{h5dump -{}-filter-params} on
 the same file on two machines -- one with the plugin installed, one without
 -- can therefore produce different output for this line. Applications and
-scripts that parse \texttt{h5dump -p} output must treat \texttt{DESCRIPTION}
-as optional and machine-dependent, and should rely on \texttt{COMMENT}
-instead for a stable, plugin-independent label.
+scripts that parse \texttt{h5dump -{}-filter-params} output must treat
+\texttt{DESCRIPTION} as optional and machine-dependent, and should rely on
+\texttt{COMMENT} instead for a stable, plugin-independent label.  Scripts
+that parse plain \texttt{h5dump -p} output are unaffected, since
+\texttt{-p} alone prints none of these lines.
 
 %% ======================================================================
 %%  Section 10 – Language Bindings

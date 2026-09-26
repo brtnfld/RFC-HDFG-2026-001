@@ -224,9 +224,11 @@ filter ID and flags first; the new form only replaces the trailing raw
 \texttt{h5dump} \texttt{PARAMS\_STRING} format change. The addition of
 \texttt{PARAMS\_STRING} to \texttt{h5dump} output constitutes a format change that may
 break downstream parsers. The field is gated behind a command-line option
-(\texttt{--filter-params}) so that the default output is unchanged. The output
+(\texttt{-{}-filter-params}) so that the default output is unchanged. The output
 format when the option is active is specified normatively in the CLI Tools
-section. See \SectionRef{sec:cli-tools}.
+section.  \emph{Adopted in the body:} \texttt{-{}-filter-params} implies
+\texttt{-p}, and plain \texttt{-p} output is unchanged.  See
+\SectionRef{sec:cli-tools}.
 
 \verysubsection{R23}
 Flags-override warning contract. Rather than silently overriding the

@@ -261,8 +261,9 @@ The h5repack change is additive. The parser detects whether the values
 after the flags field are a key=value string or a raw integer sequence
 and dispatches accordingly. The old syntax is unchanged.
 
-For h5dump, the new `PARAMS_STRING` line appears only with `-p`. No
-change to default output.
+For h5dump, the new `PARAMS_STRING` line appears only with the new
+`--filter-params` option, which implies `-p`. No change to default
+output or to plain `-p` output.
 
 ---
 

@@ -631,9 +631,11 @@ These tests exercise the version-3 pipeline message
   the opposite: the block is present and carries the \emph{new} string, not
   the one the entry was appended with (\SectionRef{sec:modify-filter}).
 \item \texttt{fmt-08} (\textbf{h5dump without plugin}): Run
-  \texttt{h5dump~-p} on a version-3 file on a system without the plugin
-  installed; verify \texttt{PARAMS\_STRING} shows the stored string
-  verbatim.
+  \texttt{h5dump~-{}-filter-params} on a version-3 file on a system without
+  the plugin installed; verify \texttt{PARAMS\_STRING} shows the stored
+  string verbatim and no \texttt{DESCRIPTION} line is printed.  Verify that
+  \texttt{h5dump~-p} output for the same file contains no
+  \texttt{PARAMS\_STRING} or \texttt{DESCRIPTION} line.
 \end{itemize}
 
 \verysubsection{Extension block framing}
