@@ -270,6 +270,11 @@ needed; the change is one row of the bounds table plus bumping
    this conflicts with the existing behavior, which *errors* when the
    desired version exceeds the bound; explicit design choice needed).
 
+**Status:** resolved: error, matching other libver-gated features. A
+pipeline carrying stored strings in a file whose high bound is below
+`H5F_LIBVER_V300` fails in `H5O_pline_set_version()` with `H5E_BADRANGE`
+(architecture.tex §"When Version 3 Is Written", Rule 3).
+
 ---
 
 ## C3 [L] — “First-registered-wins” for name collisions is silently-wrong for overrides

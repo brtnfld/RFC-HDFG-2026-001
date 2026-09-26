@@ -42,8 +42,10 @@ remains readable by libraries that ship only this RFC.
 Existing call sites compile and function without modification.  Pipelines
 configured without parameter strings continue to be written as version-2
 messages, byte-identical to pre-RFC output; pipelines carrying stored
-strings require version-3-aware readers unless the caller bounds the file
-format with \texttt{H5Pset\_libver\_bounds} (see \S\ref{sec:pline-v3}).
+strings require version-3-aware readers, and a file whose
+\texttt{H5Pset\_libver\_bounds} upper bound excludes version~3 rejects
+them with an error rather than dropping the strings
+(see \S\ref{sec:pline-v3}).
 \end{abstract}
 
 \vfill

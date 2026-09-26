@@ -318,7 +318,12 @@ packing convention is no longer normative and \texttt{cd\_values} encoding is
 filter-private.  Revision~v6 further made version~3 extensible, so that
 follow-on per-entry features add extension block types rather than a
 version~4.  The byte-identical-output property survives for pipelines
-configured without parameter strings.
+configured without parameter strings.  \emph{Resolved as an error in the
+body:} a pipeline carrying stored strings in a file whose libver upper
+bound is below \texttt{H5F\_LIBVER\_V300} fails with
+\texttt{H5E\_BADRANGE} rather than being written as version~2 without
+the strings, matching other libver-gated features
+(\SectionRef{sec:pline-v3-gating}).
 See \SectionRef{sec:pline-v3}, \SectionRef{sec:pline-v3-layout}, and
 \SectionRef{sec:introspection}.
 

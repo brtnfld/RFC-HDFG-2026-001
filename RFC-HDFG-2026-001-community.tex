@@ -391,7 +391,8 @@ On-disk format
     \texttt{H5Pset\_filter} output \\
 Files from \texttt{H5Pappend\_filter}
   & Readable by all existing readers unless a parameter string was stored;
-    \texttt{H5Pset\_libver\_bounds} forces the old format when needed \\
+    a file bounded below \texttt{H5F\_LIBVER\_V300} rejects stored strings
+    with an error, so old-reader files use \texttt{H5Z\_PARAMS\_CDVALUES} \\
 ABI
   & New functions added; no existing signatures changed
     (minor version bump) \\

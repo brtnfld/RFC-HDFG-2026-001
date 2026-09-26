@@ -1236,8 +1236,8 @@ round-trip correctness. Document this requirement in
   configuration encoded in \texttt{cd\_values}.  With the parameter string
   persisted on disk (\SectionRef{sec:pline-v3}), this callback is a
   \emph{fallback}: the library invokes it only for pipeline entries that
-  carry no stored string (raw \texttt{cd\_values} configuration, pre-RFC
-  files, or libver-forced version-2 messages), and for the runtime
+  carry no stored string (raw \texttt{cd\_values} configuration, entries
+  modified with \texttt{H5Pmodify\_filter}, or pre-RFC files), and for the runtime
   ``effective configuration'' view of what the filter actually applied.
   Due to the lossy nature of the
   \texttt{cd\_values} encoding (e.g., floating-point values quantised to integers,
@@ -1414,9 +1414,11 @@ configured without parameter strings are written as version-2 messages,
 byte-identical to pre-RFC output and readable everywhere.  Pipelines that
 carry stored configuration strings are written as version-3 messages,
 which pre-RFC libraries reject at dataset-open time; callers who need
-old-reader compatibility bound the file format with
-\texttt{H5Pset\_libver\_bounds}, which drops the stored strings and
-reverts to version-2 output (\SectionRef{sec:pline-v3-gating}).
+old-reader compatibility configure their filters with
+\texttt{H5Z\_PARAMS\_CDVALUES}, which stores no string and writes
+version~2.  A file whose \texttt{H5Pset\_libver\_bounds} upper bound
+excludes version~3 rejects a pipeline carrying stored strings with an
+error rather than dropping them (\SectionRef{sec:pline-v3-gating}).
 
 When \texttt{H5Pget\_filter2} is called for a v3 filter, it returns
 the canonical name (\texttt{name}) from the runtime registry if the
@@ -1824,9 +1826,9 @@ order of decreasing fidelity:
   in the canonical form of \SectionRef{sec:config-canonical-form}.  This
   is exact and requires no plugin.
 \item \textbf{\texttt{get\_config} reconstruction.}  For entries without a
-  stored string (raw \texttt{cd\_values} configuration, files written
-  before this RFC, or files written under a libver bound that forced the
-  version-2 message), the filter's \texttt{get\_config} callback
+  stored string (raw \texttt{cd\_values} configuration, entries modified
+  with \texttt{H5Pmodify\_filter}, or files written before this RFC), the
+  filter's \texttt{get\_config} callback
   reconstructs a best-effort string from \texttt{cd\_values}.
 \item \textbf{Raw \texttt{cd\_values} formatting.}  When neither source is
   available, the raw \texttt{cd\_values} are formatted as a fallback string
@@ -1851,8 +1853,8 @@ the caller's own text, with only the two value-preserving canonicalising
 rewrites of \SectionRef{sec:config-canonical-form} applied.  Callers that need to distinguish an authoritative stored
 string from a reconstruction can compare against
 \texttt{H5Pget\_filter2} output or note whether the plugin was required;
-the common case --- pipelines configured through the string API and
-written without a restrictive libver bound --- always yields source~1.
+the common case --- pipelines configured through the string API ---
+always yields source~1.
 
 \verysubsection{Note on \texttt{H5Pget\_filter2}}
 The existing \texttt{H5Pget\_filter2} function returns the class
@@ -2295,9 +2297,9 @@ All property-list machinery handles it uniformly:
   that agree on them will filter data identically, and reporting them
   unequal because one was configured as \texttt{"level=6"} and the other
   as \texttt{"level = 6"} would make \texttt{H5Pequal} sensitive to
-  formatting.  This also keeps a round-tripped DCPL --- encoded, decoded,
-  or read back from a file written under a restrictive libver bound ---
-  equal to the original.  It is consistent with the existing treatment of
+  formatting.  This also keeps a round-tripped DCPL --- encoded and
+  decoded, or rebuilt from the same \texttt{cd\_values} through
+  \texttt{H5Z\_PARAMS\_CDVALUES} --- equal to the original.  It is consistent with the existing treatment of
   \texttt{cd\_nelmts}-equivalent pipelines and deliberately inconsistent
   with the name slot, whose \texttt{strcmp} is pre-existing behaviour this
   RFC does not change (\SectionRef{sec:class3-struct}).
@@ -2463,45 +2465,42 @@ encode time (e.g., \texttt{H5Dcreate}), following the standard
 format feature:
 
 \begin{enumerate}
-\item If \emph{no} entry in the pipeline carries an extension block, the
-  library writes version~2 (or version~1, per the existing rules) ---
-  byte-identical to the output of an equivalent \texttt{H5Pset\_filter}
-  program, at any libver bound.
-\item If at least one entry carries an extension block \emph{and} the
-  file's libver upper bound admits version~3 (i.e.\ is at least
+\item If \emph{no} entry in the pipeline carries a stored configuration
+  string, the library writes version~2 (or version~1, per the existing
+  rules) --- byte-identical to the output of an equivalent
+  \texttt{H5Pset\_filter} program --- unless the file's libver \emph{low}
+  bound is \texttt{H5F\_LIBVER\_V300} or later, in which case the existing
+  low-bound rule raises it to version~3 and every entry is written with no
+  string.
+\item If at least one entry carries a stored string \emph{and} the file's
+  libver upper bound admits version~3 (i.e.\ is at least
   \texttt{H5F\_LIBVER\_V300}), the library writes version~3.
-\item If an extension block is present but the libver upper bound is below
-  \texttt{H5F\_LIBVER\_V300}, the library writes version~2 and omits the
-  blocks.  The
-  file is byte-identical to pre-RFC output; execution semantics are
-  unaffected because \texttt{cd\_values} are complete on their own, and
-  introspection degrades to the \texttt{get\_config} fallback.  The
-  downgrade is silent, consistent with how libver bounds gate other
-  format features; applications can detect it by re-opening the dataset
-  and querying \texttt{H5Pget\_filter\_params\_by\_idx}.
+\item If at least one entry carries a stored string but the libver upper
+  bound is below \texttt{H5F\_LIBVER\_V300}, the operation fails with
+  \texttt{H5E\_BADRANGE}: \texttt{H5Dcreate} and \texttt{H5Dcreate\_anon}
+  fail, as does \texttt{H5Ocopy} of such a dataset into a file with that
+  bound.  The caller either raises the bound or appends the filter with
+  \texttt{H5Z\_PARAMS\_CDVALUES}, which stores no string, so the pipeline
+  falls under Rule~1.
 \end{enumerate}
 
 Rule~1 preserves the adoption story that motivated earlier drafts:
 existing programs, and new programs that use only the raw
 \texttt{cd\_values} form, produce files indistinguishable from today's.
-Only callers who opt into string configuration --- and do not bound the
-file format below the shipping release --- produce version-3 messages.
+Only callers who opt into string configuration (or who set a
+\texttt{H5F\_LIBVER\_V300} low bound) produce version-3 messages.
 
-Stating the rules in terms of extension blocks rather than stored strings
-is what lets a later block type inherit this gating unchanged.  A future
-feature that attaches a block to an entry makes that pipeline message
-version~3 by the same Rule~2, and is suppressed by the same Rule~3 under a
-restrictive libver bound, without any new gating logic.  Rule~3's silent
-downgrade is safe only for non-critical blocks, however: a critical block
-(\SectionRef{sec:pline-v3-layout}) carries information the entry cannot be
-interpreted without, so dropping it would corrupt the caller's intent
-rather than merely degrade introspection.  The specification that defines
-a critical block type must therefore state that a restrictive libver bound
-is a hard error for entries carrying it, not a silent downgrade.  The one
-block type this RFC defines, \texttt{H5O\_PLINE\_EXT\_CONFIG}, is
-non-critical and downgrades silently.  (\texttt{H5O\_PLINE\_EXT\_BLOB} is
-critical, but it is reserved for RFC-HDFG-2026-003, not defined by this
-RFC.)
+Rule~3 is an error rather than a fallback to version~2 because that is how
+every other libver-gated format feature behaves: an operation whose content
+the file's bounds cannot encode fails --- newer datatype encodings such as
+complex numbers, version-2 object headers, newer layout encodings, chunks
+larger than 4\,GiB, and newer dataspace, attribute, and fill-value message
+versions all do so, and the \texttt{H5Pset\_libver\_bounds} reference states
+that such calls will fail.  Writing version~2 instead would also discard
+exactly what this RFC exists to persist: the string that lets a reader
+without the plugin recover the configuration, leaving only the
+\texttt{get\_config} reconstruction, which is lossy for floating-point
+parameters (\SectionRef{sec:introspection}).
 
 \verysubsection{Where the gating lives}
 
@@ -2525,21 +2524,15 @@ static const unsigned H5O_pline_ver_bounds[] = {
 
 \texttt{H5O\_pline\_set\_version()} raises the message version to the
 file's \emph{low} bound, then errors if the result exceeds the \emph{high}
-bound (\texttt{``Filter pipeline version out of bounds''}).  This RFC
-changes that function in exactly two ways:
-
-\begin{enumerate}
-\item The version required by content is computed as version~3 if any
-  entry will emit at least one extension block, and by the existing rules
-  otherwise.
-\item When the required version exceeds the high bound, the function no
-  longer errors unconditionally.  It first drops the blocks that are
-  droppable --- every non-critical block --- and recomputes.  If the
-  requirement falls to version~2, encoding proceeds with the blocks
-  omitted (Rule~3).  If a critical block remains, the existing
-  out-of-bounds error stands, because that block cannot be dropped
-  without changing what the file means.
-\end{enumerate}
+bound (\texttt{``Filter pipeline version out of bounds''}, raised as
+\texttt{H5E\_BADRANGE}).  This RFC changes that function in exactly one
+way: the version required by content is version~3 if any entry carries a
+stored configuration string, and is computed by the existing rules
+otherwise.  When that requirement exceeds the high bound the function
+fails with \texttt{H5E\_BADRANGE}, as it already does for any version
+above the high bound; this is Rule~3's error.  \texttt{H5Ocopy} reaches
+the same failure through the existing version check in
+\texttt{H5O\_\_pline\_pre\_copy\_file()}.
 
 Version~3 is admitted by the \texttt{H5F\_LIBVER\_V300} bound.  The
 \texttt{V200} row stays at version~2: \texttt{H5F\_LIBVER\_V200} already
@@ -2557,7 +2550,7 @@ against.  The table therefore gains one row:
 RFC introduces no libver constant of its own: \texttt{H5F\_LIBVER\_V300}
 is the format bound of the 3.0 release, which that release defines for
 its own reasons and this feature merely occupies.  Beyond the table row
-and the \texttt{H5O\_pline\_set\_version()} changes above, nothing else in
+and the \texttt{H5O\_pline\_set\_version()} change above, nothing else in
 the library's version-gating machinery is touched.
 
 \subsection{Reader Compatibility}
@@ -2567,9 +2560,12 @@ A library that predates version~3 fails to decode a version-3 pipeline
 message: the existing version check in the pipeline-message decoder
 rejects unknown versions, surfacing as a clear dataset-open error.  This
 is the standard consequence of opting into a newer format feature (as
-with, e.g., virtual datasets), and \texttt{H5Pset\_libver\_bounds} is the
-standard user-controlled escape hatch for producing files that older
-readers must open.  No superblock feature flag is required; the message
+with, e.g., virtual datasets).  A caller producing files that older
+readers must open configures filters with \texttt{H5Z\_PARAMS\_CDVALUES};
+bounding the file with \texttt{H5Pset\_libver\_bounds} guarantees that a
+pipeline carrying stored strings fails at write time rather than producing
+a file those readers cannot open (\SectionRef{sec:pline-v3-gating}).  No
+superblock feature flag is required; the message
 version field carries the signal.
 
 Within a v3-capable library, the stored string places no new demands on
