@@ -1,0 +1,30 @@
+REVIEW-FINDINGS.md
+  s_71c3fd9a1c4bf7::t_07918c52751597 273-277
+RFC-HDFG-2026-001-community.tex
+  s_71c3fd9a1c4bf7::t_cab6bbab1b9671 394-395
+sections/abstract.tex
+  s_71c3fd9a1c4bf7::t_ae9834bc700ad8 45-48
+sections/architecture.tex
+  s_71c3fd9a1c4bf7::t_099c83b8ea4349 1239-1240,1417-1421,1829-1831,1856-1857,2300-2302,2468-2476,2478-2484,2490-2503,2527-2530,2553,2563-2568
+  s_71c3fd9a1c4bf7::t_d10910872c9a61 2531-2535
+sections/resolved.tex
+  s_71c3fd9a1c4bf7::t_321363f0ebc535 321-326
+sections/testing.tex
+  s_71c3fd9a1c4bf7::t_f90371476dd3bb 85-86,92-96,152-153,161-162,619-626
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "64fd29479feebc4e951b4223bc3875f60d24c137",
+  "prompts": {},
+  "sessions": {
+    "s_71c3fd9a1c4bf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d43baf-ffcf-476b-982a-5d7c16d1debb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
