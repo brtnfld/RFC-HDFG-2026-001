@@ -1,0 +1,44 @@
+REVIEW-FINDINGS.md
+  s_71c3fd9a1c4bf7::t_07918c52751597 273-277
+RFC-HDFG-2026-001-community.tex
+  s_71c3fd9a1c4bf7::t_cab6bbab1b9671 394-395
+  s_71c3fd9a1c4bf7::t_c3a91473fb63c1 408-410
+  s_71c3fd9a1c4bf7::t_5d90531d827add 319,360
+sections/abstract.tex
+  s_71c3fd9a1c4bf7::t_ae9834bc700ad8 41-44
+  s_71c3fd9a1c4bf7::t_da43379e09fe5d 35-37
+sections/architecture.tex
+  s_71c3fd9a1c4bf7::t_099c83b8ea4349 1239-1240,1410-1414,1822-1824,1849-1850,2288-2290,2362-2370,2372-2378,2384-2397,2421-2424,2447,2457-2462
+  s_71c3fd9a1c4bf7::t_d10910872c9a61 2425-2429
+  s_71c3fd9a1c4bf7::t_1af8117bb3cd1a 801-802,1372-1374,2063-2064,2199-2200,2300,2311-2313,2318-2321,2328-2351,2502-2505,2507
+sections/resolved.tex
+  s_71c3fd9a1c4bf7::t_321363f0ebc535 324-329
+  s_71c3fd9a1c4bf7::t_81367df2acd076 320-323
+  s_71c3fd9a1c4bf7::t_d6dd0d25462817 227,229
+sections/testing.tex
+  s_71c3fd9a1c4bf7::t_f90371476dd3bb 85-86,92-96,146-147,155-156,613-620
+  s_71c3fd9a1c4bf7::t_67f2cbd56cddd1 101-104,626-627,631,641,643-646,649-665,668-672
+  s_71c3fd9a1c4bf7::t_af07ada5f2be22 634
+  s_71c3fd9a1c4bf7::t_d09e88408f7141 605
+sections/introduction.tex
+  s_71c3fd9a1c4bf7::t_87fb4f55a39022 36-37
+sections/implementation.tex
+  s_71c3fd9a1c4bf7::t_b7376b8c449f4f 412-413,426,474,578,603,606
+  s_71c3fd9a1c4bf7::t_afbc59fb07cd4a 424
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "7d0c15474ff14ddc300070164e696fdab3c023b2",
+  "prompts": {},
+  "sessions": {
+    "s_71c3fd9a1c4bf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d43baf-ffcf-476b-982a-5d7c16d1debb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
