@@ -741,7 +741,10 @@ the length, once to populate an exactly sized temporary --- and copies the
 result into the caller's \texttt{CHARACTER} variable.  \texttt{params\_len}
 returns the \emph{full} length of the parameter string even when
 \texttt{params} was too short to hold it, so a caller can detect truncation by
-comparing it against \texttt{LEN(params)}.
+comparing it against \texttt{LEN(params)}.  The same property lets a
+caller size a buffer: pass a short \texttt{params} (e.g.\
+\texttt{CHARACTER(LEN=1)}), read \texttt{params\_len}, and call again with a
+buffer of that length.
 
 \begin{minted}{fortran}
 ! In H5Pff.F90
