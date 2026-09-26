@@ -1,0 +1,25 @@
+RFC-HDFG-2026-001-community.tex
+  s_71c3fd9a1c4bf7::t_5d90531d827add 319,360
+sections/implementation.tex
+  s_71c3fd9a1c4bf7::t_b7376b8c449f4f 412-413,424,426,474,578,603,606
+sections/resolved.tex
+  s_71c3fd9a1c4bf7::t_d6dd0d25462817 227,229
+sections/testing.tex
+  s_71c3fd9a1c4bf7::t_af07ada5f2be22 634
+---
+{
+  "schema_version": "authorship/3.0.0",
+  "git_ai_version": "1.7.4",
+  "base_commit_sha": "760d2beebdb8452c36ab9ef9e0665efcd42284df",
+  "prompts": {},
+  "sessions": {
+    "s_71c3fd9a1c4bf7": {
+      "agent_id": {
+        "tool": "claude",
+        "id": "a4d43baf-ffcf-476b-982a-5d7c16d1debb",
+        "model": "claude-opus-5-5"
+      },
+      "human_author": "M. Scot Breitenfeld <brtnfld@hdfgroup.org>"
+    }
+  }
+}
