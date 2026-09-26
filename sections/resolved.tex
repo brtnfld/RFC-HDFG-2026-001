@@ -317,7 +317,10 @@ parameter string verbatim, gated by \texttt{H5Pset\_libver\_bounds}; the
 packing convention is no longer normative and \texttt{cd\_values} encoding is
 filter-private.  Revision~v6 further made version~3 extensible, so that
 follow-on per-entry features add extension block types rather than a
-version~4.  The byte-identical-output property survives for pipelines
+version~4.  \emph{Resolved differently in the body:} version~3 has no
+extension blocks; each entry appends a two-byte length and the canonical
+string to the version-2 fields, and a future per-entry field would need a
+new message version.  The byte-identical-output property survives for pipelines
 configured without parameter strings.  \emph{Resolved as an error in the
 body:} a pipeline carrying stored strings in a file whose libver upper
 bound is below \texttt{H5F\_LIBVER\_V300} fails with

@@ -98,16 +98,10 @@ string is stored directly, no typed per-slot tagging of \texttt{cd\_values}
 is needed; the previously considered type-tag extension is superseded
 (\SectionRef{sec:type-tags-superseded}).
 
-Version~3 is itself extensible: each entry ends in a list of typed,
-length-delimited blocks, and a version-3 reader skips unknown
-non-critical blocks and rejects unknown critical ones with a specific
-error (\SectionRef{sec:pline-v3-layout}).  The compatibility cliff is
-therefore taken once, at the version~2/3 boundary.  Files written by
-later libraries that add block types --- the blob channel of
-RFC-HDFG-2026-003 in particular --- remain readable by libraries shipping
-only this RFC, which recover every configuration string in such a file
-and reject only those entries that genuinely depend on a block type they
-lack.
+Each version-3 entry appends a two-byte length and that many bytes of
+the canonical string to the version-2 entry fields
+(\SectionRef{sec:pline-v3-layout}).  The message has no extension
+mechanism; a future per-entry field would need a new message version.
 
 \subsection{Source Compatibility}
 
@@ -629,12 +623,12 @@ These tests exercise the version-3 pipeline message
   preserved in the copy.
 \item \texttt{fmt-07} (\textbf{modify and the on-disk string}): Append a
   filter via the string form, call \texttt{H5Pmodify\_filter} with altered
-  \texttt{cd\_values}, create a dataset, and verify the entry carries no
-  \texttt{H5O\_PLINE\_EXT\_CONFIG} block on disk and that introspection
+  \texttt{cd\_values}, create a dataset, and verify the entry is written
+  with \texttt{config\_length = 0} and that introspection
   reverts to the \texttt{get\_config} fallback
   (\SectionRef{sec:dcpl-retention}).  Repeat via
   \texttt{H5Pmodify\_filter\_by\_idx} with a replacement string and verify
-  the opposite: the block is present and carries the \emph{new} string, not
+  the opposite: the entry carries the \emph{new} string, not
   the one the entry was appended with (\SectionRef{sec:modify-filter}).
 \item \texttt{fmt-08} (\textbf{h5dump without plugin}): Run
   \texttt{h5dump~-{}-filter-params} on a version-3 file on a system without
@@ -644,45 +638,38 @@ These tests exercise the version-3 pipeline message
   \texttt{PARAMS\_STRING} or \texttt{DESCRIPTION} line.
 \end{itemize}
 
-\verysubsection{Extension block framing}
+\verysubsection{Configuration string framing}
 
-These tests cover the block list itself
-(\SectionRef{sec:pline-v3-layout}).  Because no unassigned block type
-exists in a shipping library by construction, \texttt{fmt-09} through
-\texttt{fmt-11} operate on hand-constructed message bytes: the test
-writes a normal version-3 file, then splices a synthetic block into the
-pipeline message with a small helper that fixes up the entry's
-\texttt{ext\_count} and the object-header message size.
+These tests cover the length-prefixed configuration string
+(\SectionRef{sec:pline-v3-layout}).  \texttt{fmt-09} and \texttt{fmt-10}
+operate on hand-constructed message bytes: the test writes a normal
+version-3 file, then patches the pipeline message with a small helper.
 
 \begin{itemize}
-\item \texttt{fmt-09} (\textbf{unknown non-critical block is skipped}):
-  Splice a block with an unassigned \texttt{ext\_type} and the critical
-  bit clear, positioned both before and after the
-  \texttt{H5O\_PLINE\_EXT\_CONFIG} block in separate variants.  Verify in
-  both that the dataset opens, filters run normally, and
-  \texttt{H5Pget\_filter\_params\_by\_idx} still returns the stored
-  string --- i.e.\ the decoder resynchronised on \texttt{ext\_length}
-  alone.
-\item \texttt{fmt-10} (\textbf{unknown critical block is rejected}): The
-  same splice with the critical bit set.  Verify the dataset open fails,
-  the error stack names both the unrecognised type code and the filter
-  ID, and no filtered read occurs.  Verify that a sibling dataset in the
-  same file without the synthetic block still opens --- the failure is
-  scoped to the entry, not the file.
-\item \texttt{fmt-11} (\textbf{block ordering and duplicates}): Verify
-  blocks are encoded in ascending \texttt{ext\_type} order regardless of
-  the order the library populated them, and that two DCPLs configured by
-  different call orders produce byte-identical messages.  Splice a
-  duplicate \texttt{H5O\_PLINE\_EXT\_CONFIG} block and verify the decoder
-  rejects the message as malformed rather than accepting either copy.
+\item \texttt{fmt-09} (\textbf{over-limit length is rejected}): Patch an
+  entry's \texttt{config\_length} to 4097, one more than
+  \texttt{H5Z\_CONFIG\_STRING\_MAX}, fixing up the object-header message
+  size so the bytes are present.  Verify the dataset open fails and no
+  filtered read occurs.
+\item \texttt{fmt-10} (\textbf{length past end of message is rejected}):
+  Patch an entry's \texttt{config\_length} to a value within the 4096-byte
+  limit but larger than the bytes remaining in the message.  Verify the
+  dataset open fails with a decode error rather than reading past the
+  message.  Verify that a sibling dataset in the same file without the
+  patch still opens.
+\item \texttt{fmt-11} (\textbf{strings on some entries only}): Configure a
+  two-filter pipeline with a string on one entry and raw
+  \texttt{cd\_values} on the other.  Verify the message is version~3, the
+  second entry is written with \texttt{config\_length = 0}, and
+  \texttt{H5Pget\_filter\_params\_by\_idx} returns the stored string for
+  the first entry and the \texttt{get\_config} fallback for the second.
 \item \texttt{fmt-12} (\textbf{no name storage}): Configure deflate via
   \texttt{H5Pappend\_filter} with \texttt{level = 6} and verify the entry
-  carries exactly one extension block, the configuration string --- no
-  name block, since version~3 adds no name storage
-  (\SectionRef{sec:config-storage-rules}).  Configure a third-party
-  filter the same way and verify its name is in the version-2 slot,
-  unchanged.  Configure deflate via raw \texttt{cd\_values} and verify
-  the entry carries no blocks at all and the message is version~2.
+  carries the configuration string and no name, since version~3 adds no
+  name storage (\SectionRef{sec:config-storage-rules}).  Configure a
+  third-party filter the same way and verify its name is in the version-2
+  slot, unchanged.  Configure deflate via raw \texttt{cd\_values} and
+  verify the message is version~2.
 \end{itemize}
 
 
