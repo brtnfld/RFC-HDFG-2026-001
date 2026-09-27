@@ -405,9 +405,12 @@ Fortran and Java bindings
 \end{tabularx}
 \end{center}
 
-In version~3, each filter entry ends in a two-byte length followed by that
-many bytes of the stored parameter string (zero length means no string).
-Readers from earlier releases reject version~3 as an unknown message version.
+Version~3 is defined as an extensible record: each filter entry ends in a list
+of typed, length-delimited extension blocks, and a reader skips blocks it does
+not recognise unless they are marked critical.  The stored parameter string is
+the first such block.  Follow-on work --- notably the large-configuration blob
+channel of RFC-HDFG-2026-003 --- therefore adds block types rather than further
+message versions, and remains readable by libraries that ship only this RFC.
 
 %% =================================================================
 \newpage

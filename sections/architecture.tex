@@ -798,8 +798,8 @@ them still places every field it names correctly and leaves both
   \texttt{scale-offset} are unconditionally present.
 
   \textbf{Version~3 does not close this gap, deliberately.}  An earlier
-  draft of this RFC stored the canonical name
-  for built-in entries in version~3, on the reasoning that a version-3 file storing
+  draft of this RFC added an extension block carrying the canonical name
+  for built-in entries, on the reasoning that a version-3 file storing
   \texttt{level~=~6} should say what it configures.  That was dropped
   after checking what actually consumes the name:
 
@@ -1369,9 +1369,16 @@ format extension capable of storing name-only pipeline entries that
 carry a canonical name without a resolved numeric \texttt{id}.  The
 version-3 pipeline message defined by this RFC
 (\SectionRef{sec:pline-v3}) does not define such entries --- every entry
-it writes still carries a numeric \texttt{id} --- and, having no
-extension mechanism (\SectionRef{sec:pline-v3-layout}), adding them
-requires a new message version.
+it writes still carries a numeric \texttt{id} --- but it does define the
+framing they need.  A name-only entry is a critical extension block: an
+entry whose identity lives in the block rather than in the
+\texttt{filter\_id} field cannot be interpreted by a reader that ignores
+the block, which is exactly what the critical bit expresses
+(\SectionRef{sec:pline-v3-layout}).  When that mechanism is specified,
+it therefore arrives as a new block type within version~3 --- readable
+by libraries that shipped this RFC, which will reject precisely the
+name-only entries and nothing else --- rather than as a version~4 that
+those libraries could not open at all.
 Such entries would be resolved at open time on systems where the
 plugin is installed and gracefully skipped where it is not.  Until
 that format is available, callers that need optional name-based
@@ -2060,8 +2067,13 @@ filter callback.  Because the string is persisted independently,
 layout stays a private matter between a filter's \texttt{set\_config}
 and its execution callback (\SectionRef{sec:cd-packing-convention}).
 
-The version-3 entry appends a length-prefixed configuration string to
-the version-2 entry fields (\SectionRef{sec:pline-v3-layout}).
+Because a format change is being made, it is made once and made
+extensible: the version-3 entry ends in a list of self-describing
+extension blocks (\SectionRef{sec:pline-v3-layout}), of which the
+configuration string is the first.  Later attachments to a pipeline entry
+--- the blob channel of RFC-HDFG-2026-003, name-only entries for
+name-based lookup --- are new block types read by any version-3 library,
+not new message versions that older libraries must reject wholesale.
 
 Storing the string directly removes the two limitations that shaped
 earlier drafts of this design, which were constrained to introduce no
@@ -2196,8 +2208,8 @@ The library therefore canonicalises the string before persisting it:
 \end{enumerate}
 
 \begin{notebox}
-\textbf{Guarantee.}  The bytes stored in a version-3 entry's
-\texttt{config} field are always a valid TOML v1.0.0 document, and are always valid input to
+\textbf{Guarantee.}  The bytes stored in \texttt{H5O\_PLINE\_EXT\_CONFIG}
+are always a valid TOML v1.0.0 document, and are always valid input to
 \texttt{set\_config}.  A conforming TOML parser can read a filter's
 configuration out of any file this library writes, with no HDF5 code and no
 filter plugin involved.
@@ -2297,7 +2309,8 @@ All property-list machinery handles it uniformly:
 \label{sec:pline-v3-layout}
 
 Each filter entry in the version-3 pipeline message carries the existing
-version-2 fields followed by a length-prefixed configuration string:
+version-2 fields followed by a list of self-describing \emph{extension
+blocks}:
 
 \begin{Verbatim}[fontsize=\scriptsize]
 [existing v2 per-filter layout, field order unchanged]
@@ -2308,47 +2321,140 @@ version-2 fields followed by a length-prefixed configuration string:
   char    name[name_length]  (third-party filters only; NUL-terminated)
   UINT32  cd_values[cd_nelmts]
 
-[new in v3]
-  UINT16  config_length      (byte length of config; 0 = no string)
-  char    config[config_length]  (canonical string; not NUL-terminated)
+[new in v3: per-entry extension block list]
+  UINT16  ext_count          (number of blocks that follow; 0 = none)
+
+  ext_count repetitions of:
+    UINT16  ext_type         (registered block type; see table below)
+    UINT8   ext_flags        (bit 0 = critical; bits 1-7 reserved, zero)
+    UINT8   reserved         (must be written as zero)
+    UINT32  ext_length       (byte length of ext_data)
+    uint8   ext_data[ext_length]
 \end{Verbatim}
 
 All other message fields --- including the version-2 name-slot rules for
 built-in versus third-party filters (\SectionRef{sec:class3-struct}) ---
-are unchanged from version~2.  \texttt{config\_length} is present in every
-entry of a version-3 message, unlike \texttt{name\_length}, which is
-omitted for built-in filters.  An entry with \texttt{config\_length = 0}
-carries no string and is a version-2 entry with two extra bytes.
+are unchanged from version~2.  An entry with \texttt{ext\_count = 0} is a
+version-2 entry with two extra bytes.
 
 Note that the version-2 field order interleaves the name: the name
 \emph{length} is written immediately after \texttt{filter\_id}, but the
 name \emph{bytes} come after \texttt{cd\_nelmts}, and
 \texttt{name\_length} counts the trailing NUL.  That ordering is a
 property of the existing format, not a choice this RFC makes; it is
-reproduced above so that the configuration string is understood to
-follow \texttt{cd\_values} and nothing else.
+reproduced above so that the extension list is understood to follow
+\texttt{cd\_values} and nothing else.
 
-\texttt{config} carries the canonical parameter string
-(\SectionRef{sec:config-canonical-form}) as UTF-8, with no NUL terminator
-and no trailing NUL counted in \texttt{config\_length}.  The message has
-no extension mechanism: a future per-entry field would need a new message
-version.
+\verysubsection{Why a block list rather than a fixed field}
 
-\verysubsection{Size bounds (normative)}
+The obvious encoding for this RFC in isolation appends two fields to each
+version-2 entry: a length and the configuration string.  That encoding is
+rejected because the configuration string is demonstrably not the last
+thing that will need to be attached to a pipeline entry.  Two further
+attachments are already specified or designed --- the binary blob channel
+of RFC-HDFG-2026-003 (\SectionRef{sec:blob-future}) and the name-only
+pipeline entries that soft-failure semantics for name-based filter lookup
+require (\SectionRef{sec:future-name-lookup}) --- and under a fixed
+layout each one costs a further message version.  Version~4 and version~5
+would each be a fresh compatibility cliff: a library that shipped
+version~3 support could not read a file that used only the later feature,
+even though it understands everything else in the message.
 
-The encoder never writes, and the decoder rejects, a
-\texttt{config\_length} greater than \texttt{H5Z\_CONFIG\_STRING\_MAX}
-(4096, \SectionRef{sec:param-overview}).  The decoder also rejects a
-\texttt{config\_length} that would run past the end of the message.  Either
-condition fails the message decode, and with it the dataset open, rather
-than letting a corrupt length index past the containing message.
+Since this RFC pays for a format change once, it pays for an extensible
+one.  A version-3 reader parses any block it does not recognise by length
+alone and moves on, so a feature added later is readable by every library
+that shipped version-3 support --- not only by libraries that shipped the
+later feature.  The follow-on work named above therefore lands as new
+block types within version~3.  No version~4 of the filter-pipeline message
+is anticipated.
 
-Because the decoder enforces the 4096-byte cap, raising
-\texttt{H5Z\_CONFIG\_STRING\_MAX} is a compatibility boundary even though
-the 16-bit length field could encode more: a file written under a raised
-cap would not be readable by an already-released version-3 reader.
-Raising the limit is therefore a versioned, coordinated change to the
-format's acceptance rules, not a purely API-level policy adjustment.
+\verysubsection{Unknown block handling (normative)}
+
+Bit~0 of \texttt{ext\_flags} is the \emph{critical} bit.  It tells a
+reader that does not recognise \texttt{ext\_type} what to do:
+
+\begin{itemize}
+\item \textbf{Critical clear (0).}  Skip \texttt{ext\_length} bytes and
+  continue.  The entry stays fully usable; only the information carried by
+  that one block is unavailable, and introspection for it degrades exactly
+  as it does for a version-2 entry.  Blocks carrying descriptive or
+  introspective data clear the bit; \texttt{H5O\_PLINE\_EXT\_CONFIG}, the
+  only block type this RFC defines, is one such block.
+\item \textbf{Critical set (1).}  Fail the dataset open with an error
+  naming the unsupported block type and filter ID.  The reader must
+  \emph{not} skip the block and proceed to filter data: the entry's
+  configuration is incomplete without it, and falling back to
+  \texttt{cd\_values} alone would silently produce wrong results.  A
+  configuration payload stored out of line (\SectionRef{sec:blob-future})
+  is the motivating case.
+\end{itemize}
+
+The critical bit is a property of the block type, fixed by whichever
+specification defines that type; it is not a per-file choice, and a given
+\texttt{ext\_type} is always written with the same value of bit~0.  The
+bit exists so that a reader can make the correct decision about a type it
+has never heard of --- which is the whole point of the framing.
+
+Two further rules keep the list unambiguous.  Blocks are written in
+ascending \texttt{ext\_type} order, so an encoder produces byte-identical
+output for a given entry regardless of the order in which the library
+populated it (this matters for the collective-write determinism
+requirement in \SectionRef{sec:parallel}).  A block type not marked as
+repeatable by its defining specification appears at most once per entry;
+a decoder that sees a duplicate rejects the message as malformed rather
+than silently taking the first or last.
+
+\verysubsection{Registered block types}
+
+Type codes are assigned centrally by The HDF~Group and recorded in
+\texttt{H5Oprivate.h}:
+
+\begin{center}
+\begin{tabular}{llll}
+\toprule
+\textbf{Code} & \textbf{Name} & \textbf{Critical} & \textbf{Defined by} \\
+\midrule
+\texttt{0x0001} & \texttt{H5O\_PLINE\_EXT\_CONFIG} & no  & this RFC \\
+\texttt{0x0002} & \texttt{H5O\_PLINE\_EXT\_BLOB}   & yes & reserved for RFC-HDFG-2026-003 \\
+\texttt{0x0003}--\texttt{0xFFFF} & --- & --- & unassigned \\
+\bottomrule
+\end{tabular}
+\end{center}
+
+There is deliberately no private or experimental range.  A file carrying a
+privately chosen code is indistinguishable from one carrying a code
+assigned officially later, and the resulting collision would be
+undiagnosable in the field --- the reader would parse foreign bytes as a
+type it thinks it knows.  Projects that need a block type request one; the
+cost of assignment is a line in a header.
+
+\texttt{H5O\_PLINE\_EXT\_CONFIG} carries the canonical parameter string
+(\SectionRef{sec:config-canonical-form}) as
+UTF-8, not NUL-terminated and with no trailing NUL counted in
+\texttt{ext\_length}.  At most one appears per entry.
+
+\verysubsection{Size bounds}
+
+\texttt{ext\_length} is 32-bit so that the framing is never itself the
+binding limit on a future block type.  The effective ceiling is imposed
+from outside: the object-header message size field is 16-bit, so an entire
+pipeline message --- every entry, every block --- must fit within
+64\,KiB.  A payload larger than that cannot live inline in any version of
+this message and must be stored elsewhere in the file and referenced from
+a block, which is precisely the shape the blob channel takes
+(\SectionRef{sec:blob-future}).
+
+One consequence worth stating precisely: widening
+\texttt{H5Z\_CONFIG\_STRING\_MAX} (4096,
+\SectionRef{sec:param-overview}) no longer requires a change to the
+\emph{encoding}, because \texttt{ext\_length} is 32-bit where the earlier
+fixed \texttt{config\_length} field was 16-bit.  It does, however, remain a
+compatibility boundary: the decoder rejects an
+\texttt{H5O\_PLINE\_EXT\_CONFIG} block whose \texttt{ext\_length} exceeds
+\texttt{H5Z\_CONFIG\_STRING\_MAX}, so a file written under a raised cap
+would not be readable by an already-released version-3 reader.  Raising the
+limit is therefore a versioned, coordinated change to the format's
+acceptance rules, not a purely API-level policy adjustment.
 
 \subsection{When Version 3 Is Written}
 \label{sec:pline-v3-gating}
@@ -2468,6 +2574,26 @@ plugins exactly as before, since \texttt{cd\_nelmts} and
 \texttt{cd\_values} are precisely what \texttt{set\_config} (or the
 caller) produced.
 
+\verysubsection{Forward compatibility within version~3}
+
+The version check above is a cliff, and it is the only one this design
+accepts.  Beyond it, compatibility is per-block rather than per-version.
+A library that ships version-3 support reads every later version-3 file:
+block types it knows it interprets, non-critical block types it has never
+heard of it skips by length, and critical block types it does not
+recognise it rejects with a specific error.  Concretely, a library
+shipping only this RFC opens a file written by a library that also ships
+the blob follow-on: it reads the configuration strings and names, and ---
+because the blob block is critical --- fails cleanly and informatively on
+exactly those datasets whose filters genuinely need the blob, rather than
+failing on the whole file or, worse, filtering data with an incomplete
+configuration.
+
+This is the property that a fixed-field layout could not provide: there,
+the same file would have been version~4, and the version check would have
+rejected it outright even though the reader understood everything in it
+that mattered.
+
 \subsection{Superseded Alternative: Per-Slot Type Tags}
 \label{sec:type-tags-superseded}
 
@@ -2499,12 +2625,30 @@ three new \texttt{H5Z\_class3\_t} callbacks
 \texttt{H5Pappend\_filter\_blob} API, and on-disk storage for the blob
 alongside the dataset's pipeline message.
 
-The version-3 pipeline message defined here has no extension mechanism
-(\SectionRef{sec:pline-v3-layout}), so a per-entry blob locator in the
-pipeline message would need a new message version; RFC-HDFG-2026-003
-specifies how the blob is located.
+That storage is the first consumer of the extension framing defined here.
+The blob bytes live in a global-heap object; the pipeline entry carries
+only a locator, as the reserved critical block type
+\texttt{H5O\_PLINE\_EXT\_BLOB} (0x0002,
+\SectionRef{sec:pline-v3-layout}).  Three consequences follow, and they
+are the reason the framing is worth its two-byte-per-entry overhead:
 
-Because \texttt{H5Z\_class3\_t} has not yet shipped as of this RFC, no fields are
+\begin{itemize}
+\item \textbf{No version~4.}  RFC-HDFG-2026-003 adds a block type, not a
+  message version.  It inherits this RFC's encoder/decoder branching,
+  \texttt{H5O\_pline\_ver\_bounds[]} row, libver gating, and copy/delete
+  handling unchanged.
+\item \textbf{Release timing is not forced.}  Both RFCs currently target
+  the same release (3.0), and the blob feature's \emph{callbacks} must
+  ship with its \emph{block type} --- they are useless apart.  But neither
+  is coupled to the release that introduces version~3, so if the blob work
+  slips it becomes a later block type rather than a blocked feature or a
+  second message version.
+\item \textbf{Safe partial readers.}  A library with version~3 but without
+  blob support reads the configuration strings in such a file and rejects
+  only the blob-bearing entries, by the critical-bit rule
+  (\SectionRef{sec:pline-v3-readers}).
+\end{itemize}  Because
+\texttt{H5Z\_class3\_t} has not yet shipped as of this RFC, no fields are
 reserved for it here; an earlier draft reserved three \texttt{void~*}
 placeholders for this purpose, but that approach was dropped because
 reserving an opaque placeholder does not avoid the struct-version bump the

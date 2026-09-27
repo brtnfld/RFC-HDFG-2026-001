@@ -33,8 +33,10 @@ This design covers:
   object-header message (\texttt{H5O\_PLINE\_VERSION\_3},
   \SectionRef{sec:pline-v3}) that persists the validated parameter string
   verbatim alongside \texttt{cd\_values}, gated by
-  \texttt{H5Pset\_libver\_bounds}.  Each version-3 entry ends in a
-  length-prefixed configuration string
+  \texttt{H5Pset\_libver\_bounds}.  Version~3 is defined as an extensible
+  record: each entry ends in a list of typed, length-delimited extension
+  blocks that unknown readers skip or reject by an explicit critical bit,
+  so subsequent per-entry additions do not require a version~4
   (\SectionRef{sec:pline-v3-layout}).
 \item Integration points for HDF5 command-line tools (\texttt{h5repack}, \texttt{h5dump}).
 \item The Fortran and Java bindings that ship with HDF5
