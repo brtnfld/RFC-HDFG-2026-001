@@ -2359,7 +2359,7 @@ stored string carries none.
 The encoder never writes, and the decoder rejects, an
 \texttt{H5O\_PLINE\_EXT\_CONFIG} block whose \texttt{ext\_length} exceeds
 \texttt{H5Z\_CONFIG\_STRING\_MAX} (4096 bytes,
-\SectionRef{sec:param-overview}).  For every block, known or unknown, the
+\SectionRef{sec:param-overview}), or whose payload contains a NUL byte.  For every block, known or unknown, the
 decoder also rejects a block header or an \texttt{ext\_length} that would
 run past the end of the message, and an \texttt{ext\_count} whose blocks do
 not fit in the bytes remaining.  Each of these conditions fails the message
@@ -2369,7 +2369,9 @@ belong to the block type: the specification that defines a type may
 assign them, and writes them as zero otherwise.  The \texttt{reserved}
 byte is always written as zero.  A reader ignores the \texttt{reserved}
 byte, and ignores bits 1--7 of any block whose type it does not
-recognise.
+recognize; it rejects a block of a type it recognizes that sets a bit the
+type does not assign.  A reader does not require ascending order, so a
+block of an unknown type may precede a known one.
 
 \texttt{ext\_length} is 32-bit so that the framing is never itself the
 binding limit on a future block type.  The effective ceiling is imposed
