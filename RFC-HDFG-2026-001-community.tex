@@ -411,6 +411,9 @@ not recognise unless they are marked critical.  The stored parameter string is
 the first such block.  Follow-on work --- notably the large-configuration blob
 channel of RFC-HDFG-2026-003 --- therefore adds block types rather than further
 message versions, and remains readable by libraries that ship only this RFC.
+The critical bit governs only what a reader does with a block it does not
+recognise; a file bounded below \texttt{H5F\_LIBVER\_V300} rejects any block
+with an error, and no block is dropped on write.
 
 %% =================================================================
 \newpage

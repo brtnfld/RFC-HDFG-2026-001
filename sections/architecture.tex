@@ -2395,6 +2395,12 @@ specification defines that type; it is not a per-file choice, and a given
 bit exists so that a reader can make the correct decision about a type it
 has never heard of --- which is the whole point of the framing.
 
+The critical bit governs reader behaviour only.  It has no effect on
+writing: the library never omits a block, critical or non-critical, to fit
+a file's libver bounds.  An entry that would carry any block requires
+version~3, and a high bound that excludes version~3 is an error
+(\SectionRef{sec:pline-v3-gating}).
+
 Two further rules keep the list unambiguous.  Blocks are written in
 ascending \texttt{ext\_type} order, so an encoder produces byte-identical
 output for a given entry regardless of the order in which the library
@@ -2431,9 +2437,21 @@ cost of assignment is a line in a header.
 \texttt{H5O\_PLINE\_EXT\_CONFIG} carries the canonical parameter string
 (\SectionRef{sec:config-canonical-form}) as
 UTF-8, not NUL-terminated and with no trailing NUL counted in
-\texttt{ext\_length}.  At most one appears per entry.
+\texttt{ext\_length}.  At most one appears per entry, and an entry with no
+stored string carries none.
 
-\verysubsection{Size bounds}
+\verysubsection{Size bounds (normative)}
+
+The encoder never writes, and the decoder rejects, an
+\texttt{H5O\_PLINE\_EXT\_CONFIG} block whose \texttt{ext\_length} exceeds
+\texttt{H5Z\_CONFIG\_STRING\_MAX} (4096 bytes,
+\SectionRef{sec:param-overview}).  For every block, known or unknown, the
+decoder also rejects a block header or an \texttt{ext\_length} that would
+run past the end of the message, and an \texttt{ext\_count} whose blocks do
+not fit in the bytes remaining.  Each of these conditions fails the message
+decode, and with it the dataset open, rather than letting a corrupt length
+index past the containing message.  Readers ignore the values of the
+reserved \texttt{ext\_flags} bits and the \texttt{reserved} byte.
 
 \texttt{ext\_length} is 32-bit so that the framing is never itself the
 binding limit on a future block type.  The effective ceiling is imposed
@@ -2465,24 +2483,32 @@ encode time (e.g., \texttt{H5Dcreate}), following the standard
 format feature:
 
 \begin{enumerate}
-\item If \emph{no} entry in the pipeline carries a stored configuration
-  string, the library writes version~2 (or version~1, per the existing
+\item If \emph{no} entry in the pipeline carries an extension block, the
+  library writes version~2 (or version~1, per the existing
   rules) --- byte-identical to the output of an equivalent
   \texttt{H5Pset\_filter} program --- unless the file's libver \emph{low}
   bound is \texttt{H5F\_LIBVER\_V300} or later, in which case the existing
-  low-bound rule raises it to version~3 and every entry is written with no
-  string.
-\item If at least one entry carries a stored string \emph{and} the file's
-  libver upper bound admits version~3 (i.e.\ is at least
+  low-bound rule raises it to version~3 and every entry is written with
+  \texttt{ext\_count = 0}.
+\item If at least one entry carries an extension block \emph{and} the
+  file's libver upper bound admits version~3 (i.e.\ is at least
   \texttt{H5F\_LIBVER\_V300}), the library writes version~3.
-\item If at least one entry carries a stored string but the libver upper
-  bound is below \texttt{H5F\_LIBVER\_V300}, the operation fails with
+\item If at least one entry carries an extension block but the libver
+  upper bound is below \texttt{H5F\_LIBVER\_V300}, the operation fails with
   \texttt{H5E\_BADRANGE}: \texttt{H5Dcreate} and \texttt{H5Dcreate\_anon}
   fail, as does \texttt{H5Ocopy} of such a dataset into a file with that
   bound.  The caller either raises the bound or appends the filter with
   \texttt{H5Z\_PARAMS\_CDVALUES}, which stores no string, so the pipeline
   falls under Rule~1.
 \end{enumerate}
+
+``Carries an extension block'' covers every block type, critical or
+non-critical.  In this RFC the only block type is
+\texttt{H5O\_PLINE\_EXT\_CONFIG}, so an entry carries a block exactly when
+it carries a stored configuration string; block types defined by later
+specifications (e.g.\ \texttt{H5O\_PLINE\_EXT\_BLOB} of RFC-HDFG-2026-003)
+fall under the same three rules with no rule of their own.  No block is
+ever dropped to write version~2.
 
 Rule~1 preserves the adoption story that motivated earlier drafts:
 existing programs, and new programs that use only the raw
@@ -2526,8 +2552,8 @@ static const unsigned H5O_pline_ver_bounds[] = {
 file's \emph{low} bound, then errors if the result exceeds the \emph{high}
 bound (\texttt{``Filter pipeline version out of bounds''}, raised as
 \texttt{H5E\_BADRANGE}).  This RFC changes that function in exactly one
-way: the version required by content is version~3 if any entry carries a
-stored configuration string, and is computed by the existing rules
+way: the version required by content is version~3 if any entry carries an
+extension block, and is computed by the existing rules
 otherwise.  When that requirement exceeds the high bound the function
 fails with \texttt{H5E\_BADRANGE}, as it already does for any version
 above the high bound; this is Rule~3's error.  \texttt{H5Ocopy} reaches

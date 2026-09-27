@@ -107,7 +107,10 @@ later libraries that add block types --- the blob channel of
 RFC-HDFG-2026-003 in particular --- remain readable by libraries shipping
 only this RFC, which recover every configuration string in such a file
 and reject only those entries that genuinely depend on a block type they
-lack.
+lack.  The critical bit governs only this reader behaviour: on write, an
+entry carrying any block, critical or non-critical, under a libver high
+bound below \texttt{H5F\_LIBVER\_V300} fails with \texttt{H5E\_BADRANGE},
+and no block is dropped (\SectionRef{sec:pline-v3-gating}).
 
 \subsection{Source Compatibility}
 
@@ -623,7 +626,9 @@ These tests exercise the version-3 pipeline message
   \texttt{H5Ocopy} of a dataset carrying a stored string into a file with
   that bound fails the same way (\SectionRef{sec:pline-v3-gating}).  Build
   the same pipeline with \texttt{H5Z\_PARAMS\_CDVALUES} and verify that
-  \texttt{H5Dcreate} succeeds and writes a version-2 message.
+  \texttt{H5Dcreate} succeeds and writes a version-2 message.  Repeat with
+  \texttt{H5Dcreate\_anon}.  In no case is a version-2 message written with
+  the extension block removed.
 \item \texttt{fmt-06} (\textbf{\texttt{H5Ocopy}}): Copy a dataset carrying a
   version-3 pipeline message to another file; verify the stored string is
   preserved in the copy.
@@ -649,7 +654,7 @@ These tests exercise the version-3 pipeline message
 These tests cover the block list itself
 (\SectionRef{sec:pline-v3-layout}).  Because no unassigned block type
 exists in a shipping library by construction, \texttt{fmt-09} through
-\texttt{fmt-11} operate on hand-constructed message bytes: the test
+\texttt{fmt-11} and \texttt{fmt-13} operate on hand-constructed message bytes: the test
 writes a normal version-3 file, then splices a synthetic block into the
 pipeline message with a small helper that fixes up the entry's
 \texttt{ext\_count} and the object-header message size.
@@ -683,6 +688,15 @@ pipeline message with a small helper that fixes up the entry's
   filter the same way and verify its name is in the version-2 slot,
   unchanged.  Configure deflate via raw \texttt{cd\_values} and verify
   the entry carries no blocks at all and the message is version~2.
+\item \texttt{fmt-13} (\textbf{block bounds are enforced}): In separate
+  variants, patch an \texttt{H5O\_PLINE\_EXT\_CONFIG} block's
+  \texttt{ext\_length} to 4097, one more than
+  \texttt{H5Z\_CONFIG\_STRING\_MAX}, with the bytes present; patch an
+  unknown non-critical block's \texttt{ext\_length} to run past the end of
+  the message; truncate the message inside a block header; and raise
+  \texttt{ext\_count} by one with no further bytes.  Verify each dataset
+  open fails with a decode error, no read past the message occurs, and a
+  sibling dataset without the patch still opens.
 \end{itemize}
 
 
