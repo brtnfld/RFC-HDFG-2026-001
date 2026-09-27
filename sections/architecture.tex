@@ -2240,7 +2240,7 @@ blocks}:
 
   ext_count repetitions of:
     UINT16  ext_type         (registered block type; see table below)
-    UINT8   ext_flags        (bit 0 = critical; bits 1-7 reserved, zero)
+    UINT8   ext_flags        (bit 0 = critical; bits 1-7 per block type)
     UINT8   reserved         (must be written as zero)
     UINT32  ext_length       (byte length of ext_data)
     uint8   ext_data[ext_length]
@@ -2364,8 +2364,12 @@ decoder also rejects a block header or an \texttt{ext\_length} that would
 run past the end of the message, and an \texttt{ext\_count} whose blocks do
 not fit in the bytes remaining.  Each of these conditions fails the message
 decode, and with it the dataset open, rather than letting a corrupt length
-index past the containing message.  Readers ignore the values of the
-reserved \texttt{ext\_flags} bits and the \texttt{reserved} byte.
+index past the containing message.  Bits 1--7 of \texttt{ext\_flags}
+belong to the block type: the specification that defines a type may
+assign them, and writes them as zero otherwise.  The \texttt{reserved}
+byte is always written as zero.  A reader ignores the \texttt{reserved}
+byte, and ignores bits 1--7 of any block whose type it does not
+recognise.
 
 \texttt{ext\_length} is 32-bit so that the framing is never itself the
 binding limit on a future block type.  The effective ceiling is imposed
@@ -2560,8 +2564,8 @@ stored as a separate dataset.  These cases were raised by @robertu94
 during the community review of this RFC (HDFGroup/hdf5\_plugins\#255; see
 \texttt{LIBPRESSIO-FEEDBACK.md} in this repository) and are addressed by a
 follow-on RFC (RFC-HDFG-2026-003), which specifies a binary blob channel:
-three new \texttt{H5Z\_class3\_t} callbacks
-(\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}), a new
+four new \texttt{H5Z\_class3\_t} callbacks
+(\texttt{write\_blob}/\texttt{read\_blob}/\texttt{delete\_blob}/\texttt{close\_blob}), a new
 \texttt{H5Pappend\_filter\_blob} API, and on-disk storage for the blob
 alongside the dataset's pipeline message.  RFC-HDFG-2026-003 also
 specifies per-dataset filter state (\SectionRef{sec:filter-state}),
