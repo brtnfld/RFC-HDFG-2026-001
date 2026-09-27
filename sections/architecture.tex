@@ -448,7 +448,7 @@ described in \SectionRef{sec:subtable-extraction}.
 
 \subsection{Rationale}
 
-Version~3 of the filter class extends \texttt{H5Z\_class2\_t} in three
+Version~3 of the filter class extends \texttt{H5Z\_class2\_t} in two
 ways:
 
 \begin{enumerate}
@@ -461,14 +461,9 @@ ways:
   \texttt{H5Z\_class3\_t} receives the active data-transfer property list
   (\texttt{dxpl\_id}) and the chunk's scaled coordinates (\texttt{scaled},
   \texttt{ndims}) as additional parameters at I/O time, enabling access to
-  non-serializable runtime handles and spatially-aware compression.
-
-\item \textbf{Per-dataset state} (\texttt{init}, \texttt{term}, and a
-  \texttt{state} parameter on the filter callback) --- a filter can do
-  expensive setup once per open dataset (deserialize a model, compile a
-  kernel, upload weights to a device) and receive the result on every
-  chunk, instead of redoing it per chunk or keeping it in plugin-global
-  tables (\SectionRef{sec:filter-state}).
+  non-serializable runtime handles and spatially-aware compression.  It
+  also carries a \texttt{state} parameter reserved for per-dataset filter
+  state, which RFC-HDFG-2026-003 specifies (\SectionRef{sec:filter-state}).
 \end{enumerate}
 
 \subsection{Version Numbering}
@@ -632,9 +627,9 @@ typedef herr_t (*H5Z_get_config_func_t)(
 
 /* Extended filter callback for H5Z_class3_t.
  * Adds dxpl_id (active DXPL), scaled[]/ndims (chunk coordinates) and
- * state (this entry's per-dataset state) to the existing H5Z_func_t
- * parameter list.  H5Z_class2_t continues to use H5Z_func_t; only
- * class3 filters use this type. */
+ * state (reserved for RFC-HDFG-2026-003; always NULL here) to the
+ * existing H5Z_func_t parameter list.  H5Z_class2_t continues to use
+ * H5Z_func_t; only class3 filters use this type. */
 typedef size_t (*H5Z_func2_t)(unsigned int        flags,
                               size_t              cd_nelmts,
                               const unsigned int  cd_values[],
@@ -645,15 +640,6 @@ typedef size_t (*H5Z_func2_t)(unsigned int        flags,
                               size_t              nbytes,
                               size_t             *buf_size,
                               void              **buf);
-
-/* Per-dataset state: built once per open dataset, released at close. */
-typedef herr_t (*H5Z_init_func_t)(hid_t     file_id,
-                                  hid_t     dcpl_id,
-                                  hid_t     type_id,
-                                  hid_t     space_id,  /* chunk shape */
-                                  unsigned  idx,       /* pipeline index */
-                                  void    **state_out);
-typedef herr_t (*H5Z_term_func_t)(void *state);
 
 typedef struct H5Z_class3_t {
     int                         version;
@@ -667,8 +653,6 @@ typedef struct H5Z_class3_t {
     H5Z_set_config_func_t       set_config;
     H5Z_get_config_func_t       get_config;
     const char                 *description; /* see "append, never insert" */
-    H5Z_init_func_t             init;        /* NULL-able */
-    H5Z_term_func_t             term;        /* NULL-able */
 } H5Z_class3_t;
 \end{minted}
 
@@ -688,11 +672,8 @@ to a v2-style plugin with no string configuration) rather than silently
 misassigning a callback pointer to \texttt{description} or vice versa.
 This is why \texttt{description} follows \texttt{get\_config} rather than
 being inserted after \texttt{name}: any new field added to this struct
-must likewise be appended, never inserted, to preserve this property.
-\texttt{init} and \texttt{term} follow that rule: they come after
-\texttt{description}, so an initialiser written for the layout without
-them still places every field it names correctly and leaves both
-\texttt{NULL}.
+must likewise be appended, never inserted, to preserve this property;
+the fields RFC-HDFG-2026-003 adds follow \texttt{description}.
 
 \verysubsection{Field descriptions}
 
@@ -1035,13 +1016,10 @@ unaffected.
 \item \texttt{ndims}---Number of elements in \texttt{scaled[]} when
   \texttt{scaled} is non-\texttt{NULL}; equals the dataset's chunk rank.
 
-\item \texttt{state}---The value this pipeline entry's \texttt{init}
-  callback stored (\SectionRef{sec:filter-state}); \texttt{NULL} when the
-  class has no \texttt{init}.  The library never calls \texttt{filter}
-  for an entry whose class has \texttt{init} unless that \texttt{init}
-  succeeded, so a filter that defines \texttt{init} may rely on
-  \texttt{state} being what it built.  The callback treats \texttt{state}
-  as read-only unless it synchronizes its own mutation.
+\item \texttt{state}---Reserved for per-dataset filter state, which
+  RFC-HDFG-2026-003 specifies (\SectionRef{sec:filter-state}).  Under this
+  RFC the library always passes \texttt{NULL}, and a filter must not
+  depend on any other value.
 \end{itemize}
 
 \textbf{Non-chunk contexts.}  A filter pipeline is not exclusive to
@@ -1053,88 +1031,24 @@ coordinates or dataset rank.  When \texttt{filter} is invoked outside
 chunked dataset I/O, the library passes \texttt{scaled~=~NULL} and
 \texttt{ndims~=~0}; a spatially-aware filter must check for
 \texttt{scaled~==~NULL} before dereferencing it, rather than assuming a
-chunked-dataset caller.  A fractal heap also belongs to no dataset, so
-it has no per-dataset state: a filter whose class defines \texttt{init}
-is refused for group heaps (\SectionRef{sec:filter-state}).
+chunked-dataset caller.
 
 \noindent Passing the DXPL, chunk coordinates, and state as parameters to
 the existing callback rather than via a separate callback or a new public
 accessor function avoids call-ordering hazards under multithreading
 and does not require a new public API function.
 
-\verysubsection{Per-dataset state: \texttt{init} and \texttt{term}}
+\verysubsection{Per-dataset state}
 \label{sec:filter-state}
 
-\textbf{Problem.}  Without these callbacks a filter has no per-dataset
-hook on the read path: \texttt{set\_local} runs only at
-\texttt{H5Dcreate}, and \texttt{H5Z\_func2\_t} receives
-\texttt{cd\_values}, the DXPL, and chunk coordinates, but nothing that
-identifies which dataset it is serving.  A filter that must prepare
-something large before it can decode --- a learned compressor loading
-model weights, a JIT compiler building a kernel, a GPU filter uploading
-tables --- can either redo that work for every chunk or keep it in a
-plugin-global table, which has no correct key: two open datasets that
-share a filter but not its configuration would collide.  The same gap
-blocks RFC-HDFG-2026-003: a filter can store a blob with its dataset, but
-cannot reach it while filtering chunks of a reopened file.
-
-\textbf{Contract.}
-\begin{itemize}
-\item \textbf{When \texttt{init} runs.}  Once per pipeline entry, at
-  \texttt{H5Dcreate} (after \texttt{set\_local}, before any chunk is
-  filtered --- including fill-value chunks written by early allocation)
-  and when a dataset is first opened (after its pipeline message is
-  decoded).  Further \texttt{H5Dopen} calls on an already-open dataset
-  share the existing state and do not call \texttt{init} again.
-  \texttt{init} receives the file, the dataset's DCPL (so it can read
-  \texttt{cd\_values}, the stored configuration string, or a
-  RFC-HDFG-2026-003 blob), the datatype, a dataspace with the chunk
-  dimensions (the shape \texttt{set\_local} receives), and the entry's
-  pipeline index \texttt{idx}.  The index is needed because a pipeline may
-  contain the same filter ID more than once; index-addressed accessors
-  such as \texttt{H5Pget\_filter2} use it to find this entry.
-\item \textbf{When \texttt{term} runs.}  Exactly once for every
-  successful \texttt{init}: when the last handle to the dataset closes
-  (after the chunk cache is flushed, which is the last use of the
-  pipeline), or when a failed \texttt{H5Dcreate} unwinds.
-\item \textbf{State is never copied.}  It lives on the open dataset's own
-  pipeline.  \texttt{H5Dget\_create\_plist}, \texttt{H5Pcopy}, and every
-  other copy of the pipeline start without it.
-\item \textbf{Failure at create} fails \texttt{H5Dcreate}.  Any entries
-  already initialized are released first.
-\item \textbf{Failure at open does not fail \texttt{H5Dopen}.}  The entry
-  is marked unusable, and I/O through it fails later: on read, or on write
-  for a required filter, while an optional filter is skipped on write,
-  as today when its plugin is missing.  Metadata stays readable --- a tool
-  can still open the dataset, list its attributes, and report its
-  pipeline on a machine that lacks, say, the GPU the filter's
-  \texttt{init} needs.
-\item \textbf{Plugin loading at open.}  Running \texttt{init} at open
-  requires the class, so \texttt{H5Dopen} now attempts to load the plugin
-  for each filter in a chunked dataset's pipeline, instead of deferring
-  that to the first chunk I/O.  A plugin that cannot be loaded is not an
-  error at open.  If the plugin becomes available only after the open,
-  and its class defines \texttt{init}, I/O through that entry fails until
-  the dataset is reopened.
-\item \textbf{No dataset, no state.}  Two pipeline users have no open
-  dataset.  \texttt{H5Ocopy} of chunked variable-length or reference data
-  decodes and re-encodes chunks; the library calls \texttt{init} (against
-  the source file, with a DCPL carrying the source pipeline) before the
-  copy and \texttt{term} after it.  A group's fractal heap has no dataset
-  at all, so a class that defines \texttt{init} is refused for it when
-  the heap is created.
-\item \textbf{\texttt{init} must not modify the file.}  In a parallel job
-  it runs on every rank inside the collective \texttt{H5Dcreate} or
-  \texttt{H5Dopen} and must make the same HDF5 calls on every rank.
-  Read-only access --- for example opening a mask dataset that the filter
-  needs --- is allowed.
-\end{itemize}
-
-\textbf{Why a callback pair rather than an accessor.}  Handing the filter
-callback a dataset handle, and letting it look up what it needs, would
-put that lookup back on every chunk and expose a handle whose lifetime
-the filter does not control.  A state pointer built once and owned by
-the dataset makes both the cost and the lifetime explicit.
+Per-dataset filter state --- setup a filter performs once per open
+dataset and receives on every chunk, such as a deserialised model or a
+compiled kernel --- is specified by RFC-HDFG-2026-003, which defines the
+callbacks that build and release it.  This RFC reserves the
+\texttt{state} argument of \texttt{H5Z\_func2\_t} so that the feature can
+be added without a new class version or a change to the filter
+callback's signature.  Under this RFC the library passes
+\texttt{state~=~NULL} on every call.
 
 \verysubsection{\texttt{H5Z\_set\_config\_func\_t}}
 
@@ -2649,7 +2563,11 @@ follow-on RFC (RFC-HDFG-2026-003), which specifies a binary blob channel:
 three new \texttt{H5Z\_class3\_t} callbacks
 (\texttt{write\_blob}/\texttt{read\_blob}/\texttt{close\_blob}), a new
 \texttt{H5Pappend\_filter\_blob} API, and on-disk storage for the blob
-alongside the dataset's pipeline message.
+alongside the dataset's pipeline message.  RFC-HDFG-2026-003 also
+specifies per-dataset filter state (\SectionRef{sec:filter-state}),
+through which a filter reaches its blob while filtering chunks; that
+state is delivered through the \texttt{state} argument this RFC reserves
+on \texttt{H5Z\_func2\_t}.
 
 That storage is the first consumer of the extension framing defined here.
 The blob bytes live in a global-heap object; the pipeline entry carries

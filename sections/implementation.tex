@@ -269,52 +269,6 @@ any collective \texttt{H5Dcreate} is issued.  Applications that want to
 probe filter availability before committing to a DCPL configuration should
 call \texttt{H5Zfilter\_avail} first.
 
-\verysubsection{Per-dataset state in parallel}
-
-\texttt{init} runs inside \texttt{H5Dcreate} and \texttt{H5Dopen}, which
-are collective, so every rank builds its own state at the same point
-(\SectionRef{sec:filter-state}).  State is per process and never shared
-between ranks.  Because \texttt{init} may not modify the file, running it
-on every rank adds no metadata-cache operations and cannot desynchronize
-the ranks' caches.  The rule that it make the same HDF5 calls on every
-rank covers read-only calls too, such as opening a mask dataset, since
-those can be collective under \texttt{H5Pset\_all\_coll\_metadata\_ops}.
-One case can diverge: an \texttt{init} that fails at open on some ranks
-but not others (for example, a GPU missing on one node).  The open still
-succeeds everywhere; the affected ranks fail their first I/O through that
-entry, and a collective write then fails on those ranks, as it would
-today if one rank lacked the plugin.
-
-\subsection{Per-Dataset Filter State: Library Changes}
-\label{sec:impl-filter-state}
-
-\begin{itemize}
-\item \texttt{src/H5Zdevelop.h}: the \texttt{state} parameter on
-  \texttt{H5Z\_func2\_t}; \texttt{H5Z\_init\_func\_t} and
-  \texttt{H5Z\_term\_func\_t}; \texttt{init} and \texttt{term} appended to
-  \texttt{H5Z\_class3\_t} after \texttt{description}.
-\item \texttt{src/H5Zprivate.h}: \texttt{state} and \texttt{state\_status}
-  (none / ready / failed) on \texttt{H5Z\_filter\_info\_t}, so the state
-  travels with the dataset's own pipeline and \texttt{H5Z\_pipeline}
-  reaches it at every one of its call sites without new arguments.
-\item \texttt{src/H5Z.c}: \texttt{H5Z\_state\_init} (loads the plugin if
-  needed, runs \texttt{init} per entry; strict at create and copy, lenient
-  at open) and \texttt{H5Z\_state\_term}; \texttt{H5Z\_pipeline} passes the
-  entry's state and refuses to run an entry whose class has \texttt{init}
-  but whose state is not ready; \texttt{H5Z\_can\_apply\_direct} refuses
-  such classes for fractal heaps.
-\item \texttt{src/H5Dint.c}: \texttt{init} in \texttt{H5D\_\_create} before
-  \texttt{H5D\_\_update\_oh\_info}, whose early allocation filters fill
-  chunks; \texttt{init} in \texttt{H5D\_\_open\_oid} after the pipeline is
-  read; \texttt{term} in \texttt{H5D\_close} after the layout's chunk-cache
-  flush, and on the create/open failure paths.
-\item \texttt{src/H5Dchunk.c}: \texttt{H5D\_\_chunk\_copy} brackets the
-  variable-length/reference copy path with \texttt{init}/\texttt{term} on a
-  private copy of the pipeline.
-\item \texttt{src/H5Opline.c}: \texttt{H5O\_\_pline\_copy} clears the state
-  fields, so property lists and other copies never carry state.
-\end{itemize}
-
 \subsection{High-Level Language Binding Considerations (h5py, PyTables, etc.)}
 \label{sec:hll-bindings}
 

@@ -390,48 +390,6 @@ These tests verify the two-pass \texttt{set\_config} contract
   the stored string is cleared, matching \texttt{H5Pmodify\_filter}.
 \end{itemize}
 
-\subsection{Per-Dataset State Tests}
-\label{sec:test-filter-state}
-
-These tests cover \texttt{init}, \texttt{term}, and the \texttt{state}
-parameter (\SectionRef{sec:filter-state}).  The test filter tags its
-state with \texttt{cd\_values[0]}, read back from the DCPL inside
-\texttt{init}, and checks every chunk's state against the
-\texttt{cd\_values} it is invoked with.  A state delivered to the wrong
-dataset or the wrong pipeline entry is then detected as a mismatch, not
-only as a missing pointer.
-
-\begin{itemize}
-\item \texttt{st-01} (\textbf{create lifecycle}): \texttt{H5Dcreate} runs
-  \texttt{init} once, with a chunk dataspace of the dataset's rank; every
-  chunk written and read receives that state; \texttt{H5Dclose} runs
-  \texttt{term} once.
-\item \texttt{st-02} (\textbf{open lifecycle and sharing}): After reopening
-  the file, two \texttt{H5Dopen} calls on one dataset run \texttt{init}
-  once; a second dataset runs its own \texttt{init}; each dataset's reads
-  see its own state; closing the first handle does not run \texttt{term},
-  and closing the last one does.
-\item \texttt{st-03} (\textbf{duplicate filter IDs}): A pipeline with the
-  same filter ID twice runs \texttt{init} twice, each call receiving the
-  index of its own entry, and each entry's calls receive its own state.
-\item \texttt{st-04} (\textbf{failure at create}): An \texttt{init} that
-  fails makes \texttt{H5Dcreate} fail and leaves no link behind.  When the
-  second of two entries fails, the first entry's state is released
-  (\texttt{term} count equals successful \texttt{init} count).
-\item \texttt{st-05} (\textbf{failure at open}): With \texttt{init} failing,
-  \texttt{H5Dopen} and \texttt{H5Dget\_create\_plist} succeed,
-  \texttt{H5Dread} fails, and no \texttt{term} runs for the failed entry.
-\item \texttt{st-06} (\textbf{group heaps refused}): A group whose GCPL
-  carries a filter with \texttt{init} fails to create its fractal heap
-  (on the first dense link insert), with an error naming the per-dataset
-  requirement.
-\item \texttt{st-07} (\textbf{object copy}): \texttt{H5Ocopy} of a chunked
-  variable-length dataset --- the one copy path that runs the pipeline ---
-  runs \texttt{init} and \texttt{term} exactly once around the copy, and
-  the copied data reads back correctly.
-\end{itemize}
-
-
 \subsection{Built-in Filter Round-Trip Tests}
 \label{sec:test-builtin-roundtrip}
 
@@ -729,11 +687,6 @@ These tests require a Parallel HDF5 build and at least two MPI ranks.
   only built-in filters configured via the string API in a multi-rank parallel
   job; verify that the dataset can be written and read back correctly from all
   ranks.
-\item \texttt{par-05} (\textbf{per-dataset state on every rank}): With a
-  filter defining \texttt{init}/\texttt{term}, create, write collectively,
-  close, reopen, and read on all ranks; verify \texttt{init} and
-  \texttt{term} each ran once per rank per open, and that every rank's
-  chunks received that rank's state (\SectionRef{sec:filter-state}).
 \end{itemize}
 
 
